@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>myguo</title>
+  <script>
+    (function() {
+      try {
+        var s = localStorage.getItem('hongguo_sidebar_width');
+        if (s) {
+          var w = parseInt(s, 10);
+          if (w >= 160 && w <= 420) {
+            document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+          }
+        }
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="liquid-controls.css">
+</head>
+<body>
+  <div id="app" class="app-container">
+    <!-- Sidebar (Official Red Fruit Drama Structure) -->
+    <aside class="sidebar" id="sidebar">
+      <!-- Traffic Light Drag Spacer -->
+      <div class="sidebar-traffic-lights"></div>
+
+      <nav class="nav-menu">
+        <div class="nav-section-label">发现</div>
+        <button class="nav-item active" data-view="recommend">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          <span>推荐</span>
+        </button>
+        <button class="nav-item" data-view="discover">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+          <span>找剧</span>
+        </button>
+        <button class="nav-item" data-view="rank">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H6v-4h6v4zm0-6H6V7h6v4zm6 6h-4V7h4v10z"/></svg>
+          <span>排行榜</span>
+        </button>
+        <button class="nav-item" data-view="new">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20a2 2 0 002 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/></svg>
+          <span>新剧</span>
+        </button>
+
+        <div class="nav-section-label">我的</div>
+        <button class="nav-item" data-view="history">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0013 21a9 9 0 000-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+          <span>历史</span>
+        </button>
+        <button class="nav-item" data-view="favorites">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
+          <span>收藏</span>
+        </button>
+        <button class="nav-item" data-view="reservations">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+          <span>预约</span>
+        </button>
+        <button class="nav-item" data-view="settings">
+          <svg class="nav-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          <span>设置</span>
+        </button>
+      </nav>
+    </aside>
+
+    <!-- Sidebar Resizer Splitter -->
+    <div class="sidebar-resizer" id="sidebar-resizer" role="separator" aria-orientation="vertical" title="拖动调整侧边栏宽度，双击恢复默认"></div>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Native macOS Window Drag Area -->
+      <div class="main-drag-bar"></div>
+
+      <!-- View Containers -->
+      <div class="view-viewport">
+        <!-- 1. Recommend View (Vertical Swipe Video Feed - TikTok/Hongguo Style) -->
+        <section class="view-page active" id="view-recommend">
+          <div class="feed-container" id="feed-container">
+            <!-- Video Player Stage -->
+            <div class="feed-stage" id="feed-stage">
+              <!-- 3-Slot Sliding Carousel Layers -->
+              <div class="feed-slide-layer" id="feed-slide-0" data-slot="0">
+                <video id="feed-video-0" class="feed-video portrait" playsinline webkit-playsinline crossorigin="anonymous"></video>
+                <div class="feed-slide-poster" id="feed-poster-0"></div>
+              </div>
+              <div class="feed-slide-layer" id="feed-slide-1" data-slot="1">
+                <video id="feed-video-1" class="feed-video portrait" playsinline webkit-playsinline crossorigin="anonymous"></video>
+                <div class="feed-slide-poster" id="feed-poster-1"></div>
+              </div>
+              <div class="feed-slide-layer" id="feed-slide-2" data-slot="2">
+                <video id="feed-video-2" class="feed-video portrait" playsinline webkit-playsinline crossorigin="anonymous"></video>
+                <div class="feed-slide-poster" id="feed-poster-2"></div>
+              </div>
+              <div class="feed-slide-poster" id="feed-incoming-poster" style="display: none;"></div>
+
+              <!-- Recommend Initial Skeleton Overlay -->
+              <div class="feed-skeleton-overlay" id="feed-skeleton" style="display: none;" aria-hidden="true">
+                <div class="feed-skeleton-backdrop skeleton-box"></div>
+                <div class="feed-info-skeleton">
+                  <div class="skeleton-line" style="width: 72px; height: 18px; margin-bottom: 12px; border-radius: 4px;"></div>
+                  <div class="skeleton-line" style="width: 240px; height: 26px; margin-bottom: 14px; border-radius: 6px;"></div>
+                  <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+                    <div class="skeleton-line" style="width: 48px; height: 20px; border-radius: 4px;"></div>
+                    <div class="skeleton-line" style="width: 54px; height: 20px; border-radius: 4px;"></div>
+                    <div class="skeleton-line" style="width: 60px; height: 20px; border-radius: 4px;"></div>
+                  </div>
+                  <div class="skeleton-line" style="width: 300px; height: 14px; border-radius: 4px;"></div>
+                </div>
+                <div class="feed-rail-skeleton">
+                  <div class="skeleton-box" style="width: 44px; height: 44px; border-radius: 50%; margin-bottom: 24px;"></div>
+                  <div class="skeleton-box" style="width: 44px; height: 44px; border-radius: 50%; margin-bottom: 24px;"></div>
+                  <div class="skeleton-box" style="width: 44px; height: 44px; border-radius: 50%;"></div>
+                </div>
+              </div>
+
+              <div class="video-loader" id="feed-loader" style="display: none;" role="status" aria-label="获取推荐短剧中...">
+                <div class="video-top-loader-bar"></div>
+                <div class="macos-loader-hud">
+                  <svg class="macos-spinner" viewBox="0 0 32 32" width="20" height="20" fill="none" aria-hidden="true">
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="1.0" transform="rotate(0 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.93" transform="rotate(30 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.86" transform="rotate(60 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.8" transform="rotate(90 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.73" transform="rotate(120 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.66" transform="rotate(150 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.59" transform="rotate(180 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.52" transform="rotate(210 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.45" transform="rotate(240 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.39" transform="rotate(270 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.32" transform="rotate(300 16 16)" />
+                    <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.25" transform="rotate(330 16 16)" />
+                  </svg>
+                  <span class="macos-loader-text" id="feed-loader-text">获取推荐短剧中...</span>
+                </div>
+              </div>
+              <div class="center-play-indicator" id="feed-play-indicator" style="display: none;">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+              </div>
+            </div>
+
+            <!-- Top Center Channel/Category Bar -->
+            <div class="cat-bar" id="feed-cat-bar">
+              <button class="cat-chip" data-channel="关注">关注</button>
+              <button class="cat-chip active" data-channel="">推荐</button>
+              <button class="cat-chip" data-channel="漫剧">漫剧</button>
+              <button class="cat-chip" data-channel="真人剧">真人剧</button>
+            </div>
+
+            <!-- Left Bottom Drama Info Overlay -->
+            <div class="feed-info" id="feed-info">
+              <div class="feed-info-header">
+                <span class="feed-info-rank" id="feed-info-rank">
+                  <span id="feed-rank-text">官方推荐</span>
+                </span>
+                <span class="feed-episode-badge" id="feed-episode-badge">第 1 集</span>
+              </div>
+              <h2 class="feed-info-title" id="feed-info-title">短剧标题</h2>
+              <div class="feed-info-tags" id="feed-info-tags"></div>
+              <p class="feed-info-desc" id="feed-info-desc">精彩短剧，全集免费畅看</p>
+            </div>
+
+            <!-- Shared rail, controls and episode drawer are mounted by player-chrome.js -->
+
+            <!-- Floating Feedback Hint Toast -->
+            <div class="feed-hint-toast" id="feed-hint-toast" style="display: none;">
+              <svg class="macos-spinner-sm" id="feed-hint-spinner" style="display: none;" viewBox="0 0 32 32" width="16" height="16" fill="none" aria-hidden="true">
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="1.0" transform="rotate(0 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.93" transform="rotate(30 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.86" transform="rotate(60 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.8" transform="rotate(90 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.73" transform="rotate(120 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.66" transform="rotate(150 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.59" transform="rotate(180 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.52" transform="rotate(210 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.45" transform="rotate(240 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.39" transform="rotate(270 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.32" transform="rotate(300 16 16)" />
+                <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.25" transform="rotate(330 16 16)" />
+              </svg>
+              <span id="feed-hint-text">正在加载更多...</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. Discover (找剧) View -->
+        <section class="view-page" id="view-discover">
+          <div class="discover-search-container">
+            <div class="search-input-wrap">
+              <svg class="search-icon" viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+              <input type="text" id="search-input" placeholder="搜索短剧、角色、演员..." autocomplete="off">
+              <button class="search-clear-btn" id="btn-clear-search" style="display:none;" title="清空搜索">
+                <svg viewBox="0 0 24 24" width="12" height="12"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </div>
+            <!-- Auto-complete suggestion popup -->
+            <div class="search-suggestions" id="search-suggestions" style="display: none;"></div>
+          </div>
+          <div class="filter-panel" id="discover-filters">
+            <div class="filter-row discover-genre-row">
+              <span class="filter-label">体裁</span>
+              <div class="filter-chips discover-genre-chips" role="tablist">
+                <button type="button" class="filter-chip genre-chip active" data-genre="short_play" role="tab">真人剧</button>
+                <button type="button" class="filter-chip genre-chip" data-genre="comic_series" role="tab">漫剧</button>
+                <button type="button" class="filter-chip genre-chip" data-genre="ai_series" role="tab">AI剧</button>
+              </div>
+            </div>
+            <div class="discover-subfilters" id="discover-subfilters"></div>
+          </div>
+          <div class="drama-grid" id="discover-grid"></div>
+          <div class="discover-load-more" id="discover-load-more" hidden>
+            <button type="button" class="rank-more-btn" id="btn-discover-load-more">加载更多</button>
+          </div>
+        </section>
+
+        <!-- 3. Rankings (排行榜) View -->
+        <section class="view-page" id="view-rank">
+          <div class="rank-header">
+            <div class="rank-content-tabs" id="rank-content-tabs"></div>
+            <div class="rank-board-tabs" id="rank-board-tabs"></div>
+          </div>
+          <div class="rank-list" id="rank-items-list"></div>
+        </section>
+
+        <!-- 4. New Releases (新剧) View -->
+        <section class="view-page" id="view-new">
+          <div class="rank-content-tabs new-main-tabs" id="new-main-tabs">
+            <button class="rank-content-tab active" data-tab="hot">热播新剧</button>
+            <button class="rank-content-tab" data-tab="calendar">新剧日历</button>
+          </div>
+          <div class="new-calendar-tabs" id="new-calendar-dates"></div>
+          <div class="drama-grid" id="new-drama-grid"></div>
+        </section>
+
+        <!-- 5. History (历史) View -->
+        <section class="view-page" id="view-history">
+          <div class="history-header-bar">
+            <div class="history-header-left">
+              <h3 class="history-page-title">观看历史</h3>
+              <div class="history-filter-pills" id="history-filter-pills">
+                <button class="filter-chip active" data-filter="all">全部</button>
+                <button class="filter-chip" data-filter="unwatched">未看完</button>
+                <button class="filter-chip" data-filter="completed">已看完</button>
+              </div>
+            </div>
+            <div class="history-header-right">
+              <div class="history-search-wrap">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input type="text" id="history-search-input" class="history-search-input" placeholder="搜索历史剧名...">
+              </div>
+              <button class="btn-subtle" id="btn-clear-all-history" style="display:flex;align-items:center;gap:5px;">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zm2 15H7V6h10v13zM9 8h2v9H9zm4 0h2v9h-2z"/></svg>
+                <span>清空全部</span>
+              </button>
+            </div>
+          </div>
+          <div class="drama-grid" id="history-grid"></div>
+        </section>
+
+        <!-- 6. Favorites & Likes (收藏与点赞) View -->
+        <section class="view-page" id="view-favorites">
+          <div class="collection-topbar">
+            <div style="display:flex;align-items:baseline;gap:10px;">
+              <h3 id="favorites-title-text" style="font-size:20px;font-weight:700;">我的收藏</h3>
+              <span id="favorites-count-desc" style="font-size:12px;color:var(--text-muted);background:rgba(255,255,255,0.05);padding:2px 8px;border-radius:10px;">当前账号收藏与点赞记录</span>
+            </div>
+            <div class="collection-tabs" id="favorites-tabs">
+              <button class="collection-tab active" data-tab="favorites">
+                <span>收藏</span><em id="tab-favorites-count">0</em>
+              </button>
+              <button class="collection-tab" data-tab="likes">
+                <span>点赞</span><em id="tab-likes-count">0</em>
+              </button>
+            </div>
+          </div>
+          <div class="drama-grid" id="favorites-grid"></div>
+        </section>
+
+        <!-- 8. Reservations (预约) View -->
+        <section class="view-page" id="view-reservations">
+          <div class="reservation-topbar">
+            <div style="display:flex;align-items:baseline;gap:10px;">
+              <h3 style="font-size:20px;font-weight:700;">我的预约</h3>
+              <span id="reservations-count-desc" style="font-size:12px;color:var(--text-muted);background:rgba(255,255,255,0.05);padding:2px 8px;border-radius:10px;">当前账号预约记录</span>
+            </div>
+            <div class="reservation-tabs" id="reservation-tabs">
+              <button class="reservation-tab active" data-tab="online">已上线</button>
+              <button class="reservation-tab" data-tab="pending">待上线</button>
+            </div>
+          </div>
+          <div class="drama-grid" id="reservations-grid"></div>
+        </section>
+
+        <!-- 9. Search Results View -->
+        <section class="view-page" id="view-search-results">
+          <div class="section-header">
+            <h3 id="search-query-header">搜索结果</h3>
+          </div>
+          <div class="drama-grid" id="search-grid"></div>
+        </section>
+
+        <!-- 10. Settings View (设置二级页面) -->
+        <section class="view-page" id="view-settings">
+          <div class="settings-container">
+            <div class="settings-page-header">
+              <h3 class="settings-page-title">系统与账号设置</h3>
+              <span class="settings-page-sub">管理登录状态、设备指纹与本地解密媒体缓存</span>
+            </div>
+
+            <!-- 1. 账号管理卡片组 -->
+            <div class="settings-card settings-account-card">
+              <div class="account-profile-display">
+                <div class="settings-avatar-wrap">
+                  <img id="settings-avatar" class="settings-avatar" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23fe2c55'><circle cx='12' cy='8' r='4'/><path d='M12 14c-6 0-8 4-8 6h16c0-2-2-6-8-6z'/></svg>" alt="Avatar" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'%23fe2c55\'><circle cx=\'12\' cy=\'8\' r=\'4\'/><path d=\'M12 14c-6 0-8 4-8 6h16c0-2-2-6-8-6z\'/></svg>'">
+                  <span class="settings-status-indicator" id="settings-status-indicator"></span>
+                </div>
+                <div class="settings-user-info">
+                  <div class="settings-user-header-row">
+                    <span class="settings-nickname" id="settings-nickname">myguo用户</span>
+                    <span class="settings-badge" id="settings-login-badge">匿名设备访问</span>
+                  </div>
+                  <div class="settings-uid-row">
+                    <span class="settings-uid-label">账号 ID:</span>
+                    <span class="settings-uid-value" id="settings-uid">anonymous</span>
+                  </div>
+                </div>
+                <div class="settings-account-actions">
+                  <button class="settings-btn settings-btn-subtle" id="btn-refresh-profile" title="同步远端个人资料">
+                    <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                    <span>刷新资料</span>
+                  </button>
+                  <button class="settings-btn settings-btn-danger" id="btn-logout" style="display: none;" title="退出当前登录">
+                    <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
+                    <span>退出登录</span>
+                  </button>
+                  <button class="settings-btn settings-btn-primary" id="btn-show-login" title="登录账号">
+                    <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+                    <span>立即登录</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 快捷从历史版本导入提示（若检测到有旧账号） -->
+              <div class="settings-import-banner" id="settings-import-banner" style="display: none;">
+                <div class="import-banner-left">
+                  <svg viewBox="0 0 24 24" width="18" height="18" class="import-icon"><path fill="currentColor" d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+                  <div>
+                    <div class="import-banner-title">检测到本机已有登录凭据</div>
+                    <div class="import-banner-desc" id="import-banner-desc">可直接导入用户账号快速登录</div>
+                  </div>
+                </div>
+                <button class="settings-btn settings-btn-accent" id="btn-import-old-account">一键同步登录</button>
+              </div>
+
+              <!-- 登录表单面板 -->
+              <div class="settings-login-panel" id="settings-login-panel" style="display: none;">
+                <div class="login-panel-divider"></div>
+                <div class="login-panel-header">
+                  <span class="login-panel-title">账号凭据登录</span>
+                  <span class="login-panel-sub">通过输入 Cookie / Token 凭据无缝同步真实红果/番茄短剧账户数据</span>
+                </div>
+                
+                <div class="login-form-group">
+                  <label for="login-cookie-input" class="login-label">
+                    <span>Cookie (必填)</span>
+                    <button class="btn-text-link" id="btn-paste-clipboard">从剪贴板粘贴</button>
+                  </label>
+                  <textarea id="login-cookie-input" class="login-textarea" rows="3" placeholder="粘贴浏览器获取的完整 Cookie，或直接粘贴包含 cookies 字段的 JSON..."></textarea>
+                </div>
+
+                <div class="login-form-group">
+                  <label for="login-token-input" class="login-label">
+                    <span>x-tt-token (可选，用于增强长效会话)</span>
+                  </label>
+                  <input type="text" id="login-token-input" class="login-input" placeholder="输入 x-tt-token (可选，留空亦可直接使用 Cookie 验证)">
+                </div>
+
+                <div class="login-actions-row">
+                  <div class="login-tips">
+                    <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                    <span>凭据将直接发送至官方接口进行验证，通过后持久化存储于本地。</span>
+                  </div>
+                  <div class="login-btns">
+                    <button class="settings-btn settings-btn-subtle" id="btn-cancel-login">收起</button>
+                    <button class="settings-btn settings-btn-primary" id="btn-submit-login">
+                      <span>验证并登录</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2. 设备与存储板块（将重置设备、清理缓存放到二级页面） -->
+            <div class="settings-section-title">设备与存储管理</div>
+            <div class="settings-card">
+              <!-- 清理缓存行 -->
+              <div class="settings-item-row">
+                <div class="settings-item-left">
+                  <div class="settings-item-icon-wrap">
+                    <svg viewBox="0 0 24 24" class="settings-item-icon"><path fill="currentColor" d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zm2 15H7V6h10v13zM9 8h2v9H9zm4 0h2v9h-2z"/></svg>
+                  </div>
+                  <div class="settings-item-info">
+                    <div class="settings-item-title">本地媒体缓存</div>
+                    <div class="settings-item-desc">清除本地已解密的视频切片缓存与封面海报格式转换临时文件</div>
+                  </div>
+                </div>
+                <div class="settings-item-right">
+                  <div class="settings-stat-badge">
+                    <span class="settings-stat-label">已占用:</span>
+                    <span class="settings-stat-value" id="settings-cache-size">0.0 MB</span>
+                  </div>
+                  <button class="settings-btn settings-btn-subtle" id="btn-settings-clear-cache">
+                    <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M15 4V3H9v1H4v2h1v13c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V6h1V4h-5zm2 15H7V6h10v13zM9 8h2v9H9zm4 0h2v9h-2z"/></svg>
+                    <span>清理缓存</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="settings-divider"></div>
+
+              <!-- 重置设备行 -->
+              <div class="settings-item-row">
+                <div class="settings-item-left">
+                  <div class="settings-item-icon-wrap">
+                    <svg viewBox="0 0 24 24" class="settings-item-icon"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                  </div>
+                  <div class="settings-item-info">
+                    <div class="settings-item-title">匿名设备指纹</div>
+                    <div class="settings-item-desc">当匿名模式触发官方频控限制或需要重置个性化推荐流时，重新生成设备指纹</div>
+                  </div>
+                </div>
+                <div class="settings-item-right">
+                  <div class="settings-stat-badge">
+                    <span class="settings-stat-label">设备 ID:</span>
+                    <span class="settings-stat-value" id="settings-device-id">--</span>
+                  </div>
+                  <button class="settings-btn settings-btn-subtle" id="btn-settings-reset-device">
+                    <svg viewBox="0 0 24 24" width="13" height="13"><path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                    <span>重置设备</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3. 关于与系统环境 -->
+            <div class="settings-section-title">关于应用</div>
+            <div class="settings-card">
+              <div class="settings-about-row">
+                <div class="about-app-info">
+                  <div class="about-app-name">myguo macOS 客户端</div>
+                  <div class="about-app-meta">版本 2.0.0 (darwin-arm64) • 基于 Pure Go & egoist/mygo 零 CGO 极速构建</div>
+                </div>
+                <div class="about-tags">
+                  <span class="about-pill">CGO Free</span>
+                  <span class="about-pill">Cocoa Native</span>
+                  <span class="about-pill">CENC Hardware Decrypt</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- Drama Detail View -->
+        <section class="view-page" id="view-detail">
+          <div class="detail-header-bar">
+            <button class="detail-back-btn" id="btn-back-from-detail" title="返回">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+              <span>返回</span>
+            </button>
+            <span class="detail-page-subtitle">短剧详情</span>
+          </div>
+
+          <div class="detail-loader detail-skeleton-screen" id="detail-loader" style="display: none;" aria-hidden="true">
+            <div class="detail-hero detail-hero-skeleton">
+              <div class="detail-poster-wrap skeleton-box"></div>
+              <div class="detail-hero-body">
+                <div class="skeleton-line detail-skeleton-title"></div>
+                <div class="detail-stats-row">
+                  <div class="detail-stat-skeleton skeleton-box"></div>
+                  <div class="detail-stat-skeleton skeleton-box"></div>
+                  <div class="detail-stat-skeleton skeleton-box"></div>
+                  <div class="detail-stat-skeleton skeleton-box"></div>
+                </div>
+                <div class="detail-tags">
+                  <div class="detail-tag-skeleton skeleton-box"></div>
+                  <div class="detail-tag-skeleton skeleton-box"></div>
+                  <div class="detail-tag-skeleton skeleton-box"></div>
+                  <div class="detail-tag-skeleton skeleton-box"></div>
+                </div>
+                <div class="detail-skeleton-desc-lines">
+                  <div class="skeleton-line" style="width: 95%; height: 13px;"></div>
+                  <div class="skeleton-line" style="width: 88%; height: 13px;"></div>
+                  <div class="skeleton-line" style="width: 62%; height: 13px;"></div>
+                </div>
+                <div class="detail-actions">
+                  <div class="skeleton-box" style="width: 140px; height: 38px; border-radius: 19px;"></div>
+                  <div class="skeleton-box" style="width: 88px; height: 38px; border-radius: 19px;"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="detail-episodes-section detail-episodes-skeleton">
+              <div class="detail-section-heading">
+                <div class="skeleton-line" style="width: 50px; height: 18px;"></div>
+                <div class="skeleton-line" style="width: 44px; height: 14px;"></div>
+              </div>
+              <div class="detail-episode-grid">
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+                <div class="ep-btn-skeleton skeleton-box"></div>
+              </div>
+            </div>
+
+            <section class="detail-collection">
+              <div class="detail-section-heading">
+                <div class="skeleton-line" style="width: 80px; height: 18px;"></div>
+              </div>
+              <div class="drama-grid" id="detail-skeleton-related-grid"></div>
+            </section>
+          </div>
+
+          <div class="detail-error" id="detail-error" style="display: none;"></div>
+
+          <div class="detail-content" id="detail-content" style="display: none;">
+            <div class="detail-hero">
+              <div class="detail-poster-wrap">
+                <img class="detail-poster" id="detail-poster" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 3 4' fill='%231c1d27'></svg>" alt="短剧封面" onerror="handleImgError(this)">
+              </div>
+              <div class="detail-hero-body">
+                <h2 class="detail-title" id="detail-title">--</h2>
+                <div class="detail-stats-row">
+                  <span class="detail-stat accent" id="detail-heat">--</span>
+                  <span class="detail-stat" id="detail-plays">--</span>
+                  <span class="detail-stat" id="detail-follows">--</span>
+                  <span class="detail-stat" id="detail-status">--</span>
+                </div>
+                <div class="detail-tags" id="detail-tags"></div>
+                <p class="detail-description" id="detail-description"></p>
+                <div class="detail-actions">
+                  <button class="detail-play-btn" id="btn-detail-play">
+                    <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+                    <span>播放第 1 集</span>
+                  </button>
+                  <button class="detail-secondary-btn" id="btn-detail-favorite">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
+                    <span>收藏</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <section class="detail-collection" id="detail-seasons-section" style="display: none;">
+              <div class="detail-section-heading">
+                <h3 class="detail-section-title" id="detail-seasons-title">同系列短剧</h3>
+                <span class="detail-section-count" id="detail-seasons-status"></span>
+              </div>
+              <div class="drama-grid" id="detail-seasons-grid"></div>
+            </section>
+
+            <section class="detail-collection" id="detail-adapted-section" style="display: none;">
+              <div class="detail-section-heading">
+                <h3 class="detail-section-title" id="detail-adapted-title">同一剧本改编</h3>
+                <span class="detail-section-count" id="detail-adapted-status"></span>
+              </div>
+              <div class="drama-grid" id="detail-adapted-grid"></div>
+            </section>
+
+            <div class="detail-actors" id="detail-actors-section" style="display: none;">
+              <h3 class="detail-section-title">演员信息</h3>
+              <div class="detail-actor-list" id="detail-actor-list"></div>
+            </div>
+
+            <div class="detail-episodes-section">
+              <div class="detail-section-heading">
+                <div class="detail-section-heading-left">
+                  <h3 class="detail-section-title">选集</h3>
+                  <span class="detail-section-count" id="detail-episode-count">共 0 集</span>
+                </div>
+                <button class="detail-heading-toggle" id="detail-heading-toggle" type="button" aria-expanded="false" style="display: none;">
+                  <span class="detail-heading-toggle-text">展开全部</span>
+                  <svg class="detail-toggle-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+                </button>
+              </div>
+              <div class="detail-episode-grid is-collapsed" id="detail-episode-grid"></div>
+              <div class="detail-episode-toggle-wrap" id="detail-episode-toggle-wrap" style="display: none;">
+                <button class="detail-episode-toggle" id="detail-episode-toggle" type="button" aria-expanded="false">
+                  <span class="detail-episode-toggle-text">展开全部</span>
+                  <svg class="detail-toggle-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <section class="detail-collection detail-related" id="detail-related-section" data-state="pending">
+              <div class="detail-section-heading">
+                <h3 class="detail-section-title">相关推荐</h3>
+                <span class="detail-section-count" id="detail-related-status">下滑加载</span>
+              </div>
+              <div class="drama-grid" id="detail-related-grid"></div>
+            </section>
+
+          </div>
+        </section>
+
+        <!-- Actor Detail (演员主页) View -->
+        <section class="view-page" id="view-actor">
+          <div class="actor-header-bar">
+            <button class="btn-subtle actor-back-btn" id="btn-back-from-actor" title="返回">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+              <span>返回</span>
+            </button>
+            <span class="actor-page-subtitle" id="actor-header-subtitle">演员个人主页</span>
+          </div>
+
+          <div class="actor-profile-banner" id="actor-profile-banner">
+            <div class="actor-hero-content">
+              <div class="actor-avatar-wrap">
+                <img class="actor-avatar-img" id="actor-detail-avatar" src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1 1' fill='%231c1d27'></svg>" alt="演员头像" onerror="handleImgError(this)">
+              </div>
+              <div class="actor-info-body">
+                <div class="actor-name-row">
+                  <h2 class="actor-detail-name" id="actor-detail-name">--</h2>
+                  <div class="actor-tags-wrap" id="actor-detail-tags"></div>
+                </div>
+                <div class="actor-stats-row" id="actor-detail-stats">
+                  <div class="actor-stat-item">
+                    <span class="actor-stat-num" id="actor-stat-followers">--</span>
+                    <span class="actor-stat-label">粉丝</span>
+                  </div>
+                  <div class="actor-stat-divider"></div>
+                  <div class="actor-stat-item">
+                    <span class="actor-stat-num" id="actor-stat-likes">--</span>
+                    <span class="actor-stat-label">获赞</span>
+                  </div>
+                  <div class="actor-stat-divider"></div>
+                  <div class="actor-stat-item">
+                    <span class="actor-stat-num" id="actor-stat-works-count">--</span>
+                    <span class="actor-stat-label">部参演短剧</span>
+                  </div>
+                </div>
+                <p class="actor-detail-desc" id="actor-detail-desc"></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Works Section -->
+          <div class="actor-works-header">
+            <div style="display: flex; align-items: baseline; gap: 10px;">
+              <h3 class="actor-works-title">参演短剧</h3>
+              <span class="section-sub" id="actor-works-sub">全部作品</span>
+            </div>
+          </div>
+
+          <div class="drama-grid" id="actor-drama-grid"></div>
+
+          <!-- Load More Trigger -->
+          <div class="actor-load-more-wrap" id="actor-load-more-wrap" style="display: none;">
+            <button class="btn-subtle btn-actor-load-more" id="btn-actor-load-more">加载更多短剧</button>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Embedded High-Definition Video Player View (WebView Player) -->
+    <div class="player-overlay" id="player-modal" role="dialog" aria-modal="true" aria-label="短剧播放器" style="display: none;">
+      <div class="player-topbar">
+        <button class="player-back-btn" id="btn-close-player" title="返回浏览">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+          <span>返回</span>
+        </button>
+        <div class="player-title-info">
+          <span class="player-series-title" id="player-series-title">短剧标题</span>
+          <span class="player-episode-badge" id="player-episode-badge">第 1 集</span>
+        </div>
+      </div>
+
+      <div class="player-body">
+        <div class="player-stage-wrap" id="player-stage">
+          <div class="video-container" id="video-container">
+            <video id="main-video" class="portrait" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></video>
+            <div class="center-play-badge" id="center-play-badge" style="display: none;">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+            </div>
+            <div class="video-loader" id="video-loader" style="display: none;" role="status" aria-label="高速解密串流中...">
+              <div class="video-top-loader-bar"></div>
+              <div class="macos-loader-hud">
+                <svg class="macos-spinner" viewBox="0 0 32 32" width="20" height="20" fill="none" aria-hidden="true">
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="1.0" transform="rotate(0 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.93" transform="rotate(30 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.86" transform="rotate(60 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.8" transform="rotate(90 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.73" transform="rotate(120 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.66" transform="rotate(150 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.59" transform="rotate(180 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.52" transform="rotate(210 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.45" transform="rotate(240 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.39" transform="rotate(270 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.32" transform="rotate(300 16 16)" />
+                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.25" transform="rotate(330 16 16)" />
+                </svg>
+                <span class="macos-loader-text">高速解密串流中...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Shared rail, controls and episode drawer are mounted by player-chrome.js -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div class="toast" id="toast" style="display: none;"></div>
+
+    <!-- Official Episode Comment Sheet -->
+    <div class="comment-sheet-overlay" id="comment-sheet-overlay" style="display: none;">
+      <div class="comment-sheet" id="comment-sheet" role="dialog" aria-modal="true" aria-labelledby="comment-sheet-title">
+        <div class="comment-sheet-header">
+          <div>
+            <h3 id="comment-sheet-title">评论</h3>
+            <span id="comment-sheet-subtitle">正在加载官方评论</span>
+          </div>
+          <button class="icon-btn" id="btn-close-comment-sheet" title="关闭评论">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </div>
+        <div class="comment-list" id="comment-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="ambient-glow.js"></script>
+  <script src="player-chrome.js"></script>
+  <script src="danmaku.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+/resources/darwin-arm64/ffmpeg -diff
+/resources/darwin-amd64/ffmpeg -diff

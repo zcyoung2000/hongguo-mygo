@@ -1,0 +1,29 @@
+# Binaries and build artifacts
+dist/
+hongguo
+*.exe
+*.app
+*.dmg
+
+# Large third-party player codec binaries are fetched for release builds.
+/resources/darwin-arm64/ffmpeg
+/resources/darwin-amd64/ffmpeg
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and temp files
+*.log
+tmp_*
+test_*
+*.tmp
+!e2e/TEST_CASES.md
+
+# E2E test output
+e2e/screenshots/

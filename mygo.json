@@ -1,0 +1,11 @@
+{
+  "name": "myguo",
+  "slug": "myguo",
+  "identifier": "com.myguo.app",
+  "version": "2.0.0",
+  "macos": {
+    "icon": "resources/AppIcon.icon"
+  },
+  "out": "dist",
+  "icon": "resources/icon.png"
+}
