@@ -3518,6 +3518,46 @@ function feedVideoHasPlaybackBuffer(video) {
   return false;
 }
 
+function playbackBufferedRange(video, duration) {
+  const totalDuration = Number(duration);
+  if (!video?.buffered?.length || !Number.isFinite(totalDuration) || totalDuration <= 0) return null;
+
+  const position = Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0;
+  let activeRange = null;
+  let upcomingRange = null;
+
+  for (let i = 0; i < video.buffered.length; i++) {
+    const start = Math.max(0, video.buffered.start(i));
+    const end = Math.min(totalDuration, video.buffered.end(i));
+    if (end <= start) continue;
+
+    if (start <= position && end + 0.001 >= position) {
+      activeRange = { start, end };
+      break;
+    }
+    if (start > position && (!upcomingRange || start < upcomingRange.start)) {
+      upcomingRange = { start, end };
+    }
+  }
+
+  return activeRange || upcomingRange;
+}
+
+function updatePlaybackBufferIndicator(video, indicator, duration) {
+  if (!indicator) return;
+  const range = playbackBufferedRange(video, duration);
+  if (!range) {
+    indicator.style.left = '0%';
+    indicator.style.width = '0%';
+    return;
+  }
+
+  const left = (range.start / duration) * 100;
+  const width = ((range.end - range.start) / duration) * 100;
+  indicator.style.left = `${Math.max(0, Math.min(100, left))}%`;
+  indicator.style.width = `${Math.max(0, Math.min(100 - left, width))}%`;
+}
+
 function waitForFeedPlaybackBuffer(video, timeoutMs = 2500) {
   return new Promise(resolve => {
     if (feedVideoHasPlaybackBuffer(video)) {
@@ -4788,6 +4828,10 @@ function initFeedControls() {
   const commentBtn = document.getElementById('feed-comment');
   const favBtn = document.getElementById('feed-fav');
   const catBar = document.getElementById('feed-cat-bar');
+  const syncFeedBufferIndicator = () => {
+    const feedVideo = getFeedVideo();
+    updatePlaybackBufferIndicator(feedVideo, progressBuffer, feedMediaDuration(feedVideo));
+  };
 
   if (pipBtn) {
     pipBtn.addEventListener('click', (e) => {
@@ -4930,12 +4974,18 @@ function initFeedControls() {
       updateFeedMediaTime(video);
     });
 
-    video.addEventListener('progress', () => {
-      if (video !== getFeedVideo() || video.buffered.length === 0) return;
-      const duration = feedMediaDuration(video);
-      if (!duration) return;
-      const bufferedEnd = video.buffered.end(video.buffered.length - 1);
-      if (progressBuffer) progressBuffer.style.width = (bufferedEnd / duration) * 100 + '%';
+    ['durationchange', 'loadeddata', 'canplay', 'canplaythrough', 'progress', 'seeking', 'seeked', 'timeupdate'].forEach(event => {
+      video.addEventListener(event, () => {
+        if (video !== getFeedVideo()) return;
+        syncFeedBufferIndicator();
+      });
+    });
+
+    ['emptied', 'loadstart'].forEach(event => {
+      video.addEventListener(event, () => {
+        if (video !== getFeedVideo()) return;
+        updatePlaybackBufferIndicator(video, progressBuffer, 0);
+      });
     });
 
     video.addEventListener('ended', () => {
@@ -7002,6 +7052,9 @@ function initPlayerControls() {
   const progressBuffer = document.getElementById('player-progress-buffer');
   const timeDisplay = document.getElementById('player-time-display');
   const timeTooltip = document.getElementById('player-time-tooltip');
+  const syncPlayerBufferIndicator = () => {
+    updatePlaybackBufferIndicator(video, progressBuffer, video.duration);
+  };
 
   // Prevent any modal container accidental horizontal scrolling
   modal.scrollLeft = 0;
@@ -7231,11 +7284,12 @@ function initPlayerControls() {
     }
   });
 
-  video.addEventListener('progress', () => {
-    if (video.buffered.length > 0 && video.duration) {
-      const bufferedEnd = video.buffered.end(video.buffered.length - 1);
-      progressBuffer.style.width = (bufferedEnd / video.duration) * 100 + '%';
-    }
+  ['durationchange', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'progress', 'seeking', 'seeked', 'timeupdate'].forEach(event => {
+    video.addEventListener(event, syncPlayerBufferIndicator);
+  });
+
+  ['emptied', 'loadstart'].forEach(event => {
+    video.addEventListener(event, () => updatePlaybackBufferIndicator(video, progressBuffer, 0));
   });
 
   ['enterpictureinpicture', 'leavepictureinpicture', 'webkitpresentationmodechanged'].forEach(evt => {
