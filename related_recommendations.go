@@ -26,7 +26,7 @@ type relatedCandidate struct {
 	order     int
 }
 
-func (s *HongguoService) GetSeriesRelated(seriesID string) (*SeriesCollectionDTO, error) {
+func (s *HongguoService) GetSeriesRelated(ctx context.Context, seriesID string) (*SeriesCollectionDTO, error) {
 	seriesID = strings.TrimSpace(seriesID)
 	if seriesID == "" {
 		return nil, fmt.Errorf("series ID cannot be empty")
@@ -40,12 +40,12 @@ func (s *HongguoService) GetSeriesRelated(seriesID string) (*SeriesCollectionDTO
 	// The detail request is normally already cached by the page itself. It
 	// supplies the metadata that replaces the anonymous endpoint's generic
 	// "more good dramas" stream.
-	page, err := s.GetSeriesPage(seriesID)
+	page, err := s.GetSeriesPage(ctx, seriesID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch related series: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 
 	candidates := s.relatedCandidates(ctx, page)

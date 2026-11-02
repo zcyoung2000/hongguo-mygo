@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 )
 
@@ -8,7 +9,7 @@ func TestNativeFeaturesIPC(t *testing.T) {
 	svc := &HongguoService{}
 
 	// Test UpdateNowPlaying
-	ok, err := svc.UpdateNowPlaying(UpdateNowPlayingArgs{
+	ok, err := svc.UpdateNowPlaying(context.Background(), UpdateNowPlayingArgs{
 		Title:    "测试短剧",
 		Series:   "测试剧集",
 		Episode:  1,
@@ -26,7 +27,7 @@ func TestNativeFeaturesIPC(t *testing.T) {
 	}
 
 	// Test ClearNowPlaying
-	ok, err = svc.ClearNowPlaying()
+	ok, err = svc.ClearNowPlaying(context.Background(), )
 	if err != nil {
 		t.Fatalf("ClearNowPlaying failed: %v", err)
 	}
@@ -35,7 +36,7 @@ func TestNativeFeaturesIPC(t *testing.T) {
 	}
 
 	// Test SetPlaybackKeepAwake
-	ok, err = svc.SetPlaybackKeepAwake(true)
+	ok, err = svc.SetPlaybackKeepAwake(context.Background(), true)
 	if err != nil {
 		t.Fatalf("SetPlaybackKeepAwake(true) failed: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestNativeFeaturesIPC(t *testing.T) {
 		t.Fatalf("expected SetPlaybackKeepAwake to return true")
 	}
 
-	ok, err = svc.SetPlaybackKeepAwake(false)
+	ok, err = svc.SetPlaybackKeepAwake(context.Background(), false)
 	if err != nil {
 		t.Fatalf("SetPlaybackKeepAwake(false) failed: %v", err)
 	}
@@ -52,7 +53,7 @@ func TestNativeFeaturesIPC(t *testing.T) {
 	}
 
 	// Test SendNativeNotification (gracefully handles unpackaged test binary)
-	_, err = svc.SendNativeNotification(NotificationArgs{
+	_, err = svc.SendNativeNotification(context.Background(), NotificationArgs{
 		Title:    "测试通知",
 		Body:     "这是一个单元测试通知",
 		SeriesID: "12345",
@@ -62,7 +63,7 @@ func TestNativeFeaturesIPC(t *testing.T) {
 	}
 
 	// Test TogglePictureInPicture
-	ok, err = svc.TogglePictureInPicture()
+	ok, err = svc.TogglePictureInPicture(context.Background(), )
 	if err != nil {
 		t.Fatalf("TogglePictureInPicture returned unexpected error: %v", err)
 	}

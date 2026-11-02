@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"sync"
 	"testing"
@@ -25,7 +26,7 @@ func TestHistoryCacheInvalidationIsSynchronized(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 50; i++ {
-			if err := svc.SaveProgress("710000000000001", "710000000000101", "Race", "", 1, 10, 1, 10); err != nil {
+			if err := svc.SaveProgress(context.Background(), "710000000000001", "710000000000101", "Race", "", 1, 10, 1, 10); err != nil {
 				t.Errorf("SaveProgress failed: %v", err)
 				return
 			}
@@ -34,7 +35,7 @@ func TestHistoryCacheInvalidationIsSynchronized(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 50; i++ {
-			if _, err := svc.GetHistory(); err != nil {
+			if _, err := svc.GetHistory(context.Background(), ); err != nil {
 				t.Errorf("GetHistory failed: %v", err)
 				return
 			}

@@ -223,7 +223,7 @@ func (s *HongguoService) fetchTimedCommentFallback(ctx context.Context, seriesID
 	return parseDanmakuPage(raw, seriesID, episodeID, startMs, durationMs)
 }
 
-func (s *HongguoService) GetDanmaku(seriesID, episodeID string, startMs, durationMs int64) (*DanmakuPage, error) {
+func (s *HongguoService) GetDanmaku(ctx context.Context, seriesID, episodeID string, startMs, durationMs int64) (*DanmakuPage, error) {
 	if !validContentID(seriesID) || !validContentID(episodeID) {
 		return nil, fmt.Errorf("无效弹幕归属 ID")
 	}
@@ -237,7 +237,7 @@ func (s *HongguoService) GetDanmaku(seriesID, episodeID string, startMs, duratio
 		durationMs = danmakuMaxWindow
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	raw, err := s.postCommentAPI(ctx, "/novel/commentapi/comment/list/"+episodeID+"/v1/", map[string]any{
 		"comment_source":          601,
@@ -268,7 +268,7 @@ func (s *HongguoService) GetDanmaku(seriesID, episodeID string, startMs, duratio
 	return nil, fmt.Errorf("弹幕接口不可用")
 }
 
-func (s *HongguoService) SendDanmaku(seriesID, episodeID, text string, timeMs int64, replyTo string) (*DanmakuSendResult, error) {
+func (s *HongguoService) SendDanmaku(ctx context.Context, seriesID, episodeID, text string, timeMs int64, replyTo string) (*DanmakuSendResult, error) {
 	if !validContentID(seriesID) || !validContentID(episodeID) {
 		return nil, fmt.Errorf("无效弹幕归属 ID")
 	}
@@ -284,7 +284,7 @@ func (s *HongguoService) SendDanmaku(seriesID, episodeID, text string, timeMs in
 	}
 	replyTo = strings.TrimSpace(replyTo)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	outer := map[string]any{
 		"ignore_urge_rule": false,
@@ -329,7 +329,7 @@ func (s *HongguoService) SendDanmaku(seriesID, episodeID, text string, timeMs in
 	}), nil
 }
 
-func (s *HongguoService) LikeDanmaku(episodeID, danmakuID string, liked bool) (bool, error) {
+func (s *HongguoService) LikeDanmaku(ctx context.Context, episodeID, danmakuID string, liked bool) (bool, error) {
 	if !validContentID(episodeID) {
 		return false, fmt.Errorf("无效分集 ID")
 	}
@@ -340,7 +340,7 @@ func (s *HongguoService) LikeDanmaku(episodeID, danmakuID string, liked bool) (b
 	if !liked {
 		actionType = 2
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	raw, err := s.postCommentAPI(ctx, "/novel/commentapi/comment/do_action/v1/", map[string]any{
 		"object_id":    danmakuID,

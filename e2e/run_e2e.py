@@ -732,14 +732,19 @@ def mod_v(c, w):
         ("V02 video container", "#video-container"),
         ("V03 video loader", "#video-loader"),
         ("V04 center play badge", "#center-play-badge"),
-        ("V05 ambient canvas", "#modal-ambient-canvas"),
+        ("V05 ambient glow controller", None),
         ("V06 comment sheet overlay", "#comment-sheet-overlay"),
         ("V07 comment close btn", "#btn-close-comment-sheet"),
         ("V08 comment list", "#comment-list"),
     ]
     for i, (name, sel) in enumerate(checks):
-        ok, d = elem(c, w, sel)
-        record(name, ok, d, m)
+        if sel is None:
+            # Ambient glow is a JS controller with an offscreen canvas; check the instance.
+            v, e = js(c, w, 'return window.ambientGlow instanceof Object && window.ambientGlow.sampleCanvas !== undefined')
+            record(name, v is True and not e, f"controller={v}, err={e}", m)
+        else:
+            ok, d = elem(c, w, sel)
+            record(name, ok, d, m)
 
 
 # === Module W: Discover Interactions ===
@@ -760,7 +765,12 @@ def mod_w(c, w):
     record("W03 short_play tab active", v is True, f"got {v!r}", m)
     v, e = js(c, w, "return document.querySelector(\".filter-chip[data-key='genre']\") !== null")
     record("W04 chip has data-key", v is True, f"got {v!r}", m)
-    v, e = js(c, w, "return document.querySelectorAll(\".filter-chip[data-key='genre']\").length >= 3")
+    # Clicking W01-W03 chips re-renders the grid; give it a moment to settle.
+    for _ in range(10):
+        v, e = js(c, w, "return document.querySelectorAll(\".filter-chip[data-key='genre']\").length >= 3")
+        if v is True:
+            break
+        wait(0.5)
     record("W05 genre chips >= 3", v is True, f"got {v!r}", m)
     ok, d = js_ok(c, w, 'document.getElementById("btn-discover-load-more")?.click(); return "ok"')
     record("W06 load more click safe", ok, d, m)

@@ -391,8 +391,8 @@ func (s *HongguoService) fetchEpisodeComments(ctx context.Context, seriesID, epi
 
 // GetEpisodeComments loads one page of official episode comments. The first
 // request uses an empty cursor; pagination passes the previous NextCursor.
-func (s *HongguoService) GetEpisodeComments(seriesID, episodeID, cursor string) (*CommentPageDTO, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+func (s *HongguoService) GetEpisodeComments(ctx context.Context, seriesID, episodeID, cursor string) (*CommentPageDTO, error) {
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	page, err := s.fetchEpisodeComments(ctx, seriesID, episodeID, cursor)
 	if err != nil {
@@ -468,8 +468,8 @@ func (s *HongguoService) fetchEpisodeCommentReplies(ctx context.Context, seriesI
 
 // GetEpisodeCommentReplies loads one page of replies for an episode comment.
 // First page uses an empty cursor; pagination passes the numeric NextCursor.
-func (s *HongguoService) GetEpisodeCommentReplies(seriesID, episodeID, commentID, cursor string) (*CommentPageDTO, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+func (s *HongguoService) GetEpisodeCommentReplies(ctx context.Context, seriesID, episodeID, commentID, cursor string) (*CommentPageDTO, error) {
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	page, err := s.fetchEpisodeCommentReplies(ctx, seriesID, episodeID, commentID, cursor)
 	if err != nil {

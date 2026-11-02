@@ -85,8 +85,8 @@ func main() {
 
 	// 4. Create and bind HongguoService for MyGo IPC
 	service := NewHongguoService(client, store, mediaServer, appDir)
-	service.SetAuthTransport(authenticatedTransport)
-	service.SetDeviceProfileStore(filestore.New(profilePath))
+	service.setAuthTransport(authenticatedTransport)
+	service.setDeviceProfileStore(filestore.New(profilePath))
 	mediaServer.SetDeviceResetter(service.resetDeviceWithContext)
 	mygo.Bind(service)
 

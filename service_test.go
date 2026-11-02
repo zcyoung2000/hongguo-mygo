@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -104,7 +105,7 @@ func TestWarmupFeedCancelsStaleWorkBeforeMetadataCompletes(t *testing.T) {
 	}
 	svc := &HongguoService{media: media}
 
-	if err := svc.WarmupFeed("series1", "current", nil, nil, "720p", "medium"); err != nil {
+	if err := svc.WarmupFeed(context.Background(), "series1", "current", nil, nil, "720p", "medium"); err != nil {
 		t.Fatalf("WarmupFeed err = %v", err)
 	}
 	select {
@@ -117,7 +118,7 @@ func TestWarmupFeedCancelsStaleWorkBeforeMetadataCompletes(t *testing.T) {
 func TestRecordFeedMetricsWritesJSONL(t *testing.T) {
 	dir := t.TempDir()
 	svc := &HongguoService{appDir: dir}
-	err := svc.RecordFeedMetrics([]FeedMetricDTO{{
+	err := svc.RecordFeedMetrics(context.Background(), []FeedMetricDTO{{
 		Type:           "switch",
 		FromIndex:      1,
 		ToIndex:        2,
@@ -170,7 +171,7 @@ func TestGetDiscoverUnavailableContentReturnsEmptyResponse(t *testing.T) {
 		cache:  make(map[string]cacheItem),
 	}
 
-	resp, err := svc.GetDiscover("short_play", map[string]string{"category_dim_role": "cate_26"}, "")
+	resp, err := svc.GetDiscover(context.Background(), "short_play", map[string]string{"category_dim_role": "cate_26"}, "")
 	if err != nil {
 		t.Fatalf("GetDiscover should handle content unavailable gracefully, got err: %v", err)
 	}

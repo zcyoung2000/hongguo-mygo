@@ -76,7 +76,7 @@ const (
 	seriesPageDetailBudget = 12 * time.Second
 )
 
-func (s *HongguoService) GetSeriesPage(seriesID string) (*SeriesDetailPageDTO, error) {
+func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*SeriesDetailPageDTO, error) {
 	seriesID = strings.TrimSpace(seriesID)
 	if seriesID == "" {
 		return nil, fmt.Errorf("series ID cannot be empty")
@@ -94,7 +94,7 @@ func (s *HongguoService) GetSeriesPage(seriesID string) (*SeriesDetailPageDTO, e
 	// Otherwise a slow batch consumes the budget and guarantees that the
 	// fallback fails with the same context error, turning a transient
 	// endpoint delay into a failed detail page.
-	batchCtx, batchCancel := context.WithTimeout(context.Background(), seriesDetailTimeout)
+	batchCtx, batchCancel := context.WithTimeout(ctx, seriesDetailTimeout)
 	batch, batchErr := retryAnonymous(s, batchCtx, func(c context.Context) ([]model.SeriesDetail, error) {
 		return s.client.GetSeriesBatch(c, []string{seriesID})
 	})
@@ -108,7 +108,7 @@ func (s *HongguoService) GetSeriesPage(seriesID string) (*SeriesDetailPageDTO, e
 		// Some live-action cards resolve through the player batch endpoint but
 		// are missing (or arrive without episodes) from that response. The
 		// single-series detail endpoint is the detail page's fallback.
-		seriesCtx, seriesCancel := context.WithTimeout(context.Background(), seriesDetailTimeout)
+		seriesCtx, seriesCancel := context.WithTimeout(ctx, seriesDetailTimeout)
 		series, seriesErr := retryAnonymous(s, seriesCtx, func(c context.Context) (*model.Series, error) {
 			return s.client.GetSeries(c, seriesID)
 		})
@@ -126,7 +126,7 @@ func (s *HongguoService) GetSeriesPage(seriesID string) (*SeriesDetailPageDTO, e
 	}
 
 	if len(detail.Episodes) == 0 {
-		episodesCtx, episodesCancel := context.WithTimeout(context.Background(), seriesDetailTimeout)
+		episodesCtx, episodesCancel := context.WithTimeout(ctx, seriesDetailTimeout)
 		if episodes, episodeErr := s.client.ListEpisodes(episodesCtx, seriesID, sdk.EpisodeOptions{}); episodeErr == nil && episodes != nil {
 			detail.Episodes = episodes.Items
 		}
@@ -145,21 +145,21 @@ func (s *HongguoService) GetSeriesPage(seriesID string) (*SeriesDetailPageDTO, e
 	return page, nil
 }
 
-func (s *HongguoService) GetSeriesSeasons(seriesID string) (*SeriesCollectionDTO, error) {
-	return s.getSeasonCollection(seriesID, false)
+func (s *HongguoService) GetSeriesSeasons(ctx context.Context, seriesID string) (*SeriesCollectionDTO, error) {
+	return s.getSeasonCollection(ctx, seriesID, false)
 }
 
 // GetNextSeason returns the first playable season after the current series.
 // Upcoming seasons are skipped because their episodes cannot be resolved yet.
-func (s *HongguoService) GetNextSeason(seriesID string) (*SeriesCard, error) {
-	collection, err := s.getSeasonCollection(seriesID, true)
+func (s *HongguoService) GetNextSeason(ctx context.Context, seriesID string) (*SeriesCard, error) {
+	collection, err := s.getSeasonCollection(ctx, seriesID, true)
 	if err != nil {
 		return nil, err
 	}
 	return nextPlayableSeason(seriesID, collection), nil
 }
 
-func (s *HongguoService) getSeasonCollection(seriesID string, includeCurrent bool) (*SeriesCollectionDTO, error) {
+func (s *HongguoService) getSeasonCollection(ctx context.Context, seriesID string, includeCurrent bool) (*SeriesCollectionDTO, error) {
 	seriesID = strings.TrimSpace(seriesID)
 	if seriesID == "" {
 		return nil, fmt.Errorf("series ID cannot be empty")
@@ -173,7 +173,7 @@ func (s *HongguoService) getSeasonCollection(seriesID string, includeCurrent boo
 		return collection, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), seriesPageDetailBudget)
+	ctx, cancel := context.WithTimeout(ctx, seriesPageDetailBudget)
 	defer cancel()
 
 	album, err := retryAnonymous(s, ctx, func(c context.Context) (*model.Album, error) {
@@ -233,7 +233,7 @@ func nextPlayableSeason(seriesID string, collection *SeriesCollectionDTO) *Serie
 	return nil
 }
 
-func (s *HongguoService) GetSeriesAdaptations(seriesID, sourceID, sourceTitle, excludeIDs string) (*SeriesCollectionDTO, error) {
+func (s *HongguoService) GetSeriesAdaptations(ctx context.Context, seriesID, sourceID, sourceTitle, excludeIDs string) (*SeriesCollectionDTO, error) {
 	seriesID = strings.TrimSpace(seriesID)
 	sourceID = strings.TrimSpace(sourceID)
 	sourceTitle = strings.TrimSpace(sourceTitle)
@@ -251,7 +251,7 @@ func (s *HongguoService) GetSeriesAdaptations(seriesID, sourceID, sourceTitle, e
 		return collection, nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), seriesPageDetailBudget)
+	ctx, cancel := context.WithTimeout(ctx, seriesPageDetailBudget)
 	defer cancel()
 
 	sourceData, err := retryAnonymous(s, ctx, func(c context.Context) (*sdk.Page[model.SeriesSummary], error) {

@@ -1557,34 +1557,12 @@ const state = {
 
 // IPC Helper with auto-wait for window.mygo injection
 async function apiCall(method, ...args) {
-  const getRunner = () => window.mygo || (typeof mygo !== 'undefined' ? mygo : null);
-  let runner = getRunner();
-  if (!runner || !runner.call) {
-    // Wait briefly for mygo runtime injection
-    await new Promise((resolve) => {
-      let tries = 0;
-      const timer = setInterval(() => {
-        tries++;
-        runner = getRunner();
-        if ((runner && runner.call) || tries > 40) {
-          clearInterval(timer);
-          resolve();
-        }
-      }, 25);
-    });
-  }
-
-  if (runner && runner.call) {
-    try {
-      const result = await runner.call('HongguoService.' + method, ...args);
-      return cloneIPCValue(result);
-    } catch (err) {
-      console.error(`API Call [${method}] error:`, err);
-      throw err;
-    }
-  } else {
-    console.warn(`mygo IPC bridge not ready for ${method}`);
-    return null;
+  try {
+    const result = await window.mygo.call('HongguoService.' + method, ...args);
+    return cloneIPCValue(result);
+  } catch (err) {
+    console.error(`API Call [${method}] error:`, err);
+    throw err;
   }
 }
 
