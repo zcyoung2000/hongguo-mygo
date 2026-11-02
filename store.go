@@ -4,9 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +65,22 @@ type ReservationItem struct {
 	PublishAt string `json:"publishAt"`
 	IsOnline  bool   `json:"isOnline"`
 	AddedAt   int64  `json:"addedAt"`
+}
+
+type PendingHistoryUpload struct {
+	HistoryItem
+	EpisodeID string `json:"episodeId"`
+}
+
+type PendingHistoryDelete struct {
+	HistoryItem
+	EpisodeID string `json:"episodeId"`
+}
+
+type PendingFavoriteOp struct {
+	SeriesID  string `json:"seriesId"`
+	Added     bool   `json:"added"`
+	UpdatedAt int64  `json:"updatedAt"`
 }
 
 // UserData holds legacy JSON schema for one-time auto-migration
@@ -204,6 +222,32 @@ func (s *Store) initSchema() error {
 		cleared_at INTEGER NOT NULL
 	);
 
+	CREATE TABLE IF NOT EXISTS pending_history_uploads (
+		series_id TEXT PRIMARY KEY,
+		episode_id TEXT NOT NULL DEFAULT '',
+		title TEXT NOT NULL DEFAULT '',
+		cover_url TEXT NOT NULL DEFAULT '',
+		episode_num INTEGER NOT NULL DEFAULT 1,
+		episode_title TEXT NOT NULL DEFAULT '',
+		position_sec REAL NOT NULL DEFAULT 0.0,
+		duration_sec REAL NOT NULL DEFAULT 0.0,
+		total_episodes INTEGER NOT NULL DEFAULT 0,
+		updated_at INTEGER NOT NULL DEFAULT 0,
+		intro TEXT NOT NULL DEFAULT '',
+		content_type INTEGER NOT NULL DEFAULT 1004
+	);
+	CREATE INDEX IF NOT EXISTS idx_pending_history_uploads_updated
+		ON pending_history_uploads(updated_at);
+
+	CREATE TABLE IF NOT EXISTS pending_history_deletes (
+		series_id TEXT PRIMARY KEY,
+		episode_id TEXT NOT NULL DEFAULT '',
+		episode_num INTEGER NOT NULL DEFAULT 1,
+		deleted_at INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_pending_history_deletes_deleted
+		ON pending_history_deletes(deleted_at);
+
 	CREATE TABLE IF NOT EXISTS favorites (
 		series_id TEXT PRIMARY KEY,
 		title TEXT NOT NULL DEFAULT '',
@@ -213,6 +257,14 @@ func (s *Store) initSchema() error {
 		added_at INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE INDEX IF NOT EXISTS idx_favorites_added ON favorites(added_at DESC);
+
+	CREATE TABLE IF NOT EXISTS pending_favorite_ops (
+		series_id TEXT PRIMARY KEY,
+		added INTEGER NOT NULL DEFAULT 1,
+		updated_at INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_pending_favorite_ops_updated
+		ON pending_favorite_ops(updated_at);
 
 	CREATE TABLE IF NOT EXISTS likes (
 		series_id TEXT NOT NULL,
@@ -618,6 +670,9 @@ func (s *Store) SaveHistory(item HistoryItem) error {
 	if _, err := tx.Exec(`DELETE FROM history_tombstones WHERE series_id = ?`, item.SeriesID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM pending_history_deletes WHERE series_id = ?`, item.SeriesID); err != nil {
+		return err
+	}
 	_, err = tx.Exec(`
 		INSERT INTO history (
 			series_id, title, cover_url, episode_num, episode_title,
@@ -694,6 +749,9 @@ func (s *Store) SaveHistoryBatch(items []HistoryItem) error {
 		}
 		if tombstones[item.SeriesID] {
 			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM pending_history_deletes WHERE series_id = ?`, item.SeriesID); err != nil {
+			return err
 		}
 		if _, err := stmt.Exec(
 			item.SeriesID, item.Title, item.CoverURL, item.EpisodeNum, item.EpisodeTitle,
@@ -790,6 +848,37 @@ func (s *Store) DeleteHistory(seriesID string) error {
 		return err
 	}
 	defer tx.Rollback()
+	var item HistoryItem
+	var episodeID string
+	err = tx.QueryRow(`
+		SELECT series_id, title, cover_url, episode_num, episode_title,
+		       position_sec, duration_sec, total_episodes, updated_at, intro, content_type
+		       ,COALESCE((
+		           SELECT episode_id FROM media_cache
+		           WHERE media_cache.series_id = history.series_id
+		             AND media_cache.episode_num = history.episode_num
+		           ORDER BY updated_at DESC LIMIT 1
+		       ), '')
+		FROM history WHERE series_id = ?
+	`, seriesID).Scan(
+		&item.SeriesID, &item.Title, &item.CoverURL, &item.EpisodeNum, &item.EpisodeTitle,
+		&item.PositionSec, &item.DurationSec, &item.TotalEpisodes, &item.UpdatedAt, &item.Intro, &item.ContentType,
+		&episodeID,
+	)
+	if err == nil {
+		if _, err := tx.Exec(`
+			INSERT INTO pending_history_deletes (series_id, episode_id, episode_num, deleted_at)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(series_id) DO UPDATE SET
+				episode_id = excluded.episode_id,
+				episode_num = excluded.episode_num,
+				deleted_at = excluded.deleted_at
+		`, seriesID, episodeID, item.EpisodeNum, time.Now().Unix()); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM history WHERE series_id = ?`, seriesID); err != nil {
 		return err
 	}
@@ -810,6 +899,52 @@ func (s *Store) ClearHistory() error {
 		return err
 	}
 	defer tx.Rollback()
+	rows, err := tx.Query(`
+		SELECT series_id,
+		       COALESCE((
+		           SELECT episode_id FROM media_cache
+		           WHERE media_cache.series_id = history.series_id
+		             AND media_cache.episode_num = history.episode_num
+		           ORDER BY updated_at DESC LIMIT 1
+		       ), ''),
+		       episode_num
+		FROM history
+	`)
+	if err != nil {
+		return err
+	}
+	type pendingDelete struct {
+		seriesID   string
+		episodeID  string
+		episodeNum int
+	}
+	var pending []pendingDelete
+	for rows.Next() {
+		var item pendingDelete
+		if err := rows.Scan(&item.seriesID, &item.episodeID, &item.episodeNum); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	now := time.Now().Unix()
+	for _, item := range pending {
+		if _, err := tx.Exec(`
+			INSERT INTO pending_history_deletes (series_id, episode_id, episode_num, deleted_at)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT(series_id) DO UPDATE SET
+				episode_id = excluded.episode_id,
+				episode_num = excluded.episode_num,
+				deleted_at = excluded.deleted_at
+		`, item.seriesID, item.episodeID, item.episodeNum, now); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(`DELETE FROM history`); err != nil {
 		return err
 	}
@@ -818,6 +953,147 @@ func (s *Store) ClearHistory() error {
 		ON CONFLICT(id) DO UPDATE SET cleared_at = excluded.cleared_at
 	`, time.Now().Unix()); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) QueueHistoryUpload(item HistoryItem, episodeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if item.SeriesID == "" {
+		return fmt.Errorf("待同步历史 ID 无效")
+	}
+	if item.UpdatedAt <= 0 {
+		item.UpdatedAt = time.Now().Unix()
+	}
+	if item.ContentType == 0 {
+		item.ContentType = 1004
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO pending_history_uploads (
+			series_id, episode_id, title, cover_url, episode_num, episode_title,
+			position_sec, duration_sec, total_episodes, updated_at, intro, content_type
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(series_id) DO UPDATE SET
+			episode_id = excluded.episode_id,
+			title = excluded.title,
+			cover_url = excluded.cover_url,
+			episode_num = excluded.episode_num,
+			episode_title = excluded.episode_title,
+			position_sec = excluded.position_sec,
+			duration_sec = excluded.duration_sec,
+			total_episodes = excluded.total_episodes,
+			updated_at = excluded.updated_at,
+			intro = excluded.intro,
+			content_type = excluded.content_type
+	`, item.SeriesID, episodeID, item.Title, item.CoverURL, item.EpisodeNum, item.EpisodeTitle,
+		item.PositionSec, item.DurationSec, item.TotalEpisodes, item.UpdatedAt, item.Intro, item.ContentType)
+	return err
+}
+
+func (s *Store) PendingHistoryUploads(limit int) ([]PendingHistoryUpload, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT series_id, episode_id, title, cover_url, episode_num, episode_title,
+		       position_sec, duration_sec, total_episodes, updated_at, intro, content_type
+		FROM pending_history_uploads
+		ORDER BY updated_at
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PendingHistoryUpload
+	for rows.Next() {
+		var item PendingHistoryUpload
+		if err := rows.Scan(
+			&item.SeriesID, &item.EpisodeID, &item.Title, &item.CoverURL, &item.EpisodeNum, &item.EpisodeTitle,
+			&item.PositionSec, &item.DurationSec, &item.TotalEpisodes, &item.UpdatedAt, &item.Intro, &item.ContentType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) DeletePendingHistoryUploads(seriesIDs []string) error {
+	if len(seriesIDs) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, seriesID := range seriesIDs {
+		if _, err := tx.Exec(`DELETE FROM pending_history_uploads WHERE series_id = ?`, seriesID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) PendingHistoryDeletes(limit int) ([]PendingHistoryDelete, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT p.series_id, COALESCE(h.title, ''), COALESCE(h.cover_url, ''),
+		       p.episode_num, COALESCE(h.episode_title, ''), 0, 0,
+		       COALESCE(h.total_episodes, 0), p.deleted_at, COALESCE(h.intro, ''), 1004,
+		       p.episode_id
+		FROM pending_history_deletes p
+		LEFT JOIN history h ON h.series_id = p.series_id
+		ORDER BY p.deleted_at
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PendingHistoryDelete
+	for rows.Next() {
+		var item PendingHistoryDelete
+		if err := rows.Scan(
+			&item.SeriesID, &item.Title, &item.CoverURL, &item.EpisodeNum, &item.EpisodeTitle,
+			&item.PositionSec, &item.DurationSec, &item.TotalEpisodes, &item.UpdatedAt, &item.Intro, &item.ContentType,
+			&item.EpisodeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (s *Store) DeletePendingHistoryDeletes(seriesIDs []string) error {
+	if len(seriesIDs) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, seriesID := range seriesIDs {
+		if _, err := tx.Exec(`DELETE FROM pending_history_deletes WHERE series_id = ?`, seriesID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -940,6 +1216,114 @@ func (s *Store) SaveFavoriteBatch(items []FavoriteItem) error {
 			item.AddedAt = time.Now().Unix()
 		}
 		if _, err := stmt.Exec(item.SeriesID, item.Title, item.CoverURL, item.Description, item.TotalEpisodes, item.AddedAt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ReplaceFavoriteBatch(items []FavoriteItem) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM favorites`); err != nil {
+		return err
+	}
+	stmt, err := tx.Prepare(`
+		INSERT INTO favorites (series_id, title, cover_url, description, total_episodes, added_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, item := range items {
+		if item.SeriesID == "" {
+			continue
+		}
+		if item.AddedAt <= 0 {
+			item.AddedAt = time.Now().Unix()
+		}
+		if _, err := stmt.Exec(
+			item.SeriesID, item.Title, item.CoverURL, item.Description,
+			item.TotalEpisodes, item.AddedAt,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) QueueFavoriteOp(seriesID string, added bool) error {
+	if strings.TrimSpace(seriesID) == "" {
+		return fmt.Errorf("待同步收藏 ID 无效")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`
+		INSERT INTO pending_favorite_ops (series_id, added, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(series_id) DO UPDATE SET
+			added = excluded.added,
+			updated_at = excluded.updated_at
+	`, seriesID, boolToInt(added), time.Now().Unix())
+	return err
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func (s *Store) PendingFavoriteOps(limit int) ([]PendingFavoriteOp, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT series_id, added, updated_at
+		FROM pending_favorite_ops
+		ORDER BY updated_at
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PendingFavoriteOp
+	for rows.Next() {
+		var item PendingFavoriteOp
+		var added int
+		if err := rows.Scan(&item.SeriesID, &added, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		item.Added = added != 0
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) DeletePendingFavoriteOps(seriesIDs []string) error {
+	if len(seriesIDs) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, seriesID := range seriesIDs {
+		if _, err := tx.Exec(`DELETE FROM pending_favorite_ops WHERE series_id = ?`, seriesID); err != nil {
 			return err
 		}
 	}

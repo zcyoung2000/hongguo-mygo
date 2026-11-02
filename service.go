@@ -277,52 +277,56 @@ type episodeListResult struct {
 }
 
 type HongguoService struct {
-	client               *sdk.Client
-	store                *Store
-	media                *MediaServer
-	appDir               string
-	deviceProfileStore   sdk.ProfileStore
-	authTransport        authCredentialTransport
-	deviceMu             sync.RWMutex
-	authMu               sync.RWMutex
-	userCookies          string
-	userToken            string
-	deviceID             string
-	iid                  string
-	cdid                 string
-	openudid             string
-	userAgent            string
-	storeRegion          string
-	httpClient           *http.Client
-	cacheMu              sync.RWMutex
-	cache                map[string]cacheItem
-	historyMu            sync.Mutex
-	cachedHistory        []HistoryItem
-	historyCachedAt      time.Time
-	historySyncing       bool
-	historyGeneration    uint64
-	favMu                sync.Mutex
-	cachedFavorites      []FavoriteItem
-	favCachedAt          time.Time
-	favSyncing           bool
-	favGeneration        uint64
-	likeMu               sync.Mutex
-	cachedLikes          []LikeItem
-	likeCachedAt         time.Time
-	likeSyncing          bool
-	likeGeneration       uint64
-	resMu                sync.Mutex
-	cachedReservations   []ReservationItem
-	resCachedAt          time.Time
-	resSyncing           bool
-	resGeneration        uint64
-	feedMu               sync.Mutex
-	metricsMu            sync.Mutex
-	feedWarmupMu         sync.Mutex
-	feedWarmupGeneration uint64
-	episodeMu            sync.Mutex
-	episodeCache         map[string]episodeCacheEntry
-	episodeLoads         map[string]*episodeLoad
+	client                 *sdk.Client
+	store                  *Store
+	media                  *MediaServer
+	appDir                 string
+	deviceProfileStore     sdk.ProfileStore
+	authTransport          authCredentialTransport
+	deviceMu               sync.RWMutex
+	authMu                 sync.RWMutex
+	userCookies            string
+	userToken              string
+	deviceID               string
+	iid                    string
+	cdid                   string
+	openudid               string
+	userAgent              string
+	storeRegion            string
+	httpClient             *http.Client
+	cacheMu                sync.RWMutex
+	cache                  map[string]cacheItem
+	historyMu              sync.Mutex
+	cachedHistory          []HistoryItem
+	historyCachedAt        time.Time
+	historySyncing         bool
+	historyGeneration      uint64
+	historyMutationMu      sync.Mutex
+	historyMutationSyncing bool
+	historyMutationWake    bool
+	favMu                  sync.Mutex
+	cachedFavorites        []FavoriteItem
+	favCachedAt            time.Time
+	favSyncing             bool
+	favGeneration          uint64
+	favMutationMu          sync.Mutex
+	likeMu                 sync.Mutex
+	cachedLikes            []LikeItem
+	likeCachedAt           time.Time
+	likeSyncing            bool
+	likeGeneration         uint64
+	resMu                  sync.Mutex
+	cachedReservations     []ReservationItem
+	resCachedAt            time.Time
+	resSyncing             bool
+	resGeneration          uint64
+	feedMu                 sync.Mutex
+	metricsMu              sync.Mutex
+	feedWarmupMu           sync.Mutex
+	feedWarmupGeneration   uint64
+	episodeMu              sync.Mutex
+	episodeCache           map[string]episodeCacheEntry
+	episodeLoads           map[string]*episodeLoad
 }
 
 func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string) *HongguoService {
@@ -2333,7 +2337,7 @@ func (s *HongguoService) SaveProgress(seriesID, episodeID string, title, coverUR
 	s.historyCachedAt = time.Time{}
 	s.historyGeneration++
 	s.historyMu.Unlock()
-	return s.store.SaveHistory(HistoryItem{
+	item := HistoryItem{
 		SeriesID:      seriesID,
 		Title:         title,
 		CoverURL:      coverURL,
@@ -2343,7 +2347,19 @@ func (s *HongguoService) SaveProgress(seriesID, episodeID string, title, coverUR
 		DurationSec:   durationSec,
 		TotalEpisodes: totalEpisodes,
 		ContentType:   1004,
-	})
+	}
+	if err := s.store.SaveHistory(item); err != nil {
+		return err
+	}
+	stored, ok := s.store.GetHistoryItem(seriesID)
+	if !ok {
+		stored = item
+	}
+	if err := s.store.QueueHistoryUpload(stored, episodeID); err != nil {
+		return err
+	}
+	s.triggerPendingHistorySync()
+	return nil
 }
 
 func (s *HongguoService) GetHistory() ([]HistoryItem, error) {
@@ -2408,25 +2424,39 @@ func (s *HongguoService) GetHistory() ([]HistoryItem, error) {
 	return sanitizeIPC(list), nil
 }
 
-func (s *HongguoService) syncRemoteHistory(generation uint64) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+type remoteHistoryRow struct {
+	SeriesID        string
+	VidIndex        int
+	EpisodeCount    int
+	CurrentPlayTime int64
+	LastWatchTime   int64
+}
 
+type remoteHistoryPage struct {
+	Items      []remoteHistoryRow
+	NextOffset int64
+	HasMore    bool
+}
+
+func (s *HongguoService) fetchRemoteHistoryPage(ctx context.Context, offset int64) (*remoteHistoryPage, error) {
 	userCookies, userToken := s.authCredentials()
 	if userCookies == "" {
-		return
+		return nil, nil
 	}
 	deviceID, iid, cdid, openudid := s.deviceIdentity()
 	pairs := append(defaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
 		[2]string{"book_types", "2"},
 		[2]string{"limit", "50"},
 	)
+	if offset > 0 {
+		pairs = append(pairs, [2]string{"offset", strconv.FormatInt(offset, 10)})
+	}
 	ticket := time.Now().UnixMilli()
 	rawQuery, sigHeaders := sign.SignGET(pairs, ticket, deviceID, "7.3.9.32", nil)
 	reqURL := "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/read_progress/list/v1/?" + rawQuery
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return
+		return nil, err
 	}
 	for key, value := range sigHeaders {
 		req.Header.Set(key, value)
@@ -2441,46 +2471,82 @@ func (s *HongguoService) syncRemoteHistory(generation uint64) {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return
+		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return
-	}
-
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("历史同步接口返回 HTTP %d", resp.StatusCode)
 	}
 
 	var histResp struct {
 		Data struct {
-			VideoData []struct {
-				SeriesID        string `json:"series_id"`
-				VidIndex        int    `json:"vid_index"`
-				EpisodeCount    int    `json:"episode_count"`
-				CurrentPlayTime int64  `json:"current_play_time"`
-				LastWatchTime   int64  `json:"last_watch_time"`
-			} `json:"data_list"`
+			VideoData  []remoteHistoryRow `json:"data_list"`
+			NextOffset int64              `json:"next_offset"`
+			HasMore    bool               `json:"has_more"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &histResp); err != nil || len(histResp.Data.VideoData) == 0 {
+	if err := json.Unmarshal(body, &histResp); err != nil {
+		return nil, err
+	}
+	page := &remoteHistoryPage{
+		Items:      histResp.Data.VideoData,
+		NextOffset: histResp.Data.NextOffset,
+		HasMore:    histResp.Data.HasMore,
+	}
+	if page.HasMore && page.NextOffset <= offset {
+		page.NextOffset = offset + int64(len(page.Items))
+	}
+	return page, nil
+}
+
+func (s *HongguoService) syncRemoteHistory(generation uint64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var remoteRows []remoteHistoryRow
+	offset := int64(0)
+	for page := 0; page < 10; page++ {
+		result, err := s.fetchRemoteHistoryPage(ctx, offset)
+		if err != nil {
+			log.Printf("[history] remote history page %d failed: %v", page, err)
+			return
+		}
+		if result == nil {
+			return
+		}
+		remoteRows = append(remoteRows, result.Items...)
+		if !result.HasMore || len(result.Items) == 0 || result.NextOffset <= offset {
+			break
+		}
+		offset = result.NextOffset
+	}
+	if len(remoteRows) == 0 {
+		s.triggerPendingHistorySync()
 		return
 	}
 
-	var missingIDs []string
-	seen := make(map[string]bool)
-	for _, it := range histResp.Data.VideoData {
-		id := it.SeriesID
-		if id == "" || seen[id] {
+	// The local history model stores one row per series, while the remote
+	// protocol can return several watched episodes for the same series.
+	latestByID := make(map[string]remoteHistoryRow)
+	for _, row := range remoteRows {
+		if row.SeriesID == "" {
 			continue
 		}
-		seen[id] = true
+		current, ok := latestByID[row.SeriesID]
+		if !ok || row.LastWatchTime >= current.LastWatchTime {
+			latestByID[row.SeriesID] = row
+		}
+	}
+
+	var missingIDs []string
+	for id := range latestByID {
 		if s.store.HistoryDeleted(id) {
 			continue
 		}
-
-		// Check if we already have complete drama metadata locally
 		if exist, ok := s.store.GetHistoryItem(id); ok && exist.Title != "" && exist.CoverURL != "" && exist.TotalEpisodes > 0 {
 			continue
 		}
@@ -2499,23 +2565,17 @@ func (s *HongguoService) syncRemoteHistory(generation uint64) {
 			bCancel()
 			if bErr == nil {
 				for _, b := range batch {
-					if b.Series == nil || b.Series.ID == "" {
-						continue
+					if b.Series != nil && b.Series.ID != "" {
+						detailsMap[b.Series.ID] = b
 					}
-					detailsMap[b.Series.ID] = b
 				}
 			}
 		}
 	}
 
-	// Merge with local store
 	var histBatch []HistoryItem
-	for _, it := range histResp.Data.VideoData {
+	for _, it := range latestByID {
 		id := it.SeriesID
-		if id == "" {
-			continue
-		}
-
 		title := ""
 		cover := ""
 		epCount := 0
@@ -2547,20 +2607,21 @@ func (s *HongguoService) syncRemoteHistory(generation uint64) {
 			intro = exist.Intro
 			durationSec = exist.DurationSec
 		} else {
-			// Never synthesize placeholder metadata or progress values. A missing
-			// batch item will be retried on the next authenticated history sync.
+			// Never synthesize placeholder metadata or progress values.
 			continue
 		}
 
-		// The progress protocol reports zero-based episode indexes.
 		epNum := it.VidIndex + 1
 		if epNum <= 0 {
 			epNum = 1
 		}
-		posSec := float64(it.CurrentPlayTime)
+		posSec := float64(it.CurrentPlayTime) / 1000
 		updatedAt := it.LastWatchTime / 1000
 		if updatedAt <= 0 {
 			updatedAt = time.Now().Unix()
+		}
+		if exist, ok := s.store.GetHistoryItem(id); ok && exist.UpdatedAt >= updatedAt {
+			continue
 		}
 
 		histBatch = append(histBatch, HistoryItem{
@@ -2604,15 +2665,19 @@ func (s *HongguoService) syncRemoteHistory(generation uint64) {
 	s.cachedHistory = list
 	s.historyCachedAt = time.Now()
 	s.historyMu.Unlock()
+	s.triggerPendingHistorySync()
 }
-
 func (s *HongguoService) DeleteHistory(seriesID string) error {
 	s.historyMu.Lock()
 	s.cachedHistory = nil
 	s.historyCachedAt = time.Time{}
 	s.historyGeneration++
 	s.historyMu.Unlock()
-	return s.store.DeleteHistory(seriesID)
+	if err := s.store.DeleteHistory(seriesID); err != nil {
+		return err
+	}
+	s.triggerPendingHistorySync()
+	return nil
 }
 
 func (s *HongguoService) ClearHistory() error {
@@ -2621,7 +2686,11 @@ func (s *HongguoService) ClearHistory() error {
 	s.historyCachedAt = time.Time{}
 	s.historyGeneration++
 	s.historyMu.Unlock()
-	return s.store.ClearHistory()
+	if err := s.store.ClearHistory(); err != nil {
+		return err
+	}
+	s.triggerPendingHistorySync()
+	return nil
 }
 
 func (s *HongguoService) ToggleFavorite(seriesID, title, coverURL, desc string, totalEpisodes int) (bool, error) {
@@ -2629,11 +2698,8 @@ func (s *HongguoService) ToggleFavorite(seriesID, title, coverURL, desc string, 
 	if !validContentID(seriesID) {
 		return false, fmt.Errorf("收藏 ID 无效")
 	}
-	s.favMu.Lock()
-	s.cachedFavorites = nil
-	s.favCachedAt = time.Time{}
-	s.favGeneration++
-	s.favMu.Unlock()
+	s.favMutationMu.Lock()
+	defer s.favMutationMu.Unlock()
 	wasAdded, err := s.store.ToggleFavorite(FavoriteItem{
 		SeriesID:      seriesID,
 		Title:         title,
@@ -2642,11 +2708,18 @@ func (s *HongguoService) ToggleFavorite(seriesID, title, coverURL, desc string, 
 		TotalEpisodes: totalEpisodes,
 	})
 	if err != nil {
-		s.favMu.Lock()
-		s.favGeneration++
-		s.favMu.Unlock()
+		return false, err
 	}
-	return wasAdded, err
+	s.favMu.Lock()
+	s.cachedFavorites = nil
+	s.favCachedAt = time.Time{}
+	s.favGeneration++
+	s.favMu.Unlock()
+	if err := s.store.QueueFavoriteOp(seriesID, wasAdded); err != nil {
+		return wasAdded, err
+	}
+	s.triggerPendingFavoriteSync()
+	return wasAdded, nil
 }
 
 func (s *HongguoService) IsFavorite(seriesID string) (bool, error) {
@@ -2663,6 +2736,8 @@ func (s *HongguoService) GetFavorites() ([]FavoriteItem, error) {
 		s.favMu.Unlock()
 		return sanitizeIPC(cached), nil
 	}
+
+	userCookies, _ := s.authCredentials()
 
 	// 2. Check local store (sub-millisecond instant return)
 	localItems, err := s.store.GetFavorites()
@@ -2681,7 +2756,7 @@ func (s *HongguoService) GetFavorites() ([]FavoriteItem, error) {
 		generation := s.favGeneration
 
 		// Stale-While-Revalidate: trigger async background sync without blocking user
-		if shouldSync && !s.favSyncing {
+		if userCookies != "" && shouldSync && !s.favSyncing {
 			s.favSyncing = true
 			go func() {
 				defer func() {
@@ -2696,6 +2771,14 @@ func (s *HongguoService) GetFavorites() ([]FavoriteItem, error) {
 		return sanitizeIPC(localItems), nil
 	}
 	s.favMu.Unlock()
+
+	if userCookies == "" {
+		s.favMu.Lock()
+		s.cachedFavorites = localItems
+		s.favCachedAt = time.Now()
+		s.favMu.Unlock()
+		return sanitizeIPC(localItems), nil
+	}
 
 	// 3. Local store empty -> synchronous fetch
 	s.syncRemoteFavorites(s.currentFavoriteGeneration())
@@ -2716,6 +2799,21 @@ func (s *HongguoService) GetFavorites() ([]FavoriteItem, error) {
 }
 
 func (s *HongguoService) syncRemoteFavorites(generation uint64) {
+	userCookies, _ := s.authCredentials()
+	if userCookies == "" {
+		return
+	}
+	processed, err := s.syncPendingFavoriteOps()
+	if err != nil {
+		log.Printf("[favorites] pending ops blocked remote sync: %v", err)
+		return
+	}
+	if processed > 0 {
+		// The shelf list can briefly lag a successful mutation. Avoid replacing
+		// local state with a stale snapshot; the next periodic sync will refresh.
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -2749,12 +2847,11 @@ func (s *HongguoService) syncRemoteFavorites(generation uint64) {
 		return
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
 		return
 	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
+	if resp.StatusCode != http.StatusOK {
 		return
 	}
 
@@ -2766,20 +2863,37 @@ func (s *HongguoService) syncRemoteFavorites(generation uint64) {
 			} `json:"video_shelf_info"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &shelfResp); err != nil || len(shelfResp.Data.VideoShelfInfo) == 0 {
+	if err := json.Unmarshal(body, &shelfResp); err != nil {
 		return
 	}
 
-	var missingIDs []string
+	// The shelf response is authoritative only after every remote ID can be
+	// represented locally. If metadata lookup is partial, merge what we have
+	// and retry later rather than treating unresolved entries as deletions.
+	remoteIDs := make(map[string]bool)
 	seen := make(map[string]bool)
 	for _, it := range shelfResp.Data.VideoShelfInfo {
 		if it.SeriesID != "" && !seen[it.SeriesID] {
 			seen[it.SeriesID] = true
-			if exist, ok := s.store.GetFavoriteItem(it.SeriesID); ok && exist.Title != "" && exist.CoverURL != "" {
-				continue
-			}
-			missingIDs = append(missingIDs, it.SeriesID)
+			remoteIDs[it.SeriesID] = true
 		}
+	}
+	if len(remoteIDs) == 0 {
+		if s.currentFavoriteGeneration() == generation {
+			if err := s.store.ReplaceFavoriteBatch(nil); err != nil {
+				return
+			}
+		}
+		s.refreshFavoriteCache(generation)
+		return
+	}
+
+	var missingIDs []string
+	for id := range remoteIDs {
+		if exist, ok := s.store.GetFavoriteItem(id); ok && exist.Title != "" && exist.CoverURL != "" {
+			continue
+		}
+		missingIDs = append(missingIDs, id)
 	}
 
 	detailsMap := make(map[string]model.SeriesDetail)
@@ -2794,18 +2908,18 @@ func (s *HongguoService) syncRemoteFavorites(generation uint64) {
 			bCancel()
 			if bErr == nil {
 				for _, b := range batch {
-					if b.Series == nil || b.Series.ID == "" {
-						continue
+					if b.Series != nil && b.Series.ID != "" {
+						detailsMap[b.Series.ID] = b
 					}
-					detailsMap[b.Series.ID] = b
 				}
 			}
 		}
 	}
 
 	var favBatch []FavoriteItem
+	resolvedIDs := make(map[string]bool)
 	for _, it := range shelfResp.Data.VideoShelfInfo {
-		if it.SeriesID == "" {
+		if it.SeriesID == "" || resolvedIDs[it.SeriesID] {
 			continue
 		}
 		modTime := time.Now().Unix()
@@ -2822,6 +2936,7 @@ func (s *HongguoService) syncRemoteFavorites(generation uint64) {
 				TotalEpisodes: b.Series.EpisodeCount,
 				AddedAt:       modTime,
 			})
+			resolvedIDs[it.SeriesID] = true
 		} else if exist, ok := s.store.GetFavoriteItem(it.SeriesID); ok {
 			favBatch = append(favBatch, FavoriteItem{
 				SeriesID:      exist.SeriesID,
@@ -2831,18 +2946,25 @@ func (s *HongguoService) syncRemoteFavorites(generation uint64) {
 				TotalEpisodes: exist.TotalEpisodes,
 				AddedAt:       modTime,
 			})
+			resolvedIDs[it.SeriesID] = true
 		}
 	}
 
-	if len(favBatch) > 0 {
-		if s.currentFavoriteGeneration() != generation {
-			return
-		}
+	if len(favBatch) > 0 && s.currentFavoriteGeneration() == generation {
 		if err := s.store.SaveFavoriteBatch(favBatch); err != nil {
 			return
 		}
 	}
+	if len(resolvedIDs) != len(remoteIDs) || s.currentFavoriteGeneration() != generation {
+		return
+	}
+	if err := s.store.ReplaceFavoriteBatch(favBatch); err != nil {
+		return
+	}
+	s.refreshFavoriteCache(generation)
+}
 
+func (s *HongguoService) refreshFavoriteCache(generation uint64) {
 	s.favMu.Lock()
 	if s.favGeneration != generation {
 		s.favMu.Unlock()
@@ -2860,7 +2982,6 @@ func (s *HongguoService) syncRemoteFavorites(generation uint64) {
 	s.favCachedAt = time.Now()
 	s.favMu.Unlock()
 }
-
 func (s *HongguoService) ToggleLike(seriesID, episodeID, title, coverURL string, episodeNum int) (bool, error) {
 	userCookies, _ := s.authCredentials()
 	seriesID = strings.TrimSpace(seriesID)

@@ -4766,8 +4766,8 @@ function initFeedControls() {
   const feedContainer = document.getElementById('feed-container');
   const feedStage = document.getElementById('feed-stage');
   const playBtn = document.getElementById('feed-play');
-  const iconPlay = document.getElementById('feed-icon-play');
-  const iconPause = document.getElementById('feed-icon-pause');
+  const iconPlay = playBtn?.querySelector('.icon-play');
+  const iconPause = playBtn?.querySelector('.icon-pause');
   const centerPlay = document.getElementById('feed-play-indicator');
   const prevEpBtn = document.getElementById('feed-prev-ep');
   const nextEpBtn = document.getElementById('feed-next-ep');
