@@ -15,10 +15,10 @@ import (
 )
 
 func (s *HongguoService) ResetDevice(ctx context.Context) error {
-	return s.ResetDeviceWithContext(ctx)
+	return s.resetDeviceWithContext(ctx)
 }
 
-func (s *HongguoService) ResetDeviceWithContext(ctx context.Context) error {
+func (s *HongguoService) resetDeviceWithContext(ctx context.Context) error {
 	s.deviceMu.Lock()
 	defer s.deviceMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -268,7 +268,6 @@ func (s *HongguoService) ImportHgplayerAccount(ctx context.Context) (*UserProfil
 	}
 	return s.LoginWithCookies(ctx, acc.Cookies, acc.Token)
 }
-
 
 // ============================================================================
 // macOS Native Integration IPC Handlers

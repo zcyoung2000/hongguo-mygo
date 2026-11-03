@@ -78,10 +78,15 @@ func main() {
 	native.SetFeedScrollCapture(true)
 
 	// 4. Create and bind HongguoService for MyGo IPC
-	service := ipc.NewHongguoService(client, store, mediaServer, appDir)
-	service.SetAuthTransport(authenticatedTransport)
-	service.SetDeviceProfileStore(filestore.New(profilePath))
-	mediaServer.SetDeviceResetter(service.ResetDeviceWithContext)
+	service := ipc.NewHongguoService(
+		client,
+		store,
+		mediaServer,
+		appDir,
+		ipc.WithAuthTransport(authenticatedTransport),
+		ipc.WithDeviceProfileStore(filestore.New(profilePath)),
+	)
+	mediaServer.SetDeviceResetter(service.ResetDevice)
 	mygo.Bind(service)
 
 	// 5. Setup embedded frontend

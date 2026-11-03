@@ -187,7 +187,17 @@ type HongguoService struct {
 	episodeLoads         map[string]*episodeLoad
 }
 
-func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string) *HongguoService {
+type ServiceOption func(*HongguoService)
+
+func WithAuthTransport(transport auth.CredentialTransport) ServiceOption {
+	return func(s *HongguoService) { s.setAuthTransport(transport) }
+}
+
+func WithDeviceProfileStore(store sdk.ProfileStore) ServiceOption {
+	return func(s *HongguoService) { s.setDeviceProfileStore(store) }
+}
+
+func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string, opts ...ServiceOption) *HongguoService {
 	tr := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -216,6 +226,9 @@ func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 		cache:        make(map[string]cacheItem),
 		episodeCache: make(map[string]episodeCacheEntry),
 		episodeLoads: make(map[string]*episodeLoad),
+	}
+	for _, opt := range opts {
+		opt(svc)
 	}
 	home, _ := os.UserHomeDir()
 	// 1. Try loading account.json from appDir or fallback to hgplayer
@@ -300,13 +313,13 @@ func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 	return svc
 }
 
-func (s *HongguoService) SetDeviceProfileStore(store sdk.ProfileStore) {
+func (s *HongguoService) setDeviceProfileStore(store sdk.ProfileStore) {
 	s.deviceMu.Lock()
 	defer s.deviceMu.Unlock()
 	s.deviceProfileStore = store
 }
 
-func (s *HongguoService) SetAuthTransport(transport auth.CredentialTransport) {
+func (s *HongguoService) setAuthTransport(transport auth.CredentialTransport) {
 	s.authTransport = transport
 	s.syncAuthTransport()
 }
