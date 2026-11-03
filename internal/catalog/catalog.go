@@ -1,4 +1,4 @@
-package ipc
+package catalog
 
 import (
 	"context"
@@ -13,15 +13,332 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-func (s *HongguoService) GetFilterPanel(ctx context.Context, genre string) ([]FilterRowDTO, error) {
+type SeriesCard struct {
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Description  string   `json:"description"`
+	CoverURL     string   `json:"coverUrl"`
+	EpisodeCount int      `json:"episodeCount"`
+	Category     string   `json:"category"`
+	ContentType  int      `json:"contentType,omitempty"`
+	Kind         string   `json:"kind,omitempty"`
+	BadgeText    string   `json:"badgeText,omitempty"`
+	Author       string   `json:"author"`
+	Status       string   `json:"status"`
+	Heat         string   `json:"heat"`
+	Tags         []string `json:"tags"`
+	Upcoming     bool     `json:"upcoming,omitempty"`
+	Reserved     bool     `json:"reserved,omitempty"`
+}
+
+type FilterOptionDTO struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type FilterRowDTO struct {
+	Key     string            `json:"key"`
+	Name    string            `json:"name"`
+	Options []FilterOptionDTO `json:"options"`
+}
+
+type DiscoverResponse struct {
+	Items   []SeriesCard `json:"items"`
+	HasMore bool         `json:"hasMore"`
+	Cursor  string       `json:"cursor"`
+}
+
+type RankTabDTO struct {
+	ContentID string `json:"contentId"`
+	BoardID   string `json:"boardId"`
+	Title     string `json:"title"`
+	IsDefault bool   `json:"isDefault"`
+}
+
+type RankItemDTO struct {
+	Position    int      `json:"position"`
+	SeriesID    string   `json:"seriesId"`
+	Title       string   `json:"title"`
+	CoverURL    string   `json:"coverUrl"`
+	Heat        string   `json:"heat"`
+	Description string   `json:"description"`
+	ItemType    string   `json:"itemType"`
+	Promoted    bool     `json:"promoted,omitempty"`
+	Actor       string   `json:"actor,omitempty"`
+	ActorID     string   `json:"actorId,omitempty"`
+	UserID      string   `json:"userId,omitempty"`
+	AvatarURL   string   `json:"avatarUrl,omitempty"`
+	Intro       string   `json:"intro,omitempty"`
+	Details     []string `json:"details,omitempty"`
+}
+
+type RankResponse struct {
+	Contents []model.RankContent `json:"contents"`
+	Content  string              `json:"content"`
+	Board    string              `json:"board"`
+	Items    []RankItemDTO       `json:"items"`
+	Cursor   string              `json:"cursor,omitempty"`
+	HasMore  bool                `json:"hasMore"`
+}
+
+type ActorProfileDTO struct {
+	UserID      string       `json:"userId"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	AvatarURL   string       `json:"avatarUrl"`
+	Tags        []string     `json:"tags"`
+	Labels      []string     `json:"labels"`
+	Followers   int64        `json:"followers"`
+	Likes       int64        `json:"likes"`
+	Works       []SeriesCard `json:"works"`
+	HasMore     bool         `json:"hasMore"`
+	Cursor      string       `json:"cursor"`
+}
+
+type ActorWorksResponse struct {
+	Works   []SeriesCard `json:"works"`
+	HasMore bool         `json:"hasMore"`
+	Cursor  string       `json:"cursor"`
+}
+
+type NewReleaseItemDTO struct {
+	SeriesID     string `json:"seriesId"`
+	Title        string `json:"title"`
+	CoverURL     string `json:"coverUrl"`
+	EpisodeCount int    `json:"episodeCount"`
+	Online       bool   `json:"online"`
+	Heat         string `json:"heat"`
+	Note         string `json:"note"`
+	Category     string `json:"category"`
+	Reserved     bool   `json:"reserved,omitempty"`
+}
+
+type NewReleaseResponse struct {
+	CurrentDate string              `json:"currentDate"`
+	Dates       []string            `json:"dates"`
+	Items       []NewReleaseItemDTO `json:"items"`
+}
+
+type HotSearchDTO struct {
+	Words []string `json:"words"`
+}
+
+type EpisodeDTO struct {
+	ID           string `json:"id"`
+	SeriesID     string `json:"seriesId"`
+	Number       int    `json:"number"`
+	Title        string `json:"title"`
+	Playable     bool   `json:"playable"`
+	PosterURL    string `json:"posterUrl,omitempty"`
+	CommentCount int64  `json:"commentCount"`
+}
+
+type SeriesDetailDTO struct {
+	ID           string       `json:"id"`
+	Title        string       `json:"title"`
+	Description  string       `json:"description"`
+	CoverURL     string       `json:"coverUrl"`
+	EpisodeCount int          `json:"episodeCount"`
+	Status       string       `json:"status"`
+	Heat         string       `json:"heat"`
+	Episodes     []EpisodeDTO `json:"episodes"`
+	CommentCount int64        `json:"commentCount"`
+	IsFavorite   bool         `json:"isFavorite"`
+}
+
+type cacheItem struct {
+	val       any
+	expiresAt time.Time
+}
+
+type Dependencies struct {
+	Credentials       func() (cookies, token string)
+	DeviceIdentity    func() (deviceID, installID, cdid, openudid string)
+	Runtime           func() (userAgent, storeRegion string)
+	ReservedSeriesIDs func(ctx context.Context) ([]string, error)
+	Episodes          func(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error)
+	IsFavorite        func(seriesID string) bool
+}
+
+type Service struct {
+	client            *sdk.Client
+	imageURL          func(string) string
+	httpClient        *http.Client
+	credentials       func() (cookies, token string)
+	deviceIdentity    func() (deviceID, installID, cdid, openudid string)
+	runtime           func() (userAgent, storeRegion string)
+	reservedSeriesIDs func(ctx context.Context) ([]string, error)
+	episodes          func(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error)
+	isFavorite        func(seriesID string) bool
+	cacheMu           sync.RWMutex
+	cache             map[string]cacheItem
+}
+
+func NewService(client *sdk.Client, imageURL func(string) string, httpClient *http.Client, deps Dependencies) *Service {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
+	if deps.Credentials == nil {
+		deps.Credentials = func() (string, string) { return "", "" }
+	}
+	if deps.DeviceIdentity == nil {
+		deps.DeviceIdentity = func() (string, string, string, string) { return "", "", "", "" }
+	}
+	if deps.Runtime == nil {
+		deps.Runtime = func() (string, string) { return "", "" }
+	}
+	if deps.ReservedSeriesIDs == nil {
+		deps.ReservedSeriesIDs = func(context.Context) ([]string, error) { return nil, nil }
+	}
+	if deps.Episodes == nil {
+		deps.Episodes = func(context.Context, string) (*sdk.Page[model.Episode], error) {
+			return nil, errors.New("episode provider unavailable")
+		}
+	}
+	if deps.IsFavorite == nil {
+		deps.IsFavorite = func(string) bool { return false }
+	}
+	return &Service{
+		client: client, imageURL: imageURL, httpClient: httpClient,
+		credentials: deps.Credentials, deviceIdentity: deps.DeviceIdentity,
+		runtime: deps.Runtime, reservedSeriesIDs: deps.ReservedSeriesIDs,
+		episodes: deps.Episodes, isFavorite: deps.IsFavorite,
+		cache: make(map[string]cacheItem),
+	}
+}
+
+func (s *Service) Invalidate() {
+	s.cacheMu.Lock()
+	s.cache = make(map[string]cacheItem)
+	s.cacheMu.Unlock()
+}
+
+func shortFilterSelections(genre string, values map[string]string) map[string][]string {
+	selections := make(map[string][]string)
+	if genre != "" && genre != "all" {
+		selections["genre"] = []string{genre}
+	}
+	for key, value := range values {
+		if key == "genre" || value == "" || value == "all" {
+			continue
+		}
+		selections[key] = []string{value}
+	}
+	return selections
+}
+
+func pageItems[T any](page *sdk.Page[T]) []T {
+	if page == nil {
+		return nil
+	}
+	return page.Items
+}
+
+func shortRankItems(rank *model.ShortRanking) []model.RankItem {
+	if rank == nil {
+		return nil
+	}
+	return rank.Items
+}
+
+func shortRankContents(rank *model.ShortRanking) []model.RankContent {
+	if rank == nil {
+		return nil
+	}
+	return rank.Contents
+}
+
+func shortRankContent(rank *model.ShortRanking) string {
+	if rank == nil {
+		return ""
+	}
+	return rank.Content
+}
+
+func shortRankBoard(rank *model.ShortRanking) string {
+	if rank == nil {
+		return ""
+	}
+	return rank.Board
+}
+
+func newReleaseItems(page *model.NewReleasePage) []model.NewRelease {
+	if page == nil {
+		return nil
+	}
+	return page.Items
+}
+
+func newReleaseDate(page *model.NewReleasePage) string {
+	if page == nil {
+		return ""
+	}
+	return page.Date
+}
+
+func newReleaseDates(page *model.NewReleasePage) []string {
+	if page == nil {
+		return nil
+	}
+	return page.Dates
+}
+
+func workItems(page *model.WorkPage) []model.Work {
+	if page == nil {
+		return nil
+	}
+	return page.Items
+}
+
+func workCursor(page *model.WorkPage) string {
+	if page == nil {
+		return ""
+	}
+	return page.Cursor
+}
+
+func shortFilterItems(page *model.ShortFilterPage) []model.SeriesSummary {
+	if page == nil {
+		return nil
+	}
+	return page.Items
+}
+
+func shortFilterHasMore(page *model.ShortFilterPage) bool {
+	return page != nil && page.HasMore
+}
+
+func shortFilterCursor(page *model.ShortFilterPage) string {
+	if page == nil {
+		return ""
+	}
+	return page.Cursor
+}
+
+func hotGuesses(hot *model.HotSearch) []model.HotItem {
+	if hot == nil {
+		return nil
+	}
+	return hot.Guesses
+}
+
+func hotBoards(hot *model.HotSearch) []model.HotBoard {
+	if hot == nil {
+		return nil
+	}
+	return hot.Boards
+}
+
+func (s *Service) GetFilterPanel(ctx context.Context, genre string) ([]FilterRowDTO, error) {
 	cacheKey := "filter_panel:" + genre
 	s.cacheMu.RLock()
 	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
 		s.cacheMu.RUnlock()
-		return sanitizeIPC(entry.val.([]FilterRowDTO)), nil
+		return entry.val.([]FilterRowDTO), nil
 	}
 	s.cacheMu.RUnlock()
 
@@ -52,10 +369,10 @@ func (s *HongguoService) GetFilterPanel(ctx context.Context, genre string) ([]Fi
 	s.cache[cacheKey] = cacheItem{val: res, expiresAt: time.Now().Add(1 * time.Hour)}
 	s.cacheMu.Unlock()
 
-	return sanitizeIPC(res), nil
+	return res, nil
 }
 
-func (s *HongguoService) GetDiscover(ctx context.Context, genre string, selections map[string]string, cursor string) (DiscoverResponse, error) {
+func (s *Service) GetDiscover(ctx context.Context, genre string, selections map[string]string, cursor string) (DiscoverResponse, error) {
 	selectionJSON, err := json.Marshal(selections)
 	if err != nil {
 		return DiscoverResponse{}, fmt.Errorf("encode discover selections: %w", err)
@@ -64,7 +381,7 @@ func (s *HongguoService) GetDiscover(ctx context.Context, genre string, selectio
 	s.cacheMu.RLock()
 	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
 		s.cacheMu.RUnlock()
-		return sanitizeIPC(entry.val.(DiscoverResponse)), nil
+		return entry.val.(DiscoverResponse), nil
 	}
 	s.cacheMu.RUnlock()
 
@@ -87,7 +404,7 @@ func (s *HongguoService) GetDiscover(ctx context.Context, genre string, selectio
 			s.cacheMu.Lock()
 			s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
 			s.cacheMu.Unlock()
-			return sanitizeIPC(resp), nil
+			return resp, nil
 		}
 		return DiscoverResponse{}, err
 	}
@@ -105,7 +422,7 @@ func (s *HongguoService) GetDiscover(ctx context.Context, genre string, selectio
 			ID:           it.ID,
 			Title:        it.Title,
 			Description:  it.Description,
-			CoverURL:     s.media.ImageURL(it.CoverURL),
+			CoverURL:     s.imageURL(it.CoverURL),
 			EpisodeCount: it.EpisodeCount,
 			Category:     it.Category,
 			Author:       it.Author,
@@ -125,11 +442,11 @@ func (s *HongguoService) GetDiscover(ctx context.Context, genre string, selectio
 	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
 	s.cacheMu.Unlock()
 
-	return sanitizeIPC(resp), nil
+	return resp, nil
 }
 
-func (s *HongguoService) GetRankings(ctx context.Context, contentId, boardId, cursor string) (RankResponse, error) {
-	userCookies, _ := s.authCredentials()
+func (s *Service) GetRankings(ctx context.Context, contentId, boardId, cursor string) (RankResponse, error) {
+	userCookies, _ := s.credentials()
 	rankScope := "anonymous"
 	if userCookies != "" {
 		rankScope = "account"
@@ -138,7 +455,7 @@ func (s *HongguoService) GetRankings(ctx context.Context, contentId, boardId, cu
 	s.cacheMu.RLock()
 	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
 		s.cacheMu.RUnlock()
-		return sanitizeIPC(entry.val.(RankResponse)), nil
+		return entry.val.(RankResponse), nil
 	}
 	s.cacheMu.RUnlock()
 
@@ -183,9 +500,9 @@ func (s *HongguoService) GetRankings(ctx context.Context, contentId, boardId, cu
 			if title == "" {
 				title = it.Title
 			}
-			avatar := s.media.ImageURL(it.AvatarURL)
+			avatar := s.imageURL(it.AvatarURL)
 			if avatar == "" && it.CoverURL != "" {
-				avatar = s.media.ImageURL(it.CoverURL)
+				avatar = s.imageURL(it.CoverURL)
 			}
 			desc := it.Intro
 			if desc == "" && len(it.Details) > 0 {
@@ -218,7 +535,7 @@ func (s *HongguoService) GetRankings(ctx context.Context, contentId, boardId, cu
 				Position:    it.Position,
 				SeriesID:    it.SeriesID,
 				Title:       it.Title,
-				CoverURL:    s.media.ImageURL(it.CoverURL),
+				CoverURL:    s.imageURL(it.CoverURL),
 				Heat:        it.Score,
 				Description: desc,
 				ItemType:    "drama",
@@ -244,7 +561,7 @@ func (s *HongguoService) GetRankings(ctx context.Context, contentId, boardId, cu
 	}
 	s.cacheMu.Unlock()
 
-	return sanitizeIPC(resp), nil
+	return resp, nil
 }
 
 type rankCursor struct {
@@ -279,8 +596,8 @@ func encodeRankCursor(cur rankCursor) (string, error) {
 	return "s1." + base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
-func (s *HongguoService) fetchAccountShortRank(ctx context.Context, contentId, boardId, cursor string) (*model.ShortRanking, error) {
-	userCookies, userToken := s.authCredentials()
+func (s *Service) fetchAccountShortRank(ctx context.Context, contentId, boardId, cursor string) (*model.ShortRanking, error) {
+	userCookies, userToken := s.credentials()
 	cur, err := decodeRankCursor(cursor)
 	if err != nil {
 		return nil, err
@@ -365,8 +682,9 @@ func (s *HongguoService) fetchAccountShortRank(ctx context.Context, contentId, b
 	if userToken != "" {
 		req.Header.Set("x-tt-token", userToken)
 	}
-	req.Header.Set("User-Agent", s.userAgent)
-	req.Header.Set("x-tt-store-region", s.storeRegion)
+	userAgent, storeRegion := s.runtime()
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("x-tt-store-region", storeRegion)
 	req.Header.Set("x-ss-req-ticket", strconv.FormatInt(ticket, 10))
 
 	resp, err := s.httpClient.Do(req)
@@ -576,6 +894,10 @@ func shortRankHasMore(rank *model.ShortRanking) bool {
 }
 
 func formatHeatScore(n int64) string {
+	return FormatHeatScore(n)
+}
+
+func FormatHeatScore(n int64) string {
 	if n >= 100000000 {
 		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/100000000.0), ".0") + "亿"
 	} else if n >= 10000 {
@@ -584,7 +906,7 @@ func formatHeatScore(n int64) string {
 	return strconv.FormatInt(n, 10)
 }
 
-func (s *HongguoService) GetActorProfile(ctx context.Context, userID string) (*ActorProfileDTO, error) {
+func (s *Service) GetActorProfile(ctx context.Context, userID string) (*ActorProfileDTO, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return nil, fmt.Errorf("user ID cannot be empty")
@@ -636,7 +958,7 @@ func (s *HongguoService) GetActorProfile(ctx context.Context, userID string) (*A
 				ID:           w.SeriesID,
 				Title:        w.Title,
 				Description:  w.Description,
-				CoverURL:     s.media.ImageURL(w.CoverURL),
+				CoverURL:     s.imageURL(w.CoverURL),
 				EpisodeCount: w.EpisodeCount,
 				Category:     category,
 				Author:       person.Name,
@@ -651,7 +973,7 @@ func (s *HongguoService) GetActorProfile(ctx context.Context, userID string) (*A
 		UserID:      person.UserID,
 		Name:        person.Name,
 		Description: person.Description,
-		AvatarURL:   s.media.ImageURL(person.AvatarURL),
+		AvatarURL:   s.imageURL(person.AvatarURL),
 		Tags:        person.Tags,
 		Labels:      person.Labels,
 		Followers:   person.Followers,
@@ -660,8 +982,6 @@ func (s *HongguoService) GetActorProfile(ctx context.Context, userID string) (*A
 		HasMore:     hasMore,
 		Cursor:      cursor,
 	}
-	dto = sanitizeIPC(dto)
-
 	s.cacheMu.Lock()
 	s.cache[cacheKey] = cacheItem{val: dto, expiresAt: time.Now().Add(10 * time.Minute)}
 	s.cacheMu.Unlock()
@@ -669,7 +989,7 @@ func (s *HongguoService) GetActorProfile(ctx context.Context, userID string) (*A
 	return dto, nil
 }
 
-func (s *HongguoService) GetActorWorks(ctx context.Context, userID, cursor string) (*ActorWorksResponse, error) {
+func (s *Service) GetActorWorks(ctx context.Context, userID, cursor string) (*ActorWorksResponse, error) {
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return nil, fmt.Errorf("user ID cannot be empty")
@@ -702,7 +1022,7 @@ func (s *HongguoService) GetActorWorks(ctx context.Context, userID, cursor strin
 			ID:           w.SeriesID,
 			Title:        w.Title,
 			Description:  w.Description,
-			CoverURL:     s.media.ImageURL(w.CoverURL),
+			CoverURL:     s.imageURL(w.CoverURL),
 			EpisodeCount: w.EpisodeCount,
 			Category:     category,
 			Status:       "finished",
@@ -711,19 +1031,19 @@ func (s *HongguoService) GetActorWorks(ctx context.Context, userID, cursor strin
 		})
 	}
 
-	return sanitizeIPC(&ActorWorksResponse{
+	return &ActorWorksResponse{
 		Works:   works,
 		HasMore: worksPage != nil && worksPage.HasMore,
 		Cursor:  workCursor(worksPage),
-	}), nil
+	}, nil
 }
 
-func (s *HongguoService) GetNewReleases(ctx context.Context, date string) (NewReleaseResponse, error) {
+func (s *Service) GetNewReleases(ctx context.Context, date string) (NewReleaseResponse, error) {
 	cacheKey := "new_releases:" + date
 	s.cacheMu.RLock()
 	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
 		s.cacheMu.RUnlock()
-		return sanitizeIPC(entry.val.(NewReleaseResponse)), nil
+		return entry.val.(NewReleaseResponse), nil
 	}
 	s.cacheMu.RUnlock()
 
@@ -738,9 +1058,9 @@ func (s *HongguoService) GetNewReleases(ctx context.Context, date string) (NewRe
 	}
 
 	reservedIDs := make(map[string]bool)
-	if reservations, err := s.GetReservations(ctx); err == nil {
-		for _, item := range reservations {
-			reservedIDs[item.SeriesID] = true
+	if ids, err := s.reservedSeriesIDs(ctx); err == nil {
+		for _, id := range ids {
+			reservedIDs[id] = true
 		}
 	}
 
@@ -753,7 +1073,7 @@ func (s *HongguoService) GetNewReleases(ctx context.Context, date string) (NewRe
 		items = append(items, NewReleaseItemDTO{
 			SeriesID:     it.SeriesID,
 			Title:        it.Title,
-			CoverURL:     s.media.ImageURL(it.CoverURL),
+			CoverURL:     s.imageURL(it.CoverURL),
 			EpisodeCount: it.EpisodeCount,
 			Online:       it.Online,
 			Heat:         it.Heat,
@@ -773,10 +1093,10 @@ func (s *HongguoService) GetNewReleases(ctx context.Context, date string) (NewRe
 	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(10 * time.Minute)}
 	s.cacheMu.Unlock()
 
-	return sanitizeIPC(resp), nil
+	return resp, nil
 }
 
-func (s *HongguoService) Search(ctx context.Context, query string) ([]SeriesCard, error) {
+func (s *Service) Search(ctx context.Context, query string) ([]SeriesCard, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
@@ -794,7 +1114,7 @@ func (s *HongguoService) Search(ctx context.Context, query string) ([]SeriesCard
 		}
 		tags = append(tags, fmt.Sprintf("%d集", it.EpisodeCount))
 
-		coverURL := s.media.ImageURL(it.CoverURL)
+		coverURL := s.imageURL(it.CoverURL)
 		if coverURL == "" {
 			missingCovers = append(missingCovers, len(cards))
 		}
@@ -831,15 +1151,15 @@ func (s *HongguoService) Search(ctx context.Context, query string) ([]SeriesCard
 			}
 			for _, idx := range missingCovers {
 				if url, ok := coverByID[cards[idx].ID]; ok {
-					cards[idx].CoverURL = s.media.ImageURL(url)
+					cards[idx].CoverURL = s.imageURL(url)
 				}
 			}
 		}
 	}
-	return sanitizeIPC(cards), nil
+	return cards, nil
 }
 
-func (s *HongguoService) GetSuggestions(ctx context.Context, prefix string) ([]string, error) {
+func (s *Service) GetSuggestions(ctx context.Context, prefix string) ([]string, error) {
 	if prefix == "" {
 		return nil, nil
 	}
@@ -854,15 +1174,15 @@ func (s *HongguoService) GetSuggestions(ctx context.Context, prefix string) ([]s
 	for _, s := range suggs {
 		words = append(words, s.Text)
 	}
-	return sanitizeIPC(words), nil
+	return words, nil
 }
 
-func (s *HongguoService) GetHotSearch(ctx context.Context) (HotSearchDTO, error) {
+func (s *Service) GetHotSearch(ctx context.Context) (HotSearchDTO, error) {
 	cacheKey := "hot_search"
 	s.cacheMu.RLock()
 	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
 		s.cacheMu.RUnlock()
-		return sanitizeIPC(entry.val.(HotSearchDTO)), nil
+		return entry.val.(HotSearchDTO), nil
 	}
 	s.cacheMu.RUnlock()
 
@@ -892,10 +1212,10 @@ func (s *HongguoService) GetHotSearch(ctx context.Context) (HotSearchDTO, error)
 	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(10 * time.Minute)}
 	s.cacheMu.Unlock()
 
-	return sanitizeIPC(resp), nil
+	return resp, nil
 }
 
-func (s *HongguoService) GetSeriesDetail(ctx context.Context, seriesID string) (*SeriesDetailDTO, error) {
+func (s *Service) GetSeriesDetail(ctx context.Context, seriesID string) (*SeriesDetailDTO, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 
@@ -913,7 +1233,7 @@ func (s *HongguoService) GetSeriesDetail(ctx context.Context, seriesID string) (
 		return nil, fmt.Errorf("series not found")
 	}
 
-	eps, err := s.listEpisodes(ctx, seriesID)
+	eps, err := s.episodes(ctx, seriesID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch episodes: %w", err)
 	}
@@ -927,22 +1247,22 @@ func (s *HongguoService) GetSeriesDetail(ctx context.Context, seriesID string) (
 			Number:       ep.Number,
 			Title:        ep.Title,
 			Playable:     true,
-			PosterURL:    s.media.ImageURL(ep.CoverURL),
+			PosterURL:    s.imageURL(ep.CoverURL),
 			CommentCount: ep.CommentCount,
 		})
 		commentCount += ep.CommentCount
 	}
 
-	return sanitizeIPC(&SeriesDetailDTO{
+	return &SeriesDetailDTO{
 		ID:           d.ID,
 		Title:        d.Title,
 		Description:  d.Description,
-		CoverURL:     s.media.ImageURL(d.CoverURL),
+		CoverURL:     s.imageURL(d.CoverURL),
 		EpisodeCount: d.EpisodeCount,
 		Status:       "finished",
 		Heat:         "热播",
 		Episodes:     episodeDTOs,
 		CommentCount: commentCount,
-		IsFavorite:   s.store.IsFavorite(seriesID),
-	}), nil
+		IsFavorite:   s.isFavorite(seriesID),
+	}, nil
 }

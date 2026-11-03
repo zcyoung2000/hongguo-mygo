@@ -16,158 +16,46 @@ import (
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"myguo/internal/auth"
+	"myguo/internal/catalog"
 	"myguo/internal/media"
 	"myguo/internal/mediautil"
 	"myguo/internal/native"
 	userstore "myguo/internal/store"
 )
 
-type SeriesCard struct {
-	ID           string   `json:"id"`
-	Title        string   `json:"title"`
-	Description  string   `json:"description"`
-	CoverURL     string   `json:"coverUrl"`
-	EpisodeCount int      `json:"episodeCount"`
-	Category     string   `json:"category"`
-	ContentType  int      `json:"contentType,omitempty"`
-	Kind         string   `json:"kind,omitempty"`
-	BadgeText    string   `json:"badgeText,omitempty"`
-	Author       string   `json:"author"`
-	Status       string   `json:"status"` // "updating" or "finished"
-	Heat         string   `json:"heat"`
-	Tags         []string `json:"tags"`
-	Upcoming     bool     `json:"upcoming,omitempty"`
-	Reserved     bool     `json:"reserved,omitempty"`
-}
-
-type FilterOptionDTO struct {
-	Name  string `json:"name"`
-	Value string `json:"value"`
-}
-
-type FilterRowDTO struct {
-	Key     string            `json:"key"`
-	Name    string            `json:"name"`
-	Options []FilterOptionDTO `json:"options"`
-}
-
-type DiscoverResponse struct {
-	Items   []SeriesCard `json:"items"`
-	HasMore bool         `json:"hasMore"`
-	Cursor  string       `json:"cursor"`
-}
-
-func shortFilterSelections(genre string, values map[string]string) map[string][]string {
-	selections := make(map[string][]string)
-	if genre != "" && genre != "all" {
-		selections["genre"] = []string{genre}
-	}
-	for key, value := range values {
-		if key == "genre" || value == "" || value == "all" {
-			continue
-		}
-		selections[key] = []string{value}
-	}
-	return selections
-}
-
-type RankTabDTO struct {
-	ContentID string `json:"contentId"`
-	BoardID   string `json:"boardId"`
-	Title     string `json:"title"`
-	IsDefault bool   `json:"isDefault"`
-}
-
-type RankItemDTO struct {
-	Position    int      `json:"position"`
-	SeriesID    string   `json:"seriesId"`
-	Title       string   `json:"title"`
-	CoverURL    string   `json:"coverUrl"`
-	Heat        string   `json:"heat"`
-	Description string   `json:"description"`
-	ItemType    string   `json:"itemType"` // "drama" or "actor"
-	Promoted    bool     `json:"promoted,omitempty"`
-	Actor       string   `json:"actor,omitempty"`
-	ActorID     string   `json:"actorId,omitempty"`
-	UserID      string   `json:"userId,omitempty"`
-	AvatarURL   string   `json:"avatarUrl,omitempty"`
-	Intro       string   `json:"intro,omitempty"`
-	Details     []string `json:"details,omitempty"`
-}
-
-type RankResponse struct {
-	Contents []model.RankContent `json:"contents"`
-	Content  string              `json:"content"`
-	Board    string              `json:"board"`
-	Items    []RankItemDTO       `json:"items"`
-	Cursor   string              `json:"cursor,omitempty"`
-	HasMore  bool                `json:"hasMore"`
-}
-
-type ActorProfileDTO struct {
-	UserID      string       `json:"userId"`
-	Name        string       `json:"name"`
-	Description string       `json:"description"`
-	AvatarURL   string       `json:"avatarUrl"`
-	Tags        []string     `json:"tags"`
-	Labels      []string     `json:"labels"`
-	Followers   int64        `json:"followers"`
-	Likes       int64        `json:"likes"`
-	Works       []SeriesCard `json:"works"`
-	HasMore     bool         `json:"hasMore"`
-	Cursor      string       `json:"cursor"`
-}
-
-type ActorWorksResponse struct {
-	Works   []SeriesCard `json:"works"`
-	HasMore bool         `json:"hasMore"`
-	Cursor  string       `json:"cursor"`
-}
-
-type NewReleaseItemDTO struct {
-	SeriesID     string `json:"seriesId"`
-	Title        string `json:"title"`
-	CoverURL     string `json:"coverUrl"`
-	EpisodeCount int    `json:"episodeCount"`
-	Online       bool   `json:"online"`
-	Heat         string `json:"heat"`
-	Note         string `json:"note"`
-	Category     string `json:"category"`
-	Reserved     bool   `json:"reserved,omitempty"`
-}
-
-type NewReleaseResponse struct {
-	CurrentDate string              `json:"currentDate"`
-	Dates       []string            `json:"dates"`
-	Items       []NewReleaseItemDTO `json:"items"`
-}
-
-type HotSearchDTO struct {
-	Words []string `json:"words"`
-}
-
-type EpisodeDTO struct {
-	ID           string `json:"id"`
-	SeriesID     string `json:"seriesId"`
-	Number       int    `json:"number"`
-	Title        string `json:"title"`
-	Playable     bool   `json:"playable"`
-	PosterURL    string `json:"posterUrl,omitempty"`
-	CommentCount int64  `json:"commentCount"`
-}
-
-type SeriesDetailDTO struct {
-	ID           string       `json:"id"`
-	Title        string       `json:"title"`
-	Description  string       `json:"description"`
-	CoverURL     string       `json:"coverUrl"`
-	EpisodeCount int          `json:"episodeCount"`
-	Status       string       `json:"status"`
-	Heat         string       `json:"heat"`
-	Episodes     []EpisodeDTO `json:"episodes"`
-	CommentCount int64        `json:"commentCount"`
-	IsFavorite   bool         `json:"isFavorite"`
-}
+type (
+	SeriesCard           = catalog.SeriesCard
+	FilterOptionDTO      = catalog.FilterOptionDTO
+	FilterRowDTO         = catalog.FilterRowDTO
+	DiscoverResponse     = catalog.DiscoverResponse
+	RankTabDTO           = catalog.RankTabDTO
+	RankItemDTO          = catalog.RankItemDTO
+	RankResponse         = catalog.RankResponse
+	ActorProfileDTO      = catalog.ActorProfileDTO
+	ActorWorksResponse   = catalog.ActorWorksResponse
+	NewReleaseItemDTO    = catalog.NewReleaseItemDTO
+	NewReleaseResponse   = catalog.NewReleaseResponse
+	HotSearchDTO         = catalog.HotSearchDTO
+	EpisodeDTO           = catalog.EpisodeDTO
+	SeriesDetailDTO      = catalog.SeriesDetailDTO
+	Store                = userstore.Store
+	UserProfile          = userstore.UserProfile
+	HistoryItem          = userstore.HistoryItem
+	FavoriteItem         = userstore.FavoriteItem
+	LikeItem             = userstore.LikeItem
+	ReservationItem      = userstore.ReservationItem
+	CachedEpisode        = userstore.CachedEpisode
+	FeedProgress         = userstore.FeedProgress
+	QualityOptionDTO     = media.QualityOptionDTO
+	QualitySelection     = media.QualitySelection
+	MediaServer          = media.MediaServer
+	MediaDiagnosticsDTO  = media.MediaDiagnosticsDTO
+	PrefetchTask         = media.PrefetchTask
+	PrefetchExecution    = media.PrefetchExecution
+	UpdateNowPlayingArgs = native.UpdateNowPlayingArgs
+	ConfirmDialogArgs    = native.ConfirmDialogArgs
+	NotificationArgs     = native.NotificationArgs
+)
 
 type PlaybackDTO struct {
 	SeriesID             string             `json:"seriesId"`
@@ -188,26 +76,6 @@ type PlaybackDTO struct {
 	IsFullCached         bool               `json:"isFullCached"`
 }
 
-type (
-	Store                = userstore.Store
-	UserProfile          = userstore.UserProfile
-	HistoryItem          = userstore.HistoryItem
-	FavoriteItem         = userstore.FavoriteItem
-	LikeItem             = userstore.LikeItem
-	ReservationItem      = userstore.ReservationItem
-	CachedEpisode        = userstore.CachedEpisode
-	FeedProgress         = userstore.FeedProgress
-	QualityOptionDTO     = media.QualityOptionDTO
-	QualitySelection     = media.QualitySelection
-	MediaServer          = media.MediaServer
-	MediaDiagnosticsDTO  = media.MediaDiagnosticsDTO
-	PrefetchTask         = media.PrefetchTask
-	PrefetchExecution    = media.PrefetchExecution
-	UpdateNowPlayingArgs = native.UpdateNowPlayingArgs
-	ConfirmDialogArgs    = native.ConfirmDialogArgs
-	NotificationArgs     = native.NotificationArgs
-)
-
 func NewStore(dir string) (*Store, error) { return userstore.NewStore(dir) }
 
 func NewMediaServer(client *sdk.Client) (*MediaServer, error) { return media.NewMediaServer(client) }
@@ -221,6 +89,8 @@ func videoQualities() []string { return media.VideoQualities() }
 func qualityLabel(quality string) string { return media.QualityLabel(quality) }
 
 func normalizeImageURL(raw string) string { return mediautil.NormalizeImageURL(raw) }
+
+func formatHeatScore(n int64) string { return catalog.FormatHeatScore(n) }
 
 func episodeCachePath(cacheDir, episodeID, quality string) string {
 	return media.EpisodeCachePath(cacheDir, episodeID, quality)
@@ -276,6 +146,8 @@ type episodeListResult struct {
 }
 
 type HongguoService struct {
+	catalogOnce            sync.Once
+	catalog                *catalog.Service
 	client                 *sdk.Client
 	store                  *Store
 	media                  *MediaServer
@@ -513,6 +385,9 @@ func (s *HongguoService) reloadDeviceIdentityLocked() error {
 }
 
 func (s *HongguoService) invalidateUserDataCaches() {
+	if s.catalog != nil {
+		s.catalog.Invalidate()
+	}
 	s.cacheMu.Lock()
 	s.cache = make(map[string]cacheItem)
 	s.cacheMu.Unlock()
@@ -943,97 +818,9 @@ func pageHasMore[T any](page *sdk.Page[T]) bool {
 	return page != nil && page.HasMore
 }
 
-func shortRankItems(rank *model.ShortRanking) []model.RankItem {
-	if rank == nil {
-		return nil
-	}
-	return rank.Items
-}
-
-func shortRankContents(rank *model.ShortRanking) []model.RankContent {
-	if rank == nil {
-		return nil
-	}
-	return rank.Contents
-}
-
-func shortRankContent(rank *model.ShortRanking) string {
-	if rank == nil {
-		return ""
-	}
-	return rank.Content
-}
-
-func shortRankBoard(rank *model.ShortRanking) string {
-	if rank == nil {
-		return ""
-	}
-	return rank.Board
-}
-
-func newReleaseItems(page *model.NewReleasePage) []model.NewRelease {
-	if page == nil {
-		return nil
-	}
-	return page.Items
-}
-
-func newReleaseDate(page *model.NewReleasePage) string {
-	if page == nil {
-		return ""
-	}
-	return page.Date
-}
-
-func newReleaseDates(page *model.NewReleasePage) []string {
-	if page == nil {
-		return nil
-	}
-	return page.Dates
-}
-
-func workItems(page *model.WorkPage) []model.Work {
-	if page == nil {
-		return nil
-	}
-	return page.Items
-}
-
-func workCursor(page *model.WorkPage) string {
-	if page == nil {
-		return ""
-	}
-	return page.Cursor
-}
-
 func shortFilterItems(page *model.ShortFilterPage) []model.SeriesSummary {
 	if page == nil {
 		return nil
 	}
 	return page.Items
-}
-
-func shortFilterHasMore(page *model.ShortFilterPage) bool {
-	return page != nil && page.HasMore
-}
-
-func shortFilterCursor(page *model.ShortFilterPage) string {
-	if page == nil {
-		return ""
-	}
-	return page.Cursor
-}
-
-func hotGuesses(hot *model.HotSearch) []model.HotItem {
-	if hot == nil {
-		return nil
-	}
-	return hot.Guesses
-}
-
-func hotBoards(hot *model.HotSearch) []model.HotBoard {
-	if hot == nil {
-		return nil
-	}
-	return hot.Boards
 }
