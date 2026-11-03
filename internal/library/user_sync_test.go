@@ -1,9 +1,11 @@
-package ipc
+package library
 
 import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	userstore "myguo/internal/store"
 )
 
 func TestProgressUploadPayloadUsesProtocolUnits(t *testing.T) {
@@ -86,9 +88,9 @@ func TestHistoryDeletePayloadMarksSoftDelete(t *testing.T) {
 }
 
 func TestReplaceFavoriteBatchReplacesCloudSet(t *testing.T) {
-	store, err := NewStore(t.TempDir())
+	store, err := userstore.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
+		t.Fatalf("userstore.NewStore() error = %v", err)
 	}
 	defer store.Close()
 	old := []FavoriteItem{{SeriesID: "710000000000001", Title: "old"}, {SeriesID: "710000000000002", Title: "remove"}}
@@ -113,9 +115,9 @@ func TestReplaceFavoriteBatchReplacesCloudSet(t *testing.T) {
 }
 
 func TestHistoryPendingOperationsPreserveLatestIntent(t *testing.T) {
-	store, err := NewStore(t.TempDir())
+	store, err := userstore.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
+		t.Fatalf("userstore.NewStore() error = %v", err)
 	}
 	defer store.Close()
 	item := HistoryItem{
@@ -159,9 +161,9 @@ func TestHistoryPendingOperationsPreserveLatestIntent(t *testing.T) {
 }
 
 func TestFavoritePendingOperationsCoalesceLatestIntent(t *testing.T) {
-	store, err := NewStore(t.TempDir())
+	store, err := userstore.NewStore(t.TempDir())
 	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
+		t.Fatalf("userstore.NewStore() error = %v", err)
 	}
 	defer store.Close()
 	if err := store.QueueFavoriteOp("710000000000001", true); err != nil {

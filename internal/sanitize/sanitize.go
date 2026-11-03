@@ -1,12 +1,14 @@
-package ipc
+package sanitize
 
 import (
 	"reflect"
+	"strings"
+	"unicode/utf8"
 )
 
-// sanitizeIPC returns a JSON-safe copy for value-typed IPC results. Pointer
+// Sanitize returns a JSON-safe copy for value-typed IPC results. Pointer
 // targets are sanitized in place, so sanitize them before caching or sharing.
-func sanitizeIPC[T any](value T) T {
+func Sanitize[T any](value T) T {
 	root := reflect.ValueOf(&value).Elem()
 	sanitizeReflectValue(root)
 	return value
@@ -19,7 +21,7 @@ func sanitizeReflectValue(value reflect.Value) {
 	switch value.Kind() {
 	case reflect.String:
 		if value.CanSet() {
-			value.SetString(sanitizeUTF8(value.String()))
+			value.SetString(UTF8(value.String()))
 		}
 	case reflect.Pointer:
 		if !value.IsNil() {
@@ -46,7 +48,7 @@ func sanitizeReflectValue(value reflect.Value) {
 			newKey := key
 			if key.Kind() == reflect.String {
 				newKey = reflect.New(key.Type()).Elem()
-				newKey.SetString(sanitizeUTF8(key.String()))
+				newKey.SetString(UTF8(key.String()))
 			}
 			if newKey.String() != key.String() {
 				value.SetMapIndex(key, reflect.Value{})
@@ -63,4 +65,24 @@ func sanitizeReflectValue(value reflect.Value) {
 			}
 		}
 	}
+}
+
+// UTF8 drops invalid bytes from upstream text while preserving surrounding
+// valid characters.
+func UTF8(value string) string {
+	if utf8.ValidString(value) {
+		return value
+	}
+	return strings.ToValidUTF8(value, "")
+}
+
+func UTF8Strings(values []string) []string {
+	if values == nil {
+		return nil
+	}
+	out := make([]string, len(values))
+	for i, value := range values {
+		out[i] = UTF8(value)
+	}
+	return out
 }

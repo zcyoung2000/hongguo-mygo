@@ -17,10 +17,13 @@ import (
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"myguo/internal/auth"
 	"myguo/internal/catalog"
+	"myguo/internal/library"
 	"myguo/internal/media"
 	"myguo/internal/mediautil"
 	"myguo/internal/native"
+	"myguo/internal/sanitize"
 	userstore "myguo/internal/store"
+	"myguo/internal/upstream"
 )
 
 type (
@@ -90,6 +93,12 @@ func qualityLabel(quality string) string { return media.QualityLabel(quality) }
 
 func normalizeImageURL(raw string) string { return mediautil.NormalizeImageURL(raw) }
 
+func sanitizeIPC[T any](value T) T { return sanitize.Sanitize(value) }
+
+func defaultDeviceQueryPairs(deviceID, installID, cdid, openudid string) [][2]string {
+	return upstream.DefaultDeviceQueryPairs(deviceID, installID, cdid, openudid)
+}
+
 func formatHeatScore(n int64) string { return catalog.FormatHeatScore(n) }
 
 func episodeCachePath(cacheDir, episodeID, quality string) string {
@@ -146,58 +155,36 @@ type episodeListResult struct {
 }
 
 type HongguoService struct {
-	catalogOnce            sync.Once
-	catalog                *catalog.Service
-	client                 *sdk.Client
-	store                  *Store
-	media                  *MediaServer
-	appDir                 string
-	deviceProfileStore     sdk.ProfileStore
-	authTransport          auth.CredentialTransport
-	deviceMu               sync.RWMutex
-	authMu                 sync.RWMutex
-	userCookies            string
-	userToken              string
-	deviceID               string
-	iid                    string
-	cdid                   string
-	openudid               string
-	userAgent              string
-	storeRegion            string
-	httpClient             *http.Client
-	cacheMu                sync.RWMutex
-	cache                  map[string]cacheItem
-	historyMu              sync.Mutex
-	cachedHistory          []HistoryItem
-	historyCachedAt        time.Time
-	historySyncing         bool
-	historyGeneration      uint64
-	historyMutationMu      sync.Mutex
-	historyMutationSyncing bool
-	historyMutationWake    bool
-	favMu                  sync.Mutex
-	cachedFavorites        []FavoriteItem
-	favCachedAt            time.Time
-	favSyncing             bool
-	favGeneration          uint64
-	favMutationMu          sync.Mutex
-	likeMu                 sync.Mutex
-	cachedLikes            []LikeItem
-	likeCachedAt           time.Time
-	likeSyncing            bool
-	likeGeneration         uint64
-	resMu                  sync.Mutex
-	cachedReservations     []ReservationItem
-	resCachedAt            time.Time
-	resSyncing             bool
-	resGeneration          uint64
-	feedMu                 sync.Mutex
-	metricsMu              sync.Mutex
-	feedWarmupMu           sync.Mutex
-	feedWarmupGeneration   uint64
-	episodeMu              sync.Mutex
-	episodeCache           map[string]episodeCacheEntry
-	episodeLoads           map[string]*episodeLoad
+	catalogOnce          sync.Once
+	catalog              *catalog.Service
+	libraryOnce          sync.Once
+	library              *library.Service
+	client               *sdk.Client
+	store                *Store
+	media                *MediaServer
+	appDir               string
+	deviceProfileStore   sdk.ProfileStore
+	authTransport        auth.CredentialTransport
+	deviceMu             sync.RWMutex
+	authMu               sync.RWMutex
+	userCookies          string
+	userToken            string
+	deviceID             string
+	iid                  string
+	cdid                 string
+	openudid             string
+	userAgent            string
+	storeRegion          string
+	httpClient           *http.Client
+	cacheMu              sync.RWMutex
+	cache                map[string]cacheItem
+	feedMu               sync.Mutex
+	metricsMu            sync.Mutex
+	feedWarmupMu         sync.Mutex
+	feedWarmupGeneration uint64
+	episodeMu            sync.Mutex
+	episodeCache         map[string]episodeCacheEntry
+	episodeLoads         map[string]*episodeLoad
 }
 
 func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string) *HongguoService {
@@ -388,53 +375,12 @@ func (s *HongguoService) invalidateUserDataCaches() {
 	if s.catalog != nil {
 		s.catalog.Invalidate()
 	}
+	if s.library != nil {
+		s.library.InvalidateUserData()
+	}
 	s.cacheMu.Lock()
 	s.cache = make(map[string]cacheItem)
 	s.cacheMu.Unlock()
-	s.historyMu.Lock()
-	s.cachedHistory = nil
-	s.historyCachedAt = time.Time{}
-	s.historyGeneration++
-	s.historyMu.Unlock()
-	s.favMu.Lock()
-	s.cachedFavorites = nil
-	s.favCachedAt = time.Time{}
-	s.favGeneration++
-	s.favMu.Unlock()
-	s.likeMu.Lock()
-	s.cachedLikes = nil
-	s.likeCachedAt = time.Time{}
-	s.likeGeneration++
-	s.likeMu.Unlock()
-	s.resMu.Lock()
-	s.cachedReservations = nil
-	s.resCachedAt = time.Time{}
-	s.resGeneration++
-	s.resMu.Unlock()
-}
-
-func (s *HongguoService) currentHistoryGeneration() uint64 {
-	s.historyMu.Lock()
-	defer s.historyMu.Unlock()
-	return s.historyGeneration
-}
-
-func (s *HongguoService) currentFavoriteGeneration() uint64 {
-	s.favMu.Lock()
-	defer s.favMu.Unlock()
-	return s.favGeneration
-}
-
-func (s *HongguoService) currentLikeGeneration() uint64 {
-	s.likeMu.Lock()
-	defer s.likeMu.Unlock()
-	return s.likeGeneration
-}
-
-func (s *HongguoService) currentReservationGeneration() uint64 {
-	s.resMu.Lock()
-	defer s.resMu.Unlock()
-	return s.resGeneration
 }
 
 func (s *HongguoService) GetProfile(ctx context.Context) (UserProfile, error) {

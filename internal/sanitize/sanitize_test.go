@@ -1,19 +1,40 @@
-package ipc
+package sanitize
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/beilunyang/openhongguo/sdk/model"
-)
+type rankBoard struct {
+	ID   string
+	Name string
+}
+
+type rankContent struct {
+	ID     string
+	Name   string
+	Boards []rankBoard
+}
+
+type rankItem struct {
+	SeriesID string
+	Title    string
+	Actor    string
+	Details  []string
+}
+
+type rankResponse struct {
+	Contents []rankContent
+	Content  string
+	Board    string
+	Items    []rankItem
+}
 
 func TestSanitizeIPCRemovesInvalidUTF8AcrossNestedDTOs(t *testing.T) {
-	value := RankResponse{
-		Contents: []model.RankContent{
-			{ID: "all", Name: "全部\xff", Boards: []model.RankBoard{{ID: "hot", Name: "热播\x80"}}},
+	value := rankResponse{
+		Contents: []rankContent{
+			{ID: "all", Name: "全部\xff", Boards: []rankBoard{{ID: "hot", Name: "热播\x80"}}},
 		},
 		Content: "all",
 		Board:   "hot",
-		Items: []RankItemDTO{{
+		Items: []rankItem{{
 			SeriesID: "100",
 			Title:    "榜单剧\xff",
 			Actor:    "演员\x80",
@@ -21,7 +42,7 @@ func TestSanitizeIPCRemovesInvalidUTF8AcrossNestedDTOs(t *testing.T) {
 		}},
 	}
 
-	got := sanitizeIPC(value)
+	got := Sanitize(value)
 	if got.Contents[0].Name != "全部" || got.Contents[0].Boards[0].Name != "热播" {
 		t.Fatalf("contents were not sanitized: %+v", got.Contents)
 	}
@@ -38,7 +59,7 @@ func TestSanitizeIPCSanitizesMapsAndPointerAliases(t *testing.T) {
 		"name\xff": []any{"A\xff", map[string]string{"nested\xff": "B\xff"}},
 	}
 
-	got := sanitizeIPC(payload)
+	got := Sanitize(payload)
 	items, ok := (*got)["name"].([]any)
 	if !ok {
 		t.Fatalf("invalid map key was not replaced: %#v", *got)

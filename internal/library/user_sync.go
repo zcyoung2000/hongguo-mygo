@@ -1,4 +1,4 @@
-package ipc
+package library
 
 import (
 	"bytes"
@@ -14,7 +14,9 @@ import (
 	"strconv"
 	"time"
 
+	"myguo/internal/mediautil"
 	"myguo/internal/sign"
+	"myguo/internal/upstream"
 )
 
 const (
@@ -31,7 +33,7 @@ func contentInt(value string) (int64, error) {
 	return parsed, nil
 }
 
-func (s *HongguoService) postSignedMutation(ctx context.Context, operation, path string, payload any) error {
+func (s *Service) postSignedMutation(ctx context.Context, operation, path string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("%s 编码失败: %w", operation, err)
@@ -45,9 +47,9 @@ func (s *HongguoService) postSignedMutation(ctx context.Context, operation, path
 		return fmt.Errorf("%s 压缩失败: %w", operation, err)
 	}
 
-	userCookies, userToken := s.authCredentials()
+	userCookies, userToken := s.credentials()
 	deviceID, installID, cdid, openudid := s.deviceIdentity()
-	pairs := defaultDeviceQueryPairs(deviceID, installID, cdid, openudid)
+	pairs := upstream.DefaultDeviceQueryPairs(deviceID, installID, cdid, openudid)
 	ticket := time.Now().UnixMilli()
 	rawQuery, headers := sign.SignPOST(path, pairs, ticket, deviceID, "7.3.9.32", compressed.Bytes(), nil)
 	var nonce [4]byte
@@ -73,7 +75,7 @@ func (s *HongguoService) postSignedMutation(ctx context.Context, operation, path
 	if userToken != "" {
 		req.Header.Set("x-tt-token", userToken)
 	}
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", s.userAgentValue())
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -289,17 +291,17 @@ func historyDeletePayload(items []HistoryItem, episodeIDs []string) map[string]a
 	return map[string]any{"update_datas": updates}
 }
 
-func (s *HongguoService) resolveHistoryEpisodeID(item HistoryItem) string {
+func (s *Service) resolveHistoryEpisodeID(item HistoryItem) string {
 	if cached, ok := s.store.GetCachedEpisodeAt(item.SeriesID, "", item.EpisodeNum); ok {
 		return cached.EpisodeID
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
-	episodes, err := s.listEpisodes(ctx, item.SeriesID)
+	episodes, err := s.episodes(ctx, item.SeriesID)
 	if err != nil {
 		return ""
 	}
-	for _, episode := range pageItems(episodes) {
+	for _, episode := range mediautil.PageItems(episodes) {
 		if episode.Number == item.EpisodeNum {
 			return episode.ID
 		}
@@ -307,8 +309,8 @@ func (s *HongguoService) resolveHistoryEpisodeID(item HistoryItem) string {
 	return ""
 }
 
-func (s *HongguoService) requestHistoryDelete(items []HistoryItem, episodeIDs []string) error {
-	userCookies, _ := s.authCredentials()
+func (s *Service) requestHistoryDelete(items []HistoryItem, episodeIDs []string) error {
+	userCookies, _ := s.credentials()
 	if userCookies == "" || len(items) == 0 || len(items) != len(episodeIDs) {
 		return nil
 	}
@@ -322,8 +324,8 @@ func (s *HongguoService) requestHistoryDelete(items []HistoryItem, episodeIDs []
 	return s.postSignedMutation(ctx, "历史删除", "/reading/bookapi/read_history/update/v", payload)
 }
 
-func (s *HongguoService) reportPlaybackProgress(items []HistoryItem, episodeIDs []string) error {
-	userCookies, _ := s.authCredentials()
+func (s *Service) reportPlaybackProgress(items []HistoryItem, episodeIDs []string) error {
+	userCookies, _ := s.credentials()
 	if userCookies == "" || len(items) == 0 || len(items) != len(episodeIDs) {
 		return nil
 	}
@@ -343,11 +345,11 @@ func (s *HongguoService) reportPlaybackProgress(items []HistoryItem, episodeIDs 
 	return s.postSignedMutation(ctx, "进度上报", "/reading/bookapi/read_progress/upload/v", progressPayload)
 }
 
-func (s *HongguoService) triggerPendingHistorySync() {
+func (s *Service) triggerPendingHistorySync() {
 	go s.syncPendingHistoryMutations()
 }
 
-func (s *HongguoService) syncPendingHistoryMutations() {
+func (s *Service) syncPendingHistoryMutations() {
 	s.historyMutationMu.Lock()
 	if s.historyMutationSyncing {
 		s.historyMutationWake = true
@@ -379,8 +381,8 @@ func (s *HongguoService) syncPendingHistoryMutations() {
 	}
 }
 
-func (s *HongguoService) processPendingHistoryUploads() error {
-	userCookies, _ := s.authCredentials()
+func (s *Service) processPendingHistoryUploads() error {
+	userCookies, _ := s.credentials()
 	if userCookies == "" {
 		return nil
 	}
@@ -426,8 +428,8 @@ func (s *HongguoService) processPendingHistoryUploads() error {
 	return s.store.DeletePendingHistoryUploads(validIDs)
 }
 
-func (s *HongguoService) processPendingHistoryDeletes() error {
-	userCookies, _ := s.authCredentials()
+func (s *Service) processPendingHistoryDeletes() error {
+	userCookies, _ := s.credentials()
 	if userCookies == "" {
 		return nil
 	}
@@ -464,7 +466,7 @@ func (s *HongguoService) processPendingHistoryDeletes() error {
 	}
 	return s.store.DeletePendingHistoryDeletes(sendIDs)
 }
-func (s *HongguoService) triggerPendingFavoriteSync() {
+func (s *Service) triggerPendingFavoriteSync() {
 	go func() {
 		if _, err := s.syncPendingFavoriteOps(); err != nil {
 			log.Printf("[favorites] pending sync failed: %v", err)
@@ -472,13 +474,13 @@ func (s *HongguoService) triggerPendingFavoriteSync() {
 	}()
 }
 
-func (s *HongguoService) syncPendingFavoriteOps() (int, error) {
+func (s *Service) syncPendingFavoriteOps() (int, error) {
 	processed := 0
 	for {
 		s.favMutationMu.Lock()
 		items, err := s.store.PendingFavoriteOps(userSyncPageSize)
 		if err == nil && len(items) > 0 {
-			userCookies, _ := s.authCredentials()
+			userCookies, _ := s.credentials()
 			if userCookies == "" {
 				s.favMutationMu.Unlock()
 				return processed, nil

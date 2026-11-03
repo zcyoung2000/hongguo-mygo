@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/sanitize"
 )
 
 type ActorInfo struct {
@@ -430,23 +430,9 @@ func (s *HongguoService) newSeriesDetailPage(detail model.SeriesDetail, seriesID
 // Upstream rows occasionally contain malformed UTF-8. MyGo's strict JSON
 // encoder rejects them, so drop invalid bytes before crossing the IPC
 // boundary while preserving surrounding valid text.
-func sanitizeUTF8(value string) string {
-	if utf8.ValidString(value) {
-		return value
-	}
-	return strings.ToValidUTF8(value, "")
-}
+func sanitizeUTF8(value string) string { return sanitize.UTF8(value) }
 
-func sanitizeUTF8Strings(values []string) []string {
-	if values == nil {
-		return nil
-	}
-	out := make([]string, len(values))
-	for i, value := range values {
-		out[i] = sanitizeUTF8(value)
-	}
-	return out
-}
+func sanitizeUTF8Strings(values []string) []string { return sanitize.UTF8Strings(values) }
 
 func (s *HongguoService) fetchSeriesBatchMap(ctx context.Context, ids []string) map[string]*model.Series {
 	if len(ids) == 0 {

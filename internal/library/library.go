@@ -1,4 +1,4 @@
-package ipc
+package library
 
 import (
 	"bytes"
@@ -11,7 +11,10 @@ import (
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"io"
 	"log"
+	"myguo/internal/mediautil"
+	"myguo/internal/sanitize"
 	"myguo/internal/sign"
+	"myguo/internal/upstream"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,9 +23,9 @@ import (
 	"time"
 )
 
-func (s *HongguoService) SaveProgress(ctx context.Context, seriesID, episodeID string, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
+func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
 	seriesID = strings.TrimSpace(seriesID)
-	if !validContentID(seriesID) {
+	if !mediautil.ValidContentID(seriesID) {
 		return fmt.Errorf("历史 ID 无效")
 	}
 	s.historyMu.Lock()
@@ -55,7 +58,7 @@ func (s *HongguoService) SaveProgress(ctx context.Context, seriesID, episodeID s
 	return nil
 }
 
-func (s *HongguoService) GetHistory(ctx context.Context) ([]HistoryItem, error) {
+func (s *Service) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 	s.historyMu.Lock()
 
 	// 1. If in-memory cache is fresh (< 30s), return instantly
@@ -63,7 +66,7 @@ func (s *HongguoService) GetHistory(ctx context.Context) ([]HistoryItem, error) 
 		cached := make([]HistoryItem, len(s.cachedHistory))
 		copy(cached, s.cachedHistory)
 		s.historyMu.Unlock()
-		return sanitizeIPC(cached), nil
+		return sanitize.Sanitize(cached), nil
 	}
 
 	// 2. Check local store (sub-millisecond instant return)
@@ -74,9 +77,9 @@ func (s *HongguoService) GetHistory(ctx context.Context) ([]HistoryItem, error) 
 	}
 	if len(localItems) > 0 {
 		for i := range localItems {
-			localItems[i].CoverURL = s.media.ImageURL(localItems[i].CoverURL)
+			localItems[i].CoverURL = s.imageURL(localItems[i].CoverURL)
 		}
-		localItems = sanitizeIPC(localItems)
+		localItems = sanitize.Sanitize(localItems)
 		s.cachedHistory = localItems
 		shouldSync := s.historyCachedAt.IsZero() || time.Since(s.historyCachedAt) >= 60*time.Second
 		s.historyCachedAt = time.Now()
@@ -95,7 +98,7 @@ func (s *HongguoService) GetHistory(ctx context.Context) ([]HistoryItem, error) 
 			}()
 		}
 		s.historyMu.Unlock()
-		return sanitizeIPC(localItems), nil
+		return sanitize.Sanitize(localItems), nil
 	}
 	s.historyMu.Unlock()
 
@@ -109,12 +112,12 @@ func (s *HongguoService) GetHistory(ctx context.Context) ([]HistoryItem, error) 
 		return nil, err
 	}
 	for i := range list {
-		list[i].CoverURL = s.media.ImageURL(list[i].CoverURL)
+		list[i].CoverURL = s.imageURL(list[i].CoverURL)
 	}
-	list = sanitizeIPC(list)
+	list = sanitize.Sanitize(list)
 	s.cachedHistory = list
 	s.historyCachedAt = time.Now()
-	return sanitizeIPC(list), nil
+	return sanitize.Sanitize(list), nil
 }
 
 type remoteHistoryRow struct {
@@ -131,13 +134,13 @@ type remoteHistoryPage struct {
 	HasMore    bool
 }
 
-func (s *HongguoService) fetchRemoteHistoryPage(ctx context.Context, offset int64) (*remoteHistoryPage, error) {
-	userCookies, userToken := s.authCredentials()
+func (s *Service) fetchRemoteHistoryPage(ctx context.Context, offset int64) (*remoteHistoryPage, error) {
+	userCookies, userToken := s.credentials()
 	if userCookies == "" {
 		return nil, nil
 	}
 	deviceID, iid, cdid, openudid := s.deviceIdentity()
-	pairs := append(defaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
+	pairs := append(upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
 		[2]string{"book_types", "2"},
 		[2]string{"limit", "50"},
 	)
@@ -154,12 +157,12 @@ func (s *HongguoService) fetchRemoteHistoryPage(ctx context.Context, offset int6
 	for key, value := range sigHeaders {
 		req.Header.Set(key, value)
 	}
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", s.userAgentValue())
 	req.Header.Set("Cookie", userCookies)
 	if userToken != "" {
 		req.Header.Set("x-tt-token", userToken)
 	}
-	req.Header.Set("x-tt-store-region", s.storeRegion)
+	req.Header.Set("x-tt-store-region", s.storeRegionValue())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := s.httpClient.Do(req)
@@ -196,7 +199,7 @@ func (s *HongguoService) fetchRemoteHistoryPage(ctx context.Context, offset int6
 	return page, nil
 }
 
-func (s *HongguoService) syncRemoteHistory(ctx context.Context, generation uint64) {
+func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -320,7 +323,7 @@ func (s *HongguoService) syncRemoteHistory(ctx context.Context, generation uint6
 		histBatch = append(histBatch, HistoryItem{
 			SeriesID:      id,
 			Title:         title,
-			CoverURL:      normalizeImageURL(cover),
+			CoverURL:      mediautil.NormalizeImageURL(cover),
 			EpisodeNum:    epNum,
 			EpisodeTitle:  fmt.Sprintf("第%d集", epNum),
 			PositionSec:   posSec,
@@ -353,14 +356,14 @@ func (s *HongguoService) syncRemoteHistory(ctx context.Context, generation uint6
 		return
 	}
 	for i := range list {
-		list[i].CoverURL = s.media.ImageURL(list[i].CoverURL)
+		list[i].CoverURL = s.imageURL(list[i].CoverURL)
 	}
 	s.cachedHistory = list
 	s.historyCachedAt = time.Now()
 	s.historyMu.Unlock()
 	s.triggerPendingHistorySync()
 }
-func (s *HongguoService) DeleteHistory(ctx context.Context, seriesID string) error {
+func (s *Service) DeleteHistory(ctx context.Context, seriesID string) error {
 	s.historyMu.Lock()
 	s.cachedHistory = nil
 	s.historyCachedAt = time.Time{}
@@ -373,7 +376,7 @@ func (s *HongguoService) DeleteHistory(ctx context.Context, seriesID string) err
 	return nil
 }
 
-func (s *HongguoService) ClearHistory(ctx context.Context) error {
+func (s *Service) ClearHistory(ctx context.Context) error {
 	s.historyMu.Lock()
 	s.cachedHistory = nil
 	s.historyCachedAt = time.Time{}
@@ -386,9 +389,9 @@ func (s *HongguoService) ClearHistory(ctx context.Context) error {
 	return nil
 }
 
-func (s *HongguoService) ToggleFavorite(ctx context.Context, seriesID, title, coverURL, desc string, totalEpisodes int) (bool, error) {
+func (s *Service) ToggleFavorite(ctx context.Context, seriesID, title, coverURL, desc string, totalEpisodes int) (bool, error) {
 	seriesID = strings.TrimSpace(seriesID)
-	if !validContentID(seriesID) {
+	if !mediautil.ValidContentID(seriesID) {
 		return false, fmt.Errorf("收藏 ID 无效")
 	}
 	s.favMutationMu.Lock()
@@ -415,11 +418,11 @@ func (s *HongguoService) ToggleFavorite(ctx context.Context, seriesID, title, co
 	return wasAdded, nil
 }
 
-func (s *HongguoService) IsFavorite(ctx context.Context, seriesID string) (bool, error) {
+func (s *Service) IsFavorite(ctx context.Context, seriesID string) (bool, error) {
 	return s.store.IsFavorite(seriesID), nil
 }
 
-func (s *HongguoService) GetFavorites(ctx context.Context) ([]FavoriteItem, error) {
+func (s *Service) GetFavorites(ctx context.Context) ([]FavoriteItem, error) {
 	s.favMu.Lock()
 
 	// 1. If in-memory cache is fresh (< 30s), return instantly
@@ -427,10 +430,10 @@ func (s *HongguoService) GetFavorites(ctx context.Context) ([]FavoriteItem, erro
 		cached := make([]FavoriteItem, len(s.cachedFavorites))
 		copy(cached, s.cachedFavorites)
 		s.favMu.Unlock()
-		return sanitizeIPC(cached), nil
+		return sanitize.Sanitize(cached), nil
 	}
 
-	userCookies, _ := s.authCredentials()
+	userCookies, _ := s.credentials()
 
 	// 2. Check local store (sub-millisecond instant return)
 	localItems, err := s.store.GetFavorites()
@@ -440,9 +443,9 @@ func (s *HongguoService) GetFavorites(ctx context.Context) ([]FavoriteItem, erro
 	}
 	if len(localItems) > 0 {
 		for i := range localItems {
-			localItems[i].CoverURL = s.media.ImageURL(localItems[i].CoverURL)
+			localItems[i].CoverURL = s.imageURL(localItems[i].CoverURL)
 		}
-		localItems = sanitizeIPC(localItems)
+		localItems = sanitize.Sanitize(localItems)
 		s.cachedFavorites = localItems
 		shouldSync := s.favCachedAt.IsZero() || time.Since(s.favCachedAt) >= 60*time.Second
 		s.favCachedAt = time.Now()
@@ -461,7 +464,7 @@ func (s *HongguoService) GetFavorites(ctx context.Context) ([]FavoriteItem, erro
 			}()
 		}
 		s.favMu.Unlock()
-		return sanitizeIPC(localItems), nil
+		return sanitize.Sanitize(localItems), nil
 	}
 	s.favMu.Unlock()
 
@@ -470,7 +473,7 @@ func (s *HongguoService) GetFavorites(ctx context.Context) ([]FavoriteItem, erro
 		s.cachedFavorites = localItems
 		s.favCachedAt = time.Now()
 		s.favMu.Unlock()
-		return sanitizeIPC(localItems), nil
+		return sanitize.Sanitize(localItems), nil
 	}
 
 	// 3. Local store empty -> synchronous fetch
@@ -483,16 +486,16 @@ func (s *HongguoService) GetFavorites(ctx context.Context) ([]FavoriteItem, erro
 		return nil, err
 	}
 	for i := range list {
-		list[i].CoverURL = s.media.ImageURL(list[i].CoverURL)
+		list[i].CoverURL = s.imageURL(list[i].CoverURL)
 	}
-	list = sanitizeIPC(list)
+	list = sanitize.Sanitize(list)
 	s.cachedFavorites = list
 	s.favCachedAt = time.Now()
-	return sanitizeIPC(list), nil
+	return sanitize.Sanitize(list), nil
 }
 
-func (s *HongguoService) syncRemoteFavorites(ctx context.Context, generation uint64) {
-	userCookies, _ := s.authCredentials()
+func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) {
+	userCookies, _ := s.credentials()
 	if userCookies == "" {
 		return
 	}
@@ -510,7 +513,7 @@ func (s *HongguoService) syncRemoteFavorites(ctx context.Context, generation uin
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	userCookies, userToken := s.authCredentials()
+	userCookies, userToken := s.credentials()
 	deviceID, iid, _, _ := s.deviceIdentity()
 	q := url.Values{
 		"aid":             {"8662"},
@@ -525,14 +528,14 @@ func (s *HongguoService) syncRemoteFavorites(ctx context.Context, generation uin
 	if err != nil {
 		return
 	}
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", s.userAgentValue())
 	if userCookies != "" {
 		req.Header.Set("Cookie", userCookies)
 	}
 	if userToken != "" {
 		req.Header.Set("x-tt-token", userToken)
 	}
-	req.Header.Set("x-tt-store-region", s.storeRegion)
+	req.Header.Set("x-tt-store-region", s.storeRegionValue())
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := s.httpClient.Do(req)
@@ -624,7 +627,7 @@ func (s *HongguoService) syncRemoteFavorites(ctx context.Context, generation uin
 			favBatch = append(favBatch, FavoriteItem{
 				SeriesID:      b.Series.ID,
 				Title:         b.Series.Title,
-				CoverURL:      normalizeImageURL(b.Series.CoverURL),
+				CoverURL:      mediautil.NormalizeImageURL(b.Series.CoverURL),
 				Description:   b.Series.Description,
 				TotalEpisodes: b.Series.EpisodeCount,
 				AddedAt:       modTime,
@@ -657,7 +660,7 @@ func (s *HongguoService) syncRemoteFavorites(ctx context.Context, generation uin
 	s.refreshFavoriteCache(generation)
 }
 
-func (s *HongguoService) refreshFavoriteCache(generation uint64) {
+func (s *Service) refreshFavoriteCache(generation uint64) {
 	s.favMu.Lock()
 	if s.favGeneration != generation {
 		s.favMu.Unlock()
@@ -669,17 +672,17 @@ func (s *HongguoService) refreshFavoriteCache(generation uint64) {
 		return
 	}
 	for i := range list {
-		list[i].CoverURL = s.media.ImageURL(list[i].CoverURL)
+		list[i].CoverURL = s.imageURL(list[i].CoverURL)
 	}
 	s.cachedFavorites = list
 	s.favCachedAt = time.Now()
 	s.favMu.Unlock()
 }
-func (s *HongguoService) ToggleLike(ctx context.Context, seriesID, episodeID, title, coverURL string, episodeNum int) (bool, error) {
-	userCookies, _ := s.authCredentials()
+func (s *Service) ToggleLike(ctx context.Context, seriesID, episodeID, title, coverURL string, episodeNum int) (bool, error) {
+	userCookies, _ := s.credentials()
 	seriesID = strings.TrimSpace(seriesID)
 	episodeID = strings.TrimSpace(episodeID)
-	if !validContentID(seriesID) || !validContentID(episodeID) {
+	if !mediautil.ValidContentID(seriesID) || !mediautil.ValidContentID(episodeID) {
 		return false, fmt.Errorf("点赞 ID 无效")
 	}
 	liked := !s.store.IsLiked(seriesID, episodeID, episodeNum)
@@ -705,15 +708,15 @@ func (s *HongguoService) ToggleLike(ctx context.Context, seriesID, episodeID, ti
 	return wasAdded, err
 }
 
-func (s *HongguoService) GetLikes(ctx context.Context) ([]LikeItem, error) {
-	userCookies, _ := s.authCredentials()
+func (s *Service) GetLikes(ctx context.Context) ([]LikeItem, error) {
+	userCookies, _ := s.credentials()
 	s.likeMu.Lock()
 
 	if len(s.cachedLikes) > 0 && time.Since(s.likeCachedAt) < 30*time.Second {
 		cached := make([]LikeItem, len(s.cachedLikes))
 		copy(cached, s.cachedLikes)
 		s.likeMu.Unlock()
-		return sanitizeIPC(cached), nil
+		return sanitize.Sanitize(cached), nil
 	}
 
 	localItems, err := s.store.GetLikes()
@@ -723,9 +726,9 @@ func (s *HongguoService) GetLikes(ctx context.Context) ([]LikeItem, error) {
 	}
 	if len(localItems) > 0 {
 		for i := range localItems {
-			localItems[i].CoverURL = s.media.ImageURL(localItems[i].CoverURL)
+			localItems[i].CoverURL = s.imageURL(localItems[i].CoverURL)
 		}
-		localItems = sanitizeIPC(localItems)
+		localItems = sanitize.Sanitize(localItems)
 		s.cachedLikes = localItems
 		shouldSync := s.likeCachedAt.IsZero() || time.Since(s.likeCachedAt) >= 60*time.Second
 		s.likeCachedAt = time.Now()
@@ -743,7 +746,7 @@ func (s *HongguoService) GetLikes(ctx context.Context) ([]LikeItem, error) {
 			}()
 		}
 		s.likeMu.Unlock()
-		return sanitizeIPC(localItems), nil
+		return sanitize.Sanitize(localItems), nil
 	}
 	s.likeMu.Unlock()
 
@@ -761,15 +764,15 @@ func (s *HongguoService) GetLikes(ctx context.Context) ([]LikeItem, error) {
 		return nil, err
 	}
 	for i := range list {
-		list[i].CoverURL = s.media.ImageURL(list[i].CoverURL)
+		list[i].CoverURL = s.imageURL(list[i].CoverURL)
 	}
-	list = sanitizeIPC(list)
+	list = sanitize.Sanitize(list)
 	s.cachedLikes = list
 	s.likeCachedAt = time.Now()
-	return sanitizeIPC(list), nil
+	return sanitize.Sanitize(list), nil
 }
 
-func (s *HongguoService) syncRemoteLikes(ctx context.Context, generation uint64) error {
+func (s *Service) syncRemoteLikes(ctx context.Context, generation uint64) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	items, err := s.fetchAccountLikes(ctx)
@@ -793,18 +796,18 @@ func (s *HongguoService) syncRemoteLikes(ctx context.Context, generation uint64)
 		return err
 	}
 	for i := range list {
-		list[i].CoverURL = s.media.ImageURL(list[i].CoverURL)
+		list[i].CoverURL = s.imageURL(list[i].CoverURL)
 	}
-	s.cachedLikes = sanitizeIPC(list)
+	s.cachedLikes = sanitize.Sanitize(list)
 	s.likeCachedAt = time.Now()
 	s.likeMu.Unlock()
 	return nil
 }
 
-func (s *HongguoService) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
-	userCookies, userToken := s.authCredentials()
+func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
+	userCookies, userToken := s.credentials()
 	deviceID, iid, cdid, openudid := s.deviceIdentity()
-	pairs := append(defaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
+	pairs := append(upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
 		[2]string{"action_type", "3"},
 		[2]string{"count", "100"},
 		[2]string{"offset", "0"},
@@ -824,7 +827,7 @@ func (s *HongguoService) fetchAccountLikes(ctx context.Context) ([]LikeItem, err
 	if userToken != "" {
 		req.Header.Set("x-tt-token", userToken)
 	}
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", s.userAgentValue())
 	req.Header.Set("x-ss-req-ticket", strconv.FormatInt(ticket, 10))
 
 	resp, err := s.httpClient.Do(req)
@@ -894,7 +897,7 @@ func (s *HongguoService) fetchAccountLikes(ctx context.Context) ([]LikeItem, err
 			SeriesID:      seriesID,
 			EpisodeID:     episodeID,
 			Title:         title,
-			CoverURL:      normalizeImageURL(cover),
+			CoverURL:      mediautil.NormalizeImageURL(cover),
 			EpisodeNum:    0,
 			TotalEpisodes: video.EpisodeCnt,
 			Description:   firstNonEmpty(row.SeriesIntro, video.Description),
@@ -904,8 +907,8 @@ func (s *HongguoService) fetchAccountLikes(ctx context.Context) ([]LikeItem, err
 	return items, nil
 }
 
-func (s *HongguoService) requestEpisodeLikeMutation(ctx context.Context, seriesID, episodeID string, liked bool) error {
-	userCookies, userToken := s.authCredentials()
+func (s *Service) requestEpisodeLikeMutation(ctx context.Context, seriesID, episodeID string, liked bool) error {
+	userCookies, userToken := s.credentials()
 	actionType := 3
 	if !liked {
 		actionType = 4
@@ -945,7 +948,7 @@ func (s *HongguoService) requestEpisodeLikeMutation(ctx context.Context, seriesI
 
 	path := "/novel/articleapi/do_action/v1/"
 	deviceID, iid, cdid, openudid := s.deviceIdentity()
-	pairs := defaultDeviceQueryPairs(deviceID, iid, cdid, openudid)
+	pairs := upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid)
 	ticket := time.Now().UnixMilli()
 	rawQuery, sigHeaders := sign.SignPOST(path, pairs, ticket, deviceID, "7.3.9.32", compressed.Bytes(), nil)
 	var nonce [4]byte
@@ -971,7 +974,7 @@ func (s *HongguoService) requestEpisodeLikeMutation(ctx context.Context, seriesI
 	if userToken != "" {
 		req.Header.Set("x-tt-token", userToken)
 	}
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", s.userAgentValue())
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -1002,10 +1005,10 @@ func (s *HongguoService) requestEpisodeLikeMutation(ctx context.Context, seriesI
 	return nil
 }
 
-func (s *HongguoService) ToggleReservation(ctx context.Context, seriesID, title, coverURL, note, publishAt string) (bool, error) {
-	userCookies, _ := s.authCredentials()
+func (s *Service) ToggleReservation(ctx context.Context, seriesID, title, coverURL, note, publishAt string) (bool, error) {
+	userCookies, _ := s.credentials()
 	seriesID = strings.TrimSpace(seriesID)
-	if !validContentID(seriesID) {
+	if !mediautil.ValidContentID(seriesID) {
 		return false, fmt.Errorf("预约 ID 无效")
 	}
 	if userCookies == "" {
@@ -1030,7 +1033,7 @@ func (s *HongguoService) ToggleReservation(ctx context.Context, seriesID, title,
 		return false, err
 	}
 	if !wasReserved {
-		_, _ = s.SendNativeNotification(ctx, NotificationArgs{
+		s.notify(ctx, Notification{
 			Title:    "新剧预约成功",
 			Body:     fmt.Sprintf("《%s》已加入预约列表，上线后将第一时间通知您！", title),
 			SeriesID: seriesID,
@@ -1043,18 +1046,12 @@ func (s *HongguoService) ToggleReservation(ctx context.Context, seriesID, title,
 	return !wasReserved, nil
 }
 
-func (s *HongguoService) invalidateReservationCaches() {
-	s.cacheMu.Lock()
-	for key := range s.cache {
-		if strings.HasPrefix(key, "series_page:") || strings.HasPrefix(key, "new_releases:") {
-			delete(s.cache, key)
-		}
-	}
-	s.cacheMu.Unlock()
+func (s *Service) invalidateReservationCaches() {
+	s.invalidateCaches("series_page:", "new_releases:")
 }
 
-func (s *HongguoService) requestReservationMutation(ctx context.Context, seriesID string, opType int) error {
-	userCookies, userToken := s.authCredentials()
+func (s *Service) requestReservationMutation(ctx context.Context, seriesID string, opType int) error {
+	userCookies, userToken := s.credentials()
 	itemID, err := strconv.ParseInt(seriesID, 10, 64)
 	if err != nil || itemID <= 0 {
 		return fmt.Errorf("预约编号无效")
@@ -1088,7 +1085,7 @@ func (s *HongguoService) requestReservationMutation(ctx context.Context, seriesI
 
 	path := "/reading/bookapi/search/uncover_subscribe/v"
 	deviceID, iid, cdid, openudid := s.deviceIdentity()
-	pairs := defaultDeviceQueryPairs(deviceID, iid, cdid, openudid)
+	pairs := upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid)
 	ticket := time.Now().UnixMilli()
 	rawQuery, headers := sign.SignPOST(path, pairs, ticket, deviceID, "7.3.9.32", compressed.Bytes(), nil)
 	var nonce [4]byte
@@ -1115,7 +1112,7 @@ func (s *HongguoService) requestReservationMutation(ctx context.Context, seriesI
 	if userToken != "" {
 		req.Header.Set("x-tt-token", userToken)
 	}
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", s.userAgentValue())
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -1146,7 +1143,7 @@ func (s *HongguoService) requestReservationMutation(ctx context.Context, seriesI
 	return nil
 }
 
-func (s *HongguoService) GetReservations(ctx context.Context) ([]ReservationItem, error) {
+func (s *Service) GetReservations(ctx context.Context) ([]ReservationItem, error) {
 	s.resMu.Lock()
 
 	// 1. If in-memory cache is fresh (< 60s), return instantly
@@ -1154,7 +1151,7 @@ func (s *HongguoService) GetReservations(ctx context.Context) ([]ReservationItem
 		cached := make([]ReservationItem, len(s.cachedReservations))
 		copy(cached, s.cachedReservations)
 		s.resMu.Unlock()
-		return sanitizeIPC(cached), nil
+		return sanitize.Sanitize(cached), nil
 	}
 
 	// 2. Check local store (sub-millisecond instant return)
@@ -1164,16 +1161,16 @@ func (s *HongguoService) GetReservations(ctx context.Context) ([]ReservationItem
 		return nil, err
 	}
 	for i := range storeList {
-		storeList[i].CoverURL = s.media.ImageURL(storeList[i].CoverURL)
+		storeList[i].CoverURL = s.imageURL(storeList[i].CoverURL)
 	}
-	storeList = sanitizeIPC(storeList)
+	storeList = sanitize.Sanitize(storeList)
 
-	userCookies, _ := s.authCredentials()
+	userCookies, _ := s.credentials()
 	if userCookies == "" {
 		s.cachedReservations = storeList
 		s.resCachedAt = time.Now()
 		s.resMu.Unlock()
-		return sanitizeIPC(storeList), nil
+		return sanitize.Sanitize(storeList), nil
 	}
 
 	if len(storeList) > 0 {
@@ -1194,16 +1191,16 @@ func (s *HongguoService) GetReservations(ctx context.Context) ([]ReservationItem
 			}()
 		}
 		s.resMu.Unlock()
-		return sanitizeIPC(storeList), nil
+		return sanitize.Sanitize(storeList), nil
 	}
 	s.resMu.Unlock()
 
 	// 3. Local store empty -> synchronous fetch
 	results, err := s.syncRemoteReservations(ctx, s.currentReservationGeneration())
-	return sanitizeIPC(results), err
+	return sanitize.Sanitize(results), err
 }
 
-func (s *HongguoService) syncRemoteReservations(ctx context.Context, generation uint64) ([]ReservationItem, error) {
+func (s *Service) syncRemoteReservations(ctx context.Context, generation uint64) ([]ReservationItem, error) {
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 
@@ -1246,7 +1243,7 @@ func (s *HongguoService) syncRemoteReservations(ctx context.Context, generation 
 
 	for _, it := range online {
 		if !prevOnline[it.SeriesID] && len(prevReservations) > 0 {
-			_, _ = s.SendNativeNotification(ctx, NotificationArgs{
+			s.notify(ctx, Notification{
 				Title:    "新剧开播提醒",
 				Body:     fmt.Sprintf("您预约的《%s》已正式上线，点击立即观看！", it.Title),
 				SeriesID: it.SeriesID,
@@ -1271,24 +1268,24 @@ func (s *HongguoService) syncRemoteReservations(ctx context.Context, generation 
 		return nil, storeErr
 	}
 	for i := range storeList {
-		storeList[i].CoverURL = s.media.ImageURL(storeList[i].CoverURL)
+		storeList[i].CoverURL = s.imageURL(storeList[i].CoverURL)
 	}
-	storeList = sanitizeIPC(storeList)
+	storeList = sanitize.Sanitize(storeList)
 	s.cachedReservations = storeList
 	s.resCachedAt = time.Now()
 	s.resMu.Unlock()
 
-	return sanitizeIPC(storeList), nil
+	return sanitize.Sanitize(storeList), nil
 }
 
-func (s *HongguoService) fetchAccountReservations(ctx context.Context, online bool) ([]ReservationItem, error) {
-	userCookies, userToken := s.authCredentials()
+func (s *Service) fetchAccountReservations(ctx context.Context, online bool) ([]ReservationItem, error) {
+	userCookies, userToken := s.credentials()
 	var results []ReservationItem
 	offset := 0
 
 	for {
 		deviceID, iid, cdid, openudid := s.deviceIdentity()
-		pairs := append(defaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
+		pairs := append(upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
 			[2]string{"order_experiment", "descend"},
 			[2]string{"offset", strconv.Itoa(offset)},
 			// tab_type=13 is the account reservation tab; tab_type=5 is the public
@@ -1311,7 +1308,7 @@ func (s *HongguoService) fetchAccountReservations(ctx context.Context, online bo
 		if userToken != "" {
 			req.Header.Set("x-tt-token", userToken)
 		}
-		req.Header.Set("User-Agent", s.userAgent)
+		req.Header.Set("User-Agent", s.userAgentValue())
 		req.Header.Set("x-ss-req-ticket", strconv.FormatInt(ticket, 10))
 
 		resp, err := s.httpClient.Do(req)
@@ -1404,7 +1401,7 @@ func (s *HongguoService) fetchAccountReservations(ctx context.Context, online bo
 			results = append(results, ReservationItem{
 				SeriesID:  id,
 				Title:     title,
-				CoverURL:  s.media.ImageURL(cover),
+				CoverURL:  s.imageURL(cover),
 				Note:      note,
 				PublishAt: publishAt,
 				IsOnline:  it.IsOnline,
