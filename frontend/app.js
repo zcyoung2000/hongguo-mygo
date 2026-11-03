@@ -1237,6 +1237,7 @@ function reportFeedFailure(slot, text, delay = 3000) {
 }
 
 function syncActiveFeedSlot(slot, playback = null) {
+  // Preloading a background slot must never steal the active media chrome.
   if (!slot || feedSlots[feedSlotCurr] !== slot) return;
   state.feed.episodeId = slot.episodeId || state.feed.episodeId;
   state.feed.episodeNum = slot.episodeNum || 1;
@@ -1248,6 +1249,7 @@ function syncActiveFeedSlot(slot, playback = null) {
     if (Number(playback.commentCount) > 0) updateFeedCommentCount(playback.commentCount);
     updateFeedQualityControls(playback);
   }
+  syncFeedMediaChrome();
 }
 
 function cancelScheduledFeedWarmup() {
@@ -1692,7 +1694,9 @@ const state = {
 // IPC Helper with auto-wait for window.mygo injection
 async function apiCall(method, ...args) {
   try {
-    const result = await window.mygo.call('HongguoService.' + method, ...args);
+    const bridge = await waitForMygoBridge();
+    if (!bridge?.call) throw new Error('MyGo IPC bridge is unavailable');
+    const result = await bridge.call('HongguoService.' + method, ...args);
     return cloneIPCValue(result);
   } catch (err) {
     console.error(`API Call [${method}] error:`, err);
@@ -4916,6 +4920,7 @@ function updateFeedPlayIndicator() {
 function initFeedControls() {
   const feedContainer = document.getElementById('feed-container');
   const feedStage = document.getElementById('feed-stage');
+  const playBtn = document.getElementById('feed-play');
   const centerPlay = document.getElementById('feed-play-indicator');
   const prevEpBtn = document.getElementById('feed-prev-ep');
   const nextEpBtn = document.getElementById('feed-next-ep');
