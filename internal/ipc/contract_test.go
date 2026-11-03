@@ -11,7 +11,10 @@ func TestIPCMethodContractDoesNotExposeRuntimeWiring(t *testing.T) {
 		"SetAuthTransport":       true,
 		"SetDeviceProfileStore":  true,
 	}
-	serviceType := reflect.TypeFor[HongguoService]()
+	serviceType := reflect.TypeFor[*HongguoService]()
+	if serviceType.NumMethod() < 50 {
+		t.Fatalf("IPC method count = %d, want the established contract", serviceType.NumMethod())
+	}
 	for i := 0; i < serviceType.NumMethod(); i++ {
 		name := serviceType.Method(i).Name
 		if disallowed[name] {

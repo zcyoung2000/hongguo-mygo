@@ -385,12 +385,8 @@ func (s *HongguoService) reloadDeviceIdentityLocked() error {
 }
 
 func (s *HongguoService) invalidateUserDataCaches() {
-	if s.catalog != nil {
-		s.catalog.Invalidate()
-	}
-	if s.library != nil {
-		s.library.InvalidateUserData()
-	}
+	s.catalogService().Invalidate()
+	s.libraryService().InvalidateUserData()
 	s.cacheMu.Lock()
 	s.cache = make(map[string]cacheItem)
 	s.cacheMu.Unlock()
