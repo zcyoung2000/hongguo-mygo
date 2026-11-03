@@ -267,6 +267,118 @@ const feedSwitchMetrics = [];
 const feedMetricQueue = [];
 let feedMetricFlushTimer = null;
 let feedMetricFlushInFlight = false;
+let feedTimeSyncHandle = 0;
+let feedTimeSyncHandleType = '';
+let feedTimeSyncVideo = null;
+let feedTimeSyncLastAt = 0;
+let feedTimeSyncGeneration = 0;
+
+function updateFeedPlayButtonState(video = null) {
+  const feedVideo = video || getFeedVideo();
+  const playBtn = document.getElementById('feed-play');
+  const iconPlay = playBtn?.querySelector('.icon-play');
+  const iconPause = playBtn?.querySelector('.icon-pause');
+  const isPlaying = Boolean(feedVideo && !feedVideo.paused && !feedVideo.ended);
+  if (iconPlay) iconPlay.style.display = isPlaying ? 'none' : 'block';
+  if (iconPause) iconPause.style.display = isPlaying ? 'block' : 'none';
+}
+
+function stopFeedMediaTimeSync() {
+  if (!feedTimeSyncHandle && !feedTimeSyncVideo) return;
+  feedTimeSyncGeneration++;
+  if (
+    feedTimeSyncHandle &&
+    feedTimeSyncHandleType === 'video-frame' &&
+    typeof feedTimeSyncVideo?.cancelVideoFrameCallback === 'function'
+  ) {
+    feedTimeSyncVideo.cancelVideoFrameCallback(feedTimeSyncHandle);
+  } else if (feedTimeSyncHandleType === 'animation-frame') {
+    cancelAnimationFrame(feedTimeSyncHandle);
+  }
+  feedTimeSyncHandle = 0;
+  feedTimeSyncHandleType = '';
+  feedTimeSyncVideo = null;
+}
+
+function syncActiveFeedTimeline(video = null) {
+  const feedVideo = video || getFeedVideo();
+  updateFeedMediaTime(feedVideo);
+  updatePlaybackBufferIndicator(
+    feedVideo,
+    document.getElementById('feed-progress-buffer'),
+    feedMediaDuration(feedVideo)
+  );
+}
+
+function scheduleFeedMediaTimeSync() {
+  const feedVideo = getFeedVideo();
+  if (!feedVideo) {
+    stopFeedMediaTimeSync();
+    return;
+  }
+  if (feedTimeSyncVideo === feedVideo && feedTimeSyncHandle) return;
+
+  if (feedTimeSyncVideo !== feedVideo) {
+    stopFeedMediaTimeSync();
+    feedTimeSyncVideo = feedVideo;
+    feedTimeSyncLastAt = performance.now();
+  } else {
+    feedTimeSyncHandle = 0;
+    feedTimeSyncHandleType = '';
+  }
+  const generation = feedTimeSyncGeneration;
+
+  const tick = timestamp => {
+    // A generation also invalidates callbacks when a WebKit implementation
+    // exposes rVFC but not cancelVideoFrameCallback.
+    if (generation !== feedTimeSyncGeneration) return;
+    feedTimeSyncHandle = 0;
+    feedTimeSyncHandleType = '';
+    if (feedTimeSyncVideo !== feedVideo || feedVideo !== getFeedVideo()) {
+      feedTimeSyncVideo = null;
+      return;
+    }
+
+    // Browsers emit timeupdate at implementation-defined intervals. Syncing
+    // with presented video frames keeps the shared chrome tied to media time.
+    if (timestamp - feedTimeSyncLastAt >= 200) {
+      syncActiveFeedTimeline(feedVideo);
+      feedTimeSyncLastAt = timestamp;
+    }
+    if (feedVideo.paused) {
+      feedTimeSyncVideo = null;
+      return;
+    }
+    scheduleFeedMediaTimeSync();
+  };
+
+  if (typeof feedVideo.requestVideoFrameCallback === 'function') {
+    feedTimeSyncHandleType = 'video-frame';
+    feedTimeSyncHandle = feedVideo.requestVideoFrameCallback(tick);
+  } else {
+    feedTimeSyncHandleType = 'animation-frame';
+    feedTimeSyncHandle = requestAnimationFrame(tick);
+  }
+}
+
+// The shared feed chrome is a projection of one active media element. Keep all
+// activation paths synchronized through this single state transition.
+function setActiveFeedSlot(slot, { force = false } = {}) {
+  if (!slot) return;
+  if (!force && feedSlots[feedSlotCurr] === slot && feedActiveVideo === slot.video) return;
+
+  feedSlotCurr = slot.id;
+  feedActiveVideo = slot.video;
+  syncFeedMediaChrome();
+}
+
+function syncFeedMediaChrome() {
+  const feedVideo = getFeedVideo();
+  syncActiveFeedTimeline(feedVideo);
+  updateFeedPlayIndicator();
+  updateFeedPlayButtonState(feedVideo);
+  scheduleFeedMediaTimeSync();
+}
 
 function initFeedVideoPool() {
   const ids = [0, 1, 2];
@@ -337,13 +449,11 @@ function initFeedVideoPool() {
     return slot;
   });
 
-  feedSlotCurr = 0;
   feedSlotNext = 1;
   feedSlotPrev = 2;
-  feedActiveVideo = feedSlots[0]?.video || null;
   const incomingPoster = document.getElementById('feed-incoming-poster');
   if (incomingPoster) incomingPoster.style.backgroundImage = 'none';
-  updateFeedPlayIndicator();
+  setActiveFeedSlot(feedSlots[0], { force: true });
 }
 
 function attachFeedVideoMetrics(slot) {
@@ -500,6 +610,31 @@ function updateFeedMediaTime(video) {
   const timeDisplay = document.getElementById('feed-time-display');
   if (progressCurrent) progressCurrent.style.width = `${duration ? (position / duration) * 100 : 0}%`;
   if (timeDisplay) timeDisplay.textContent = `${formatTime(position)} / ${formatTime(duration)}`;
+}
+
+function prepareFeedStartPosition(slot, dir) {
+  if (!slot?.video || !Number.isFinite(slot.video.currentTime)) return;
+
+  const duration = feedMediaDuration(slot.video);
+  const storedPosition = Number(state.feed.playbackPositions.get(
+    feedPlaybackKey(slot.seriesId, slot.episodeNum, slot.quality)
+  ));
+  const hasResumePosition = Number.isFinite(storedPosition) &&
+    storedPosition > 3 &&
+    (!duration || storedPosition < duration - 5);
+
+  let intendedPosition = 0;
+  if (hasResumePosition || dir < 0) {
+    intendedPosition = hasResumePosition
+      ? storedPosition
+      : Math.max(0, Number(slot.video.currentTime) || 0);
+  }
+  if (duration > 0) intendedPosition = Math.min(intendedPosition, duration - 0.5);
+  intendedPosition = Math.max(0, intendedPosition);
+
+  if (Math.abs(slot.video.currentTime - intendedPosition) > 0.05) {
+    slot.video.currentTime = intendedPosition;
+  }
 }
 
 function feedAssetKey(seriesId, episodeNum, quality) {
@@ -727,10 +862,9 @@ function resetFeedVideoPool() {
     }
   });
 
-  feedSlotCurr = 0;
   feedSlotNext = 1;
   feedSlotPrev = 2;
-  feedActiveVideo = feedSlots[0]?.video || null;
+  setActiveFeedSlot(feedSlots[0], { force: true });
 }
 
 function effectiveFeedNetworkProfile() {
@@ -3787,21 +3921,20 @@ function switchFeedDrama(dir) {
   cancelPendingFeedSwitch();
 
   if (dir > 0) {
-    feedSlotCurr = targetSlot.id;
     feedSlotPrev = oldCurrentSlot.id;
     feedSlotNext = offscreenSlot.id;
   } else {
-    feedSlotCurr = targetSlot.id;
     feedSlotNext = oldCurrentSlot.id;
     feedSlotPrev = offscreenSlot.id;
   }
-  feedActiveVideo = feedSlots[feedSlotCurr].video;
 
   const targetQuality = dir > 0 ? desiredQuality : (targetSlot.quality || desiredQuality);
   const targetReady = feedSlotMatches(targetSlot, targetIdx, targetDrama.id, targetQuality);
   const targetBuffered = Boolean(targetReady && feedVideoHasPlaybackBuffer(targetSlot.video));
   activateFeedDrama(targetDrama, targetIdx, targetReady ? targetSlot : null);
+  if (targetReady) prepareFeedStartPosition(targetSlot, dir);
   loadFeedDramaMetadata(targetDrama);
+  setActiveFeedSlot(targetSlot);
   if (targetReady && (feedVideoHasFirstFrame(targetSlot.video) || feedVideoHasPlaybackBuffer(targetSlot.video))) {
     state.feed.consecutiveSourceFailures = 0;
   }
@@ -4783,9 +4916,6 @@ function updateFeedPlayIndicator() {
 function initFeedControls() {
   const feedContainer = document.getElementById('feed-container');
   const feedStage = document.getElementById('feed-stage');
-  const playBtn = document.getElementById('feed-play');
-  const iconPlay = playBtn?.querySelector('.icon-play');
-  const iconPause = playBtn?.querySelector('.icon-pause');
   const centerPlay = document.getElementById('feed-play-indicator');
   const prevEpBtn = document.getElementById('feed-prev-ep');
   const nextEpBtn = document.getElementById('feed-next-ep');
@@ -4866,8 +4996,8 @@ function initFeedControls() {
       if (window.ambientGlow && state.currentView === 'recommend') {
         window.ambientGlow.attach(video).start();
       }
-      if (iconPlay) iconPlay.style.display = 'none';
-      if (iconPause) iconPause.style.display = 'block';
+      scheduleFeedMediaTimeSync();
+      updateFeedPlayButtonState(video);
       state.feed.userPaused = false;
       updateFeedPlayIndicator();
       setPlaybackKeepAwake(true);
@@ -4892,8 +5022,7 @@ function initFeedControls() {
       if (window.ambientGlow) {
         window.ambientGlow.pause();
       }
-      if (iconPlay) iconPlay.style.display = 'block';
-      if (iconPause) iconPause.style.display = 'none';
+      updateFeedPlayButtonState(video);
       updateFeedPlayIndicator();
       setPlaybackKeepAwake(false);
       const curItem = state.feed.items ? state.feed.items[state.feed.index] : null;
