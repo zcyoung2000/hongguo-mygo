@@ -1,0 +1,948 @@
+package ipc
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"github.com/beilunyang/openhongguo/sdk"
+	"github.com/beilunyang/openhongguo/sdk/model"
+	"io"
+	"myguo/internal/sign"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
+
+func (s *HongguoService) GetFilterPanel(ctx context.Context, genre string) ([]FilterRowDTO, error) {
+	cacheKey := "filter_panel:" + genre
+	s.cacheMu.RLock()
+	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
+		s.cacheMu.RUnlock()
+		return sanitizeIPC(entry.val.([]FilterRowDTO)), nil
+	}
+	s.cacheMu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	rows, err := s.client.ShortFilterPanel(ctx, genre)
+	if err != nil {
+		return nil, err
+	}
+
+	var res []FilterRowDTO
+	for _, r := range rows {
+		rowDTO := FilterRowDTO{
+			Key:  r.Key,
+			Name: r.Name,
+		}
+		for _, o := range r.Options {
+			rowDTO.Options = append(rowDTO.Options, FilterOptionDTO{
+				Name:  o.Name,
+				Value: o.Value,
+			})
+		}
+		res = append(res, rowDTO)
+	}
+
+	s.cacheMu.Lock()
+	s.cache[cacheKey] = cacheItem{val: res, expiresAt: time.Now().Add(1 * time.Hour)}
+	s.cacheMu.Unlock()
+
+	return sanitizeIPC(res), nil
+}
+
+func (s *HongguoService) GetDiscover(ctx context.Context, genre string, selections map[string]string, cursor string) (DiscoverResponse, error) {
+	selectionJSON, err := json.Marshal(selections)
+	if err != nil {
+		return DiscoverResponse{}, fmt.Errorf("encode discover selections: %w", err)
+	}
+	cacheKey := fmt.Sprintf("discover:%s:%s:%s", genre, selectionJSON, cursor)
+	s.cacheMu.RLock()
+	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
+		s.cacheMu.RUnlock()
+		return sanitizeIPC(entry.val.(DiscoverResponse)), nil
+	}
+	s.cacheMu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	shortSelections := shortFilterSelections(genre, selections)
+
+	res, err := s.client.ShortFilter(ctx, sdk.ShortFilterQuery{
+		Selections: shortSelections,
+		Cursor:     cursor,
+	})
+	if err != nil {
+		if errors.Is(err, sdk.ErrContentUnavailable) {
+			resp := DiscoverResponse{
+				Items:   []SeriesCard{},
+				HasMore: false,
+				Cursor:  "",
+			}
+			s.cacheMu.Lock()
+			s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
+			s.cacheMu.Unlock()
+			return sanitizeIPC(resp), nil
+		}
+		return DiscoverResponse{}, err
+	}
+
+	resItems := shortFilterItems(res)
+	cards := make([]SeriesCard, 0, len(resItems))
+	for _, it := range resItems {
+		var tags []string
+		if it.Category != "" {
+			tags = append(tags, it.Category)
+		}
+		tags = append(tags, fmt.Sprintf("%d集", it.EpisodeCount))
+
+		cards = append(cards, SeriesCard{
+			ID:           it.ID,
+			Title:        it.Title,
+			Description:  it.Description,
+			CoverURL:     s.media.ImageURL(it.CoverURL),
+			EpisodeCount: it.EpisodeCount,
+			Category:     it.Category,
+			Author:       it.Author,
+			Status:       "finished",
+			Heat:         "精选",
+			Tags:         tags,
+		})
+	}
+
+	resp := DiscoverResponse{
+		Items:   cards,
+		HasMore: shortFilterHasMore(res),
+		Cursor:  shortFilterCursor(res),
+	}
+
+	s.cacheMu.Lock()
+	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
+	s.cacheMu.Unlock()
+
+	return sanitizeIPC(resp), nil
+}
+
+func (s *HongguoService) GetRankings(ctx context.Context, contentId, boardId, cursor string) (RankResponse, error) {
+	userCookies, _ := s.authCredentials()
+	rankScope := "anonymous"
+	if userCookies != "" {
+		rankScope = "account"
+	}
+	cacheKey := fmt.Sprintf("rank:%s:%s:%s:%s", rankScope, contentId, boardId, cursor)
+	s.cacheMu.RLock()
+	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
+		s.cacheMu.RUnlock()
+		return sanitizeIPC(entry.val.(RankResponse)), nil
+	}
+	s.cacheMu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	var rank *model.ShortRanking
+	var err error
+	if userCookies != "" {
+		rank, err = s.fetchAccountShortRank(ctx, contentId, boardId, cursor)
+		// A signed anonymous request can still show the public board when the
+		// account request fails. Do not mix an account cursor with a new
+		// anonymous session on later pages.
+		if err != nil && cursor == "" {
+			rank, err = s.client.ShortRank(ctx, sdk.ShortRankQuery{
+				Content: contentId,
+				Board:   boardId,
+			})
+		}
+	} else {
+		rank, err = s.client.ShortRank(ctx, sdk.ShortRankQuery{
+			Content: contentId,
+			Board:   boardId,
+			Cursor:  cursor,
+		})
+	}
+	if err != nil && errors.Is(err, sdk.ErrContentUnavailable) && boardId != "" && cursor == "" {
+		// Fallback to default board if requested sub-board is unavailable
+		rank, err = s.client.ShortRank(ctx, sdk.ShortRankQuery{
+			Content: contentId,
+		})
+	}
+	if err != nil {
+		return RankResponse{}, err
+	}
+
+	var items []RankItemDTO
+	for _, it := range shortRankItems(rank) {
+		isActor := (shortRankContent(rank) == "ranklist_celebrity" || it.SeriesID == "") && (it.Actor != "" || it.UserID != "" || it.AvatarURL != "")
+		if isActor {
+			title := it.Actor
+			if title == "" {
+				title = it.Title
+			}
+			avatar := s.media.ImageURL(it.AvatarURL)
+			if avatar == "" && it.CoverURL != "" {
+				avatar = s.media.ImageURL(it.CoverURL)
+			}
+			desc := it.Intro
+			if desc == "" && len(it.Details) > 0 {
+				desc = strings.Join(it.Details, " · ")
+			}
+			items = append(items, RankItemDTO{
+				Position:    it.Position,
+				SeriesID:    it.SeriesID,
+				Title:       title,
+				CoverURL:    avatar,
+				Heat:        it.Score,
+				Description: desc,
+				ItemType:    "actor",
+				Promoted:    it.Promoted,
+				Actor:       it.Actor,
+				ActorID:     it.ActorID,
+				UserID:      it.UserID,
+				AvatarURL:   avatar,
+				Intro:       it.Intro,
+				Details:     it.Details,
+			})
+		} else {
+			desc := ""
+			if it.EpisodeCount > 0 {
+				desc = fmt.Sprintf("全%d集", it.EpisodeCount)
+			} else if it.Actor != "" {
+				desc = it.Actor
+			}
+			items = append(items, RankItemDTO{
+				Position:    it.Position,
+				SeriesID:    it.SeriesID,
+				Title:       it.Title,
+				CoverURL:    s.media.ImageURL(it.CoverURL),
+				Heat:        it.Score,
+				Description: desc,
+				ItemType:    "drama",
+				Promoted:    it.Promoted,
+				Actor:       it.Actor,
+			})
+		}
+	}
+
+	resp := RankResponse{
+		Contents: shortRankContents(rank),
+		Content:  shortRankContent(rank),
+		Board:    shortRankBoard(rank),
+		Items:    items,
+		Cursor:   shortRankCursor(rank),
+		HasMore:  shortRankHasMore(rank),
+	}
+
+	s.cacheMu.Lock()
+	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
+	if rank != nil && rank.Board != "" && rank.Board != boardId {
+		s.cache[fmt.Sprintf("rank:%s:%s", contentId, rank.Board)] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
+	}
+	s.cacheMu.Unlock()
+
+	return sanitizeIPC(resp), nil
+}
+
+type rankCursor struct {
+	Offset  int      `json:"o"`
+	Seen    []string `json:"s,omitempty"`
+	Session string   `json:"x,omitempty"`
+	Content string   `json:"c,omitempty"`
+	Board   string   `json:"b,omitempty"`
+}
+
+func decodeRankCursor(token string) (rankCursor, error) {
+	cur := rankCursor{}
+	if token == "" {
+		return cur, nil
+	}
+	payload, ok := strings.CutPrefix(token, "s1.")
+	if !ok {
+		return cur, fmt.Errorf("invalid ranking cursor")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil || json.Unmarshal(raw, &cur) != nil || cur.Offset < 0 {
+		return rankCursor{}, fmt.Errorf("invalid ranking cursor")
+	}
+	return cur, nil
+}
+
+func encodeRankCursor(cur rankCursor) (string, error) {
+	raw, err := json.Marshal(cur)
+	if err != nil {
+		return "", err
+	}
+	return "s1." + base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func (s *HongguoService) fetchAccountShortRank(ctx context.Context, contentId, boardId, cursor string) (*model.ShortRanking, error) {
+	userCookies, userToken := s.authCredentials()
+	cur, err := decodeRankCursor(cursor)
+	if err != nil {
+		return nil, err
+	}
+	if cur.Content != "" && contentId != "" && cur.Content != contentId {
+		return nil, fmt.Errorf("ranking cursor belongs to another content")
+	}
+	if cur.Board != "" && boardId != "" && cur.Board != boardId {
+		return nil, fmt.Errorf("ranking cursor belongs to another board")
+	}
+	if cur.Content != "" {
+		contentId = cur.Content
+	}
+	if cur.Board != "" {
+		boardId = cur.Board
+	}
+
+	deviceID, iid, cdid, openudid := s.deviceIdentity()
+	pairs := [][2]string{
+		{"iid", iid},
+		{"device_id", deviceID},
+		{"ac", "wifi"},
+		{"channel", "xiaomi_8662_64"},
+		{"aid", "8662"},
+		{"app_name", "novelread"},
+		{"cdid", cdid},
+		{"version_code", "73932"},
+		{"version_name", "7.3.9.32"},
+		{"device_platform", "android"},
+		{"os", "android"},
+		{"ssmix", "a"},
+		{"device_type", "23127PN0CC"},
+		{"device_brand", "Xiaomi"},
+		{"language", "zh"},
+		{"os_api", "34"},
+		{"os_version", "14"},
+		{"manifest_version_code", "73932"},
+		{"resolution", "1200*2670"},
+		{"dpi", "460"},
+		{"update_version_code", "73932"},
+		{"host_abi", "arm64-v8a"},
+		{"dragon_device_type", "phone"},
+		{"pv_player", "73932"},
+		{"compliance_status", "0"},
+		{"need_personal_recommend", "1"},
+		{"player_so_load", "1"},
+		{"is_android_pad_screen", "0"},
+		{"openudid", openudid},
+		{"cell_id", "7470092475068071998"},
+		{"tab_type", "26"},
+		{"selected_items", contentId},
+	}
+	if boardId != "" {
+		pairs = append(pairs, [2]string{"sub_selected_items", boardId})
+	}
+	pairs = append(pairs,
+		[2]string{"offset", strconv.Itoa(cur.Offset)},
+		[2]string{"limit", "0"},
+		[2]string{"client_req_type", "2"},
+		[2]string{"client_template", "2"},
+		[2]string{"unlimited_selector_change_type", map[bool]string{true: "2", false: "1"}[cur.Offset > 0]},
+	)
+	if len(cur.Seen) > 0 && contentId != "ranklist_celebrity" {
+		pairs = append(pairs, [2]string{"filter_ids", strings.Join(cur.Seen, ",")})
+	}
+	if cur.Session != "" {
+		pairs = append(pairs, [2]string{"session_id", cur.Session})
+	}
+	pairs = append(pairs, [2]string{"user_is_login", "1"})
+
+	ticket := time.Now().UnixMilli()
+	rawQuery, sigHeaders := sign.SignGET(pairs, ticket, deviceID, "7.3.9.32", nil)
+	reqURL := "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/bookmall/cell/change/v1/?" + rawQuery
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range sigHeaders {
+		req.Header.Set(key, value)
+	}
+	req.Header.Set("Cookie", userCookies)
+	if userToken != "" {
+		req.Header.Set("x-tt-token", userToken)
+	}
+	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("x-tt-store-region", s.storeRegion)
+	req.Header.Set("x-ss-req-ticket", strconv.FormatInt(ticket, 10))
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ranking API returned %d", resp.StatusCode)
+	}
+	return parseAccountShortRank(body, contentId, boardId, cur)
+}
+
+type shortRankID string
+
+func (v *shortRankID) UnmarshalJSON(raw []byte) error {
+	text := strings.TrimSpace(string(raw))
+	if text == "" || text == "null" {
+		*v = ""
+		return nil
+	}
+	if text[0] == '"' {
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return err
+		}
+		*v = shortRankID(value)
+		return nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return err
+	}
+	*v = shortRankID(number.String())
+	return nil
+}
+
+type shortRankOption struct {
+	Name     string      `json:"show_name"`
+	ID       shortRankID `json:"selector_item_id"`
+	Selected bool        `json:"is_selected"`
+	Sub      struct {
+		OuterRow struct {
+			Items []shortRankOption `json:"items"`
+		} `json:"outer_row"`
+	} `json:"sub_cell_selector"`
+}
+
+func parseAccountShortRank(body []byte, contentId, boardId string, cur rankCursor) (*model.ShortRanking, error) {
+	var env struct {
+		Code json.RawMessage `json:"code"`
+		Data struct {
+			NextOffset int    `json:"next_offset"`
+			HasMore    bool   `json:"has_more"`
+			SessionID  string `json:"session_id"`
+			CellView   struct {
+				Selector struct {
+					OuterRow struct {
+						Items []shortRankOption `json:"items"`
+					} `json:"outer_row"`
+				} `json:"cell_selector"`
+				CellData []struct {
+					VideoData []struct {
+						SeriesID     shortRankID `json:"series_id"`
+						Title        string      `json:"title"`
+						Cover        string      `json:"cover"`
+						EpisodeCount int         `json:"episode_cnt"`
+						Score        struct {
+							Text string `json:"RecommendText"`
+						} `json:"rec_text_item"`
+					} `json:"video_data"`
+					Users []struct {
+						Info struct {
+							Base struct {
+								Name    string      `json:"user_name"`
+								Avatar  string      `json:"user_avatar"`
+								ActorID shortRankID `json:"actor_id_str"`
+								UserID  shortRankID `json:"user_id"`
+							} `json:"base_info"`
+						} `json:"user_info"`
+						Score string `json:"intro"`
+						Rec   struct {
+							Text string `json:"RecommendText"`
+						} `json:"rec_text_item"`
+						SubTitles []struct {
+							Content string `json:"content"`
+						} `json:"sub_title_list"`
+					} `json:"ugc_user_data"`
+				} `json:"cell_data"`
+			} `json:"cell_view"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return nil, err
+	}
+	if code := strings.Trim(strings.TrimSpace(string(env.Code)), `"`); code != "" && code != "0" {
+		return nil, fmt.Errorf("ranking API returned code %s", code)
+	}
+
+	out := &model.ShortRanking{Items: []model.RankItem{}}
+	for _, item := range env.Data.CellView.Selector.OuterRow.Items {
+		content := model.RankContent{ID: string(item.ID), Name: item.Name, Selected: item.Selected}
+		for _, board := range item.Sub.OuterRow.Items {
+			content.Boards = append(content.Boards, model.RankBoard{
+				ID: string(board.ID), Name: board.Name, Selected: board.Selected,
+			})
+		}
+		if content.ID != "" {
+			out.Contents = append(out.Contents, content)
+		}
+	}
+
+	for _, cell := range env.Data.CellView.CellData {
+		for _, video := range cell.VideoData {
+			if video.SeriesID == "" || strings.TrimSpace(video.Title) == "" {
+				continue
+			}
+			out.Items = append(out.Items, model.RankItem{
+				Position:     len(out.Items) + 1,
+				SeriesID:     string(video.SeriesID),
+				Title:        strings.TrimSpace(video.Title),
+				CoverURL:     video.Cover,
+				Score:        video.Score.Text,
+				EpisodeCount: video.EpisodeCount,
+			})
+		}
+		for _, user := range cell.Users {
+			id := string(user.Info.Base.ActorID)
+			if id == "" {
+				id = string(user.Info.Base.UserID)
+			}
+			if id == "" || strings.TrimSpace(user.Info.Base.Name) == "" {
+				continue
+			}
+			item := model.RankItem{
+				Position:  len(out.Items) + 1,
+				ActorID:   id,
+				UserID:    string(user.Info.Base.UserID),
+				Actor:     strings.TrimSpace(user.Info.Base.Name),
+				AvatarURL: user.Info.Base.Avatar,
+				Score:     user.Rec.Text,
+				Intro:     user.Score,
+			}
+			for _, subtitle := range user.SubTitles {
+				if subtitle.Content != "" {
+					item.Details = append(item.Details, subtitle.Content)
+				}
+			}
+			out.Items = append(out.Items, item)
+		}
+	}
+
+	for _, content := range out.Contents {
+		if !content.Selected {
+			continue
+		}
+		out.Content = content.ID
+		for _, board := range content.Boards {
+			if board.Selected {
+				out.Board = board.ID
+			}
+		}
+	}
+	if out.Content == "" {
+		out.Content = contentId
+	}
+	if out.Board == "" {
+		out.Board = boardId
+	}
+	for i := range out.Items {
+		out.Items[i].Position += cur.Offset
+	}
+	if env.Data.HasMore && env.Data.NextOffset > cur.Offset && len(out.Items) > 0 {
+		next := cur
+		next.Offset = env.Data.NextOffset
+		next.Session = env.Data.SessionID
+		next.Content = out.Content
+		next.Board = out.Board
+		for _, item := range out.Items {
+			id := item.SeriesID
+			if id == "" {
+				id = item.ActorID
+			}
+			if id != "" {
+				next.Seen = append(next.Seen, id)
+			}
+		}
+		out.Cursor, _ = encodeRankCursor(next)
+		out.HasMore = out.Cursor != ""
+	}
+	return out, nil
+}
+
+func shortRankCursor(rank *model.ShortRanking) string {
+	if rank == nil {
+		return ""
+	}
+	return rank.Cursor
+}
+
+func shortRankHasMore(rank *model.ShortRanking) bool {
+	return rank != nil && rank.HasMore && rank.Cursor != ""
+}
+
+func formatHeatScore(n int64) string {
+	if n >= 100000000 {
+		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/100000000.0), ".0") + "亿"
+	} else if n >= 10000 {
+		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/10000.0), ".0") + "万"
+	}
+	return strconv.FormatInt(n, 10)
+}
+
+func (s *HongguoService) GetActorProfile(ctx context.Context, userID string) (*ActorProfileDTO, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, fmt.Errorf("user ID cannot be empty")
+	}
+
+	cacheKey := "actor_profile:" + userID
+	s.cacheMu.RLock()
+	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
+		s.cacheMu.RUnlock()
+		return entry.val.(*ActorProfileDTO), nil
+	}
+	s.cacheMu.RUnlock()
+
+	// A 12-second preview can take longer than ten seconds on a cold network;
+	// killing ffmpeg at exactly ten seconds turns a slow preload into a
+	// playback error.
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+
+	person, err := s.client.Person(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch actor profile: %w", err)
+	}
+	if person == nil {
+		return nil, fmt.Errorf("actor profile not found")
+	}
+
+	worksPage, err := s.client.PersonWorks(ctx, userID, "")
+	var works []SeriesCard
+	hasMore := false
+	cursor := ""
+	if err == nil && worksPage != nil {
+		hasMore = worksPage.HasMore
+		cursor = worksPage.Cursor
+		for _, w := range worksPage.Items {
+			category := "短剧"
+			if len(w.Tags) > 0 {
+				category = w.Tags[0]
+			}
+			heat := ""
+			if w.Heat > 0 {
+				heat = formatHeatScore(w.Heat) + "热度"
+			} else if w.Plays > 0 {
+				heat = formatHeatScore(w.Plays) + "播放"
+			} else {
+				heat = "热播作品"
+			}
+			works = append(works, SeriesCard{
+				ID:           w.SeriesID,
+				Title:        w.Title,
+				Description:  w.Description,
+				CoverURL:     s.media.ImageURL(w.CoverURL),
+				EpisodeCount: w.EpisodeCount,
+				Category:     category,
+				Author:       person.Name,
+				Status:       "finished",
+				Heat:         heat,
+				Tags:         w.Tags,
+			})
+		}
+	}
+
+	dto := &ActorProfileDTO{
+		UserID:      person.UserID,
+		Name:        person.Name,
+		Description: person.Description,
+		AvatarURL:   s.media.ImageURL(person.AvatarURL),
+		Tags:        person.Tags,
+		Labels:      person.Labels,
+		Followers:   person.Followers,
+		Likes:       person.Likes,
+		Works:       works,
+		HasMore:     hasMore,
+		Cursor:      cursor,
+	}
+	dto = sanitizeIPC(dto)
+
+	s.cacheMu.Lock()
+	s.cache[cacheKey] = cacheItem{val: dto, expiresAt: time.Now().Add(10 * time.Minute)}
+	s.cacheMu.Unlock()
+
+	return dto, nil
+}
+
+func (s *HongguoService) GetActorWorks(ctx context.Context, userID, cursor string) (*ActorWorksResponse, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, fmt.Errorf("user ID cannot be empty")
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	worksPage, err := s.client.PersonWorks(ctx, userID, cursor)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch actor works: %w", err)
+	}
+	worksPageItems := workItems(worksPage)
+
+	var works []SeriesCard
+	for _, w := range worksPageItems {
+		category := "短剧"
+		if len(w.Tags) > 0 {
+			category = w.Tags[0]
+		}
+		heat := ""
+		if w.Heat > 0 {
+			heat = formatHeatScore(w.Heat) + "热度"
+		} else if w.Plays > 0 {
+			heat = formatHeatScore(w.Plays) + "播放"
+		} else {
+			heat = "热播作品"
+		}
+		works = append(works, SeriesCard{
+			ID:           w.SeriesID,
+			Title:        w.Title,
+			Description:  w.Description,
+			CoverURL:     s.media.ImageURL(w.CoverURL),
+			EpisodeCount: w.EpisodeCount,
+			Category:     category,
+			Status:       "finished",
+			Heat:         heat,
+			Tags:         w.Tags,
+		})
+	}
+
+	return sanitizeIPC(&ActorWorksResponse{
+		Works:   works,
+		HasMore: worksPage != nil && worksPage.HasMore,
+		Cursor:  workCursor(worksPage),
+	}), nil
+}
+
+func (s *HongguoService) GetNewReleases(ctx context.Context, date string) (NewReleaseResponse, error) {
+	cacheKey := "new_releases:" + date
+	s.cacheMu.RLock()
+	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
+		s.cacheMu.RUnlock()
+		return sanitizeIPC(entry.val.(NewReleaseResponse)), nil
+	}
+	s.cacheMu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	nr, err := s.client.NewReleases(ctx, sdk.NewReleaseQuery{
+		Date: date,
+	})
+	if err != nil {
+		return NewReleaseResponse{}, err
+	}
+
+	reservedIDs := make(map[string]bool)
+	if reservations, err := s.GetReservations(ctx); err == nil {
+		for _, item := range reservations {
+			reservedIDs[item.SeriesID] = true
+		}
+	}
+
+	var items []NewReleaseItemDTO
+	for _, it := range newReleaseItems(nr) {
+		cat := ""
+		if len(it.Categories) > 0 {
+			cat = it.Categories[0]
+		}
+		items = append(items, NewReleaseItemDTO{
+			SeriesID:     it.SeriesID,
+			Title:        it.Title,
+			CoverURL:     s.media.ImageURL(it.CoverURL),
+			EpisodeCount: it.EpisodeCount,
+			Online:       it.Online,
+			Heat:         it.Heat,
+			Note:         it.Note,
+			Category:     cat,
+			Reserved:     reservedIDs[it.SeriesID],
+		})
+	}
+
+	resp := NewReleaseResponse{
+		CurrentDate: newReleaseDate(nr),
+		Dates:       newReleaseDates(nr),
+		Items:       items,
+	}
+
+	s.cacheMu.Lock()
+	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(10 * time.Minute)}
+	s.cacheMu.Unlock()
+
+	return sanitizeIPC(resp), nil
+}
+
+func (s *HongguoService) Search(ctx context.Context, query string) ([]SeriesCard, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	res, err := s.client.Search(ctx, query, sdk.SearchOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	var cards []SeriesCard
+	var missingCovers []int
+	for _, it := range pageItems(res) {
+		var tags []string
+		if it.Category != "" {
+			tags = append(tags, it.Category)
+		}
+		tags = append(tags, fmt.Sprintf("%d集", it.EpisodeCount))
+
+		coverURL := s.media.ImageURL(it.CoverURL)
+		if coverURL == "" {
+			missingCovers = append(missingCovers, len(cards))
+		}
+		cards = append(cards, SeriesCard{
+			ID:           it.ID,
+			Title:        it.Title,
+			Description:  it.Description,
+			CoverURL:     coverURL,
+			EpisodeCount: it.EpisodeCount,
+			Category:     it.Category,
+			Author:       it.Author,
+			Status:       "finished",
+			Heat:         "搜索结果",
+			Tags:         tags,
+		})
+	}
+
+	// The search API omits series_cover for some results; batch-fetch
+	// details to fill in the covers rather than rendering placeholders.
+	if len(missingCovers) > 0 {
+		ids := make([]string, 0, len(missingCovers))
+		for _, idx := range missingCovers {
+			ids = append(ids, cards[idx].ID)
+		}
+		bCtx, bCancel := context.WithTimeout(ctx, 8*time.Second)
+		batch, bErr := s.client.GetSeriesBatch(bCtx, ids)
+		bCancel()
+		if bErr == nil {
+			coverByID := make(map[string]string, len(batch))
+			for _, b := range batch {
+				if b.Series != nil && b.Series.CoverURL != "" {
+					coverByID[b.Series.ID] = b.Series.CoverURL
+				}
+			}
+			for _, idx := range missingCovers {
+				if url, ok := coverByID[cards[idx].ID]; ok {
+					cards[idx].CoverURL = s.media.ImageURL(url)
+				}
+			}
+		}
+	}
+	return sanitizeIPC(cards), nil
+}
+
+func (s *HongguoService) GetSuggestions(ctx context.Context, prefix string) ([]string, error) {
+	if prefix == "" {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	suggs, err := s.client.Suggest(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	var words []string
+	for _, s := range suggs {
+		words = append(words, s.Text)
+	}
+	return sanitizeIPC(words), nil
+}
+
+func (s *HongguoService) GetHotSearch(ctx context.Context) (HotSearchDTO, error) {
+	cacheKey := "hot_search"
+	s.cacheMu.RLock()
+	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
+		s.cacheMu.RUnlock()
+		return sanitizeIPC(entry.val.(HotSearchDTO)), nil
+	}
+	s.cacheMu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	hot, err := s.client.HotSearch(ctx)
+	if err != nil {
+		return HotSearchDTO{}, err
+	}
+	var words []string
+	for _, g := range hotGuesses(hot) {
+		if g.Title != "" {
+			words = append(words, g.Title)
+		}
+	}
+	for _, b := range hotBoards(hot) {
+		for _, it := range b.Items {
+			if it.Title != "" {
+				words = append(words, it.Title)
+			}
+		}
+	}
+	resp := HotSearchDTO{Words: words}
+
+	s.cacheMu.Lock()
+	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(10 * time.Minute)}
+	s.cacheMu.Unlock()
+
+	return sanitizeIPC(resp), nil
+}
+
+func (s *HongguoService) GetSeriesDetail(ctx context.Context, seriesID string) (*SeriesDetailDTO, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	d, err := s.client.GetSeries(ctx, seriesID)
+	if err != nil {
+		if errors.Is(err, sdk.ErrAnonymousLimited) || strings.Contains(strings.ToLower(err.Error()), "anonymous") {
+			_ = s.client.ResetDevice(ctx)
+			d, err = s.client.GetSeries(ctx, seriesID)
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch series detail: %w", err)
+	}
+	if d == nil {
+		return nil, fmt.Errorf("series not found")
+	}
+
+	eps, err := s.listEpisodes(ctx, seriesID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch episodes: %w", err)
+	}
+
+	var episodeDTOs []EpisodeDTO
+	var commentCount int64
+	for _, ep := range pageItems(eps) {
+		episodeDTOs = append(episodeDTOs, EpisodeDTO{
+			ID:           ep.ID,
+			SeriesID:     seriesID,
+			Number:       ep.Number,
+			Title:        ep.Title,
+			Playable:     true,
+			PosterURL:    s.media.ImageURL(ep.CoverURL),
+			CommentCount: ep.CommentCount,
+		})
+		commentCount += ep.CommentCount
+	}
+
+	return sanitizeIPC(&SeriesDetailDTO{
+		ID:           d.ID,
+		Title:        d.Title,
+		Description:  d.Description,
+		CoverURL:     s.media.ImageURL(d.CoverURL),
+		EpisodeCount: d.EpisodeCount,
+		Status:       "finished",
+		Heat:         "热播",
+		Episodes:     episodeDTOs,
+		CommentCount: commentCount,
+		IsFavorite:   s.store.IsFavorite(seriesID),
+	}), nil
+}

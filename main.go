@@ -8,27 +8,21 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 
 	"github.com/beilunyang/openhongguo/adapters"
 	"github.com/beilunyang/openhongguo/adapters/filestore"
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/egoist/mygo"
+	"myguo/internal/appdirs"
+	"myguo/internal/auth"
+	"myguo/internal/ipc"
+	"myguo/internal/media"
+	"myguo/internal/native"
+	userstore "myguo/internal/store"
 )
 
 //go:embed frontend/*
 var embeddedFS embed.FS
-
-type ScrollGesturePayload struct {
-	Direction string `json:"direction"`
-}
-
-var scrollGestureEvent = mygo.NewEvent[ScrollGesturePayload]("scrollGesture")
-
-var (
-	mainWindow        *mygo.Window
-	feedScrollCapture atomic.Bool
-)
 
 func main() {
 	home, err := os.UserHomeDir()
@@ -36,7 +30,7 @@ func main() {
 		log.Fatalf("failed to get user home: %v", err)
 	}
 
-	appDir, err := appSupportDir(home)
+	appDir, err := appdirs.AppSupportDir(home)
 	if err != nil {
 		log.Fatalf("failed to prepare app dir: %v", err)
 	}
@@ -52,7 +46,7 @@ func main() {
 
 	// 1. Initialize OpenHongguo client with persistent anonymous device profile
 	profilePath := filepath.Join(appDir, "anonymous.json")
-	authenticatedTransport := newAuthTransport()
+	authenticatedTransport := auth.New()
 	client, err := adapters.NewClient(profilePath, sdk.Options{
 		Transport:     authenticatedTransport,
 		RetryAttempts: 3,
@@ -62,32 +56,32 @@ func main() {
 	}
 
 	// 2. Initialize persistent store for user data (history, favorites, likes, reservations)
-	store, err := NewStore(appDir)
+	store, err := userstore.NewStore(appDir)
 	if err != nil {
 		log.Fatalf("failed to init store: %v", err)
 	}
 	defer store.Close()
 
 	// 3. Initialize local media streaming & decryption server
-	mediaServer, err := NewMediaServer(client)
+	mediaServer, err := media.NewMediaServer(client)
 	if err != nil {
 		log.Fatalf("failed to init media server: %v", err)
 	}
 	defer mediaServer.Close()
 	mediaServer.SetEpisodeCacheCallback(store.RememberEpisode)
 
-	if ffmpegPath, err := ffmpegCommand(); err != nil {
+	if ffmpegPath, err := media.FFmpegCommand(); err != nil {
 		log.Printf("[ffmpeg] playback decryption unavailable: %v", err)
 	} else {
 		log.Printf("[ffmpeg] using %s", ffmpegPath)
 	}
-	feedScrollCapture.Store(true)
+	native.SetFeedScrollCapture(true)
 
 	// 4. Create and bind HongguoService for MyGo IPC
-	service := NewHongguoService(client, store, mediaServer, appDir)
-	service.setAuthTransport(authenticatedTransport)
-	service.setDeviceProfileStore(filestore.New(profilePath))
-	mediaServer.SetDeviceResetter(service.resetDeviceWithContext)
+	service := ipc.NewHongguoService(client, store, mediaServer, appDir)
+	service.SetAuthTransport(authenticatedTransport)
+	service.SetDeviceProfileStore(filestore.New(profilePath))
+	mediaServer.SetDeviceResetter(service.ResetDeviceWithContext)
 	mygo.Bind(service)
 
 	// 5. Setup embedded frontend
@@ -104,12 +98,12 @@ func main() {
 	// 6. Launch macOS native window via MyGo
 	mygo.App.WhenReady(func() {
 		// Initialize macOS native capabilities: Menus, Media Controls & NowPlaying
-		initNativeFeatures()
+		native.Init()
 
 		// Keep the content area opaque while only the transparent sidebar exposes
 		// AppKit's native sidebar vibrancy.
 		win := mygo.NewWindow(mygo.WindowOptions{
-			Title:           appName,
+			Title:           appdirs.AppName,
 			Width:           1280,
 			Height:          820,
 			MinWidth:        1000,
@@ -123,11 +117,11 @@ func main() {
 				PictureInPicture: true,
 			},
 		})
-		mainWindow = win
-		startScrollGestureMonitor()
+		native.SetWindow(win)
+		native.StartScrollGestureMonitor()
 		win.OnClosed(func() {
 			fmt.Println("Main window closed")
-			cleanupNativeFeatures()
+			native.Cleanup()
 		})
 	})
 
