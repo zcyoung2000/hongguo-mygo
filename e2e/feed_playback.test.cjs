@@ -1,0 +1,225 @@
+// Scheduling regressions run without a browser; real demux/streaming is covered
+// by internal/media's gated-upstream integration test.
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+const vm = require('node:vm');
+
+const source = fs.readFileSync(path.join(__dirname, '../frontend/app.js'), 'utf8');
+const functions = [...source.matchAll(/^(?:async )?function (\w+)\(/gm)];
+
+function harness() {
+  const context = vm.createContext({
+    console, URL, performance, setTimeout, clearTimeout,
+    window: { location: { href: 'http://localhost/' } },
+    document: { getElementById: () => null },
+    HTMLMediaElement: { HAVE_CURRENT_DATA: 2, HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4 },
+    feedPlaybackGeneration: 0, feedPlayToken: 0, feedPlayPromise: null,
+    feedSlots: [], feedSlotCurr: 0, feedActiveVideo: null,
+    state: {
+      currentView: 'recommend',
+      feed: {
+        items: [{ id: 'series-a' }, { id: 'series-b' }],
+        quality: '720p', userPaused: false, playbackSpeed: 1,
+        playbackPositions: new Map(), preloadMap: new Map(), playbackInfoLoads: new Map()
+      }
+    },
+    feedDesiredQuality: () => '720p',
+    syncActiveFeedSlot: () => {}, assessFeedMediaCapabilities: () => {},
+    scheduleFeedFrameMetric: () => {}, scheduleFeedAutoplayRetry: () => {},
+    scheduleFeedWarmup: () => {}, clearFeedFailureHint: () => {},
+    showFeedSkeleton: () => {}, reportFeedFailure: () => {},
+    clearFeedSlot: slot => {
+      slot.loadToken = (slot.loadToken || 0) + 1;
+      slot.ready = false;
+      slot.video.src = '';
+      slot.preparing = null;
+    }
+  });
+  for (const name of [
+    'feedAssetKey', 'feedPlaybackKey', 'rememberFeedPlayback', 'normalizeFeedMediaURL',
+    'feedSlotMatches', 'feedVideoHasFirstFrame', 'feedSlotForVideo', 'feedMediaDuration',
+    'prefetchFeedPlaybackInfo', 'prepareFeedSlot', 'beginFeedPlayback',
+    'ensureFeedSource',
+    'playbackBufferedRange', 'updatePlaybackBufferIndicator'
+  ]) {
+    const index = functions.findIndex(match => match[1] === name);
+    assert.ok(index >= 0, `missing ${name}`);
+    vm.runInContext(source.slice(functions[index].index, functions[index + 1]?.index), context);
+  }
+  return context;
+}
+
+function playback({ hls = true } = {}) {
+  return {
+    episodeId: 'episode-a', episodeNum: 1, quality: '720p', durationSec: 60,
+    isFullCached: false,
+    streamUrl: hls ? 'http://localhost/hls/index.m3u8' : 'http://localhost/video?mode=progressive',
+    hlsStreamUrl: hls ? 'http://localhost/hls/index.m3u8' : '',
+    progressiveStreamUrl: 'http://localhost/video?mode=progressive',
+    fullStreamUrl: 'http://localhost/video'
+  };
+}
+
+function videoSlot() {
+  const video = {
+    src: '', dataset: {}, readyState: 0, videoWidth: 0, currentTime: 0, duration: NaN,
+    loadCount: 0, playCount: 0,
+    load() { this.loadCount++; },
+    play() { this.playCount++; return Promise.resolve(); }
+  };
+  return { id: 0, video, loadToken: 0 };
+}
+
+test('metadata prefetch and foreground preparation share a single IPC load', async () => {
+  const c = harness();
+  let resolvePlayback;
+  const calls = [];
+  c.apiCall = (...args) => {
+    calls.push(args);
+    return new Promise(resolve => { resolvePlayback = resolve; });
+  };
+  const warmup = c.prefetchFeedPlaybackInfo(0);
+  const slot = videoSlot();
+  c.feedSlots = [slot];
+  const prepare = c.prepareFeedSlot(slot, 0, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].at(-1), true, 'cold start must request the warmed HLS rendition');
+  resolvePlayback(playback());
+  await Promise.all([warmup, prepare]);
+  assert.equal(slot.video.src, 'http://localhost/hls/index.m3u8');
+  assert.ok(slot.video.playCount > 0, 'play must be requested before loadeddata exists');
+  assert.equal(slot.video.readyState, 0, 'test must not simulate a completed download');
+});
+
+test('activating a warm source with no first frame preserves its URL and decoder', async () => {
+  const c = harness();
+  const slot = videoSlot();
+  Object.assign(slot, {
+    itemIndex: 0, seriesId: 'series-a', quality: '720p', ready: true,
+    streamUrl: 'http://localhost/hls/index.m3u8',
+    progressiveStreamUrl: 'http://localhost/video?mode=progressive',
+    expiresAt: Date.now() + 60_000
+  });
+  slot.video.src = slot.streamUrl;
+  c.feedSlots = [slot];
+  c.apiCall = () => { throw new Error('warm activation must not resolve again'); };
+  await c.prepareFeedSlot(slot, 0, true);
+  assert.equal(slot.video.loadCount, 0, 'must not discard buffered segments');
+  assert.equal(slot.video.src, slot.streamUrl);
+  assert.equal(slot.video.playCount, 1);
+});
+
+test('activation during preparation waits for the existing slot without resetting it', async () => {
+  const c = harness();
+  let resolvePlayback;
+  let calls = 0;
+  c.apiCall = () => {
+    calls++;
+    return new Promise(resolve => { resolvePlayback = resolve; });
+  };
+  const slot = videoSlot();
+  c.feedSlots = [slot];
+  const preload = c.prepareFeedSlot(slot, 0, false);
+  const token = slot.loadToken;
+  const activate = c.prepareFeedSlot(slot, 0, true);
+  resolvePlayback(playback());
+  await Promise.all([preload, activate]);
+  assert.equal(calls, 1);
+  assert.equal(slot.loadToken, token);
+  assert.equal(slot.video.loadCount, 1);
+  assert.equal(slot.video.playCount, 1);
+});
+
+test('metadata-only lookahead upgrades to HLS when admitted for media warmup', async () => {
+  const c = harness();
+  const calls = [];
+  let resolveMetadata;
+  c.apiCall = (...args) => {
+    calls.push(args);
+    if (!args.at(-1)) return new Promise(resolve => { resolveMetadata = resolve; });
+    return Promise.resolve(playback());
+  };
+  const metadata = c.prefetchFeedPlaybackInfo(0, false);
+  const media = c.prefetchFeedPlaybackInfo(0, true);
+  resolveMetadata(playback({ hls: false }));
+  await metadata;
+  const result = await media;
+  assert.deepEqual(calls.map(call => call.at(-1)), [false, true]);
+  assert.equal(result.hlsStreamUrl, 'http://localhost/hls/index.m3u8');
+});
+
+test('an unavailable HLS startup does not cause coalesced callers to retry forever', async () => {
+  const c = harness();
+  let calls = 0;
+  c.apiCall = () => {
+    calls++;
+    return Promise.resolve(playback({ hls: false }));
+  };
+  const results = await Promise.all([
+    c.prefetchFeedPlaybackInfo(0), c.prefetchFeedPlaybackInfo(0), c.prefetchFeedPlaybackInfo(0)
+  ]);
+  assert.equal(calls, 1);
+  assert.ok(results.every(result => result.progressiveStreamUrl));
+});
+
+test('the upstream-selected quality can reuse its already warm decoder', async () => {
+  const c = harness();
+  const slot = videoSlot();
+  c.feedSlots = [slot];
+  c.apiCall = () => Promise.resolve({ ...playback(), quality: '540p' });
+  await c.prepareFeedSlot(slot, 0, true);
+  const loads = slot.video.loadCount;
+  await c.prepareFeedSlot(slot, 0, true);
+  assert.equal(slot.quality, '540p');
+  assert.equal(slot.video.loadCount, loads);
+});
+
+test('a failed new source retries against the newly allocated slot generation', async () => {
+  const c = harness();
+  const timers = [];
+  c.setTimeout = callback => { timers.push(callback); return timers.length; };
+  let calls = 0;
+  c.apiCall = () => { calls++; return Promise.resolve(null); };
+  const slot = videoSlot();
+  c.feedSlots = [slot];
+  c.ensureFeedSource(slot, 0);
+  // Drain IPC/preparation promises without running the scheduled retry yet.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1);
+  assert.equal(timers.length, 1, 'the new load token must not suppress the retry');
+  timers.shift()();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 2);
+});
+
+test('expired playback metadata reloads and a reset rejects stale cache writes', async () => {
+  const c = harness();
+  c.state.feed.preloadMap.set('series-a:1:720p', { ...playback(), expiresAt: Date.now() - 1 });
+  let resolvePlayback;
+  c.apiCall = () => new Promise(resolve => { resolvePlayback = resolve; });
+  const load = c.prefetchFeedPlaybackInfo(0);
+  c.feedPlaybackGeneration++;
+  c.state.feed.preloadMap.clear();
+  resolvePlayback(playback());
+  await load;
+  assert.equal(c.state.feed.preloadMap.size, 0);
+});
+
+test('buffer bar grows against episode duration while the HLS playlist grows', () => {
+  const c = harness();
+  const slot = videoSlot();
+  slot.durationSec = 60;
+  c.feedSlots = [slot];
+  const indicator = { style: {} };
+  for (const bufferedSeconds of [2, 6, 12]) {
+    slot.video.duration = bufferedSeconds;
+    slot.video.buffered = { length: 1, start: () => 0, end: () => bufferedSeconds };
+    const duration = c.feedMediaDuration(slot.video);
+    assert.equal(duration, 60);
+    c.updatePlaybackBufferIndicator(slot.video, indicator, duration);
+    assert.ok(Math.abs(parseFloat(indicator.style.width) - bufferedSeconds / 60 * 100) < 0.001);
+    assert.notEqual(indicator.style.width, '100%');
+  }
+});

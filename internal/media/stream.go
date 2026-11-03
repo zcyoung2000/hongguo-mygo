@@ -346,6 +346,7 @@ func (stream *progressiveStream) finalize() {
 func ffmpegProgressiveArgs(streamURL, audioURL, keyHex string) []string {
 	args := []string{"-y", "-hide_banner", "-loglevel", "error", "-nostdin"}
 	input := func(mediaURL string) {
+		args = append(args, "-probesize", "131072", "-analyzeduration", "1000000", "-rw_timeout", "15000000")
 		if keyHex != "" {
 			args = append(args, "-decryption_key", keyHex)
 		}
@@ -358,8 +359,11 @@ func ffmpegProgressiveArgs(streamURL, audioURL, keyHex string) []string {
 	}
 	return append(args,
 		"-c", "copy",
+		"-max_interleave_delta", "1000000",
+		"-flush_packets", "1",
 		"-f", "mp4",
 		"-movflags", "frag_keyframe+empty_moov+default_base_moof",
+		"-frag_duration", "1000000",
 		"pipe:1",
 	)
 }

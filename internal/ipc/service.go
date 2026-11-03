@@ -412,9 +412,9 @@ type RecommendFeedResult struct {
 }
 
 func (s *HongguoService) GetRecommendFeed(ctx context.Context, channel, cursor string) (*RecommendFeedResult, error) {
-	// A one-page official feed can contain only two or three dramas. Start with
-	// a small aggregate so pagination never begins already behind one swipe.
-	return s.getRecommendFeed(ctx, channel, cursor, 6)
+	// Return the first usable page immediately. The renderer fills its swipe
+	// buffer separately; aggregating pages here delays cold-start playback.
+	return s.getRecommendFeed(ctx, channel, cursor, 1)
 }
 
 func (s *HongguoService) GetRecommendFeedBatch(ctx context.Context, channel, cursor string, minimumItems int) (*RecommendFeedResult, error) {

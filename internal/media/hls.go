@@ -41,6 +41,9 @@ type hlsStream struct {
 	// rendererOwned marks streams created for a video element. Window
 	// replacement may retain the newest one while resolving adjacent metadata.
 	rendererOwned bool
+	// Guarded by MediaServer.hlsMu. A new writer must wait for the canceled
+	// writer and its directory cleanup before reusing this rendition path.
+	retired chan struct{}
 
 	mu                 sync.Mutex
 	err                error
@@ -121,6 +124,11 @@ func (ms *MediaServer) StartHLSStream(seriesID, episodeID string, number int, qu
 
 	ms.hlsMu.Lock()
 	if stream, active := ms.hlsStreams[key]; active {
+		if retired := stream.retired; retired != nil {
+			ms.hlsMu.Unlock()
+			<-retired
+			return ms.StartHLSStream(seriesID, episodeID, number, quality)
+		}
 		ms.hlsMu.Unlock()
 		return stream, nil
 	}
@@ -129,7 +137,7 @@ func (ms *MediaServer) StartHLSStream(seriesID, episodeID string, number int, qu
 	}
 	dir := ms.hlsCacheDir(episodeID, quality)
 	playlistPath := filepath.Join(dir, "index.m3u8")
-	if hlsPlaylistReady(playlistPath) {
+	if hlsPlaylistComplete(playlistPath) {
 		stream := &hlsStream{
 			key:           key,
 			dir:           dir,
@@ -145,6 +153,17 @@ func (ms *MediaServer) StartHLSStream(seriesID, episodeID string, number int, qu
 		return stream, nil
 	}
 
+	// Clear interrupted files before publishing the new stream. A queued writer
+	// may not run immediately, and HTTP requests must not see its predecessor's
+	// partial playlist while waiting for a conversion slot.
+	if err := os.RemoveAll(dir); err != nil {
+		ms.hlsMu.Unlock()
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		ms.hlsMu.Unlock()
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), progressiveStreamTimeout)
 	stream := &hlsStream{
 		key:          key,
@@ -193,11 +212,27 @@ func (ms *MediaServer) retainHLSStreams(desired map[string]PrefetchTask, preserv
 		if stream.rendererOwned && (key == preservedRendererKey || stream.hasRecentMediaRequest(now)) {
 			continue
 		}
+		if stream.retired != nil {
+			continue
+		}
 		stream.cancel()
-		delete(ms.hlsStreams, key)
+		select {
+		case <-stream.done:
+			// Completed renditions remain reusable on disk when swiping back.
+			delete(ms.hlsStreams, key)
+			continue
+		default:
+		}
+		stream.retired = make(chan struct{})
 		go func(stream *hlsStream) {
 			<-stream.done
+			ms.hlsMu.Lock()
+			defer ms.hlsMu.Unlock()
 			_ = os.RemoveAll(stream.dir)
+			if ms.hlsStreams[stream.key] == stream {
+				delete(ms.hlsStreams, stream.key)
+			}
+			close(stream.retired)
 		}(stream)
 	}
 }
@@ -215,6 +250,9 @@ func hlsPlaylistReady(path string) bool {
 		return false
 	}
 	dir := filepath.Dir(path)
+	if strings.Contains(string(data), `URI="init.mp4"`) && !mediaFileExists(filepath.Join(dir, "init.mp4")) {
+		return false
+	}
 	ready := true
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -229,6 +267,11 @@ func hlsPlaylistReady(path string) bool {
 	return ready
 }
 
+func hlsPlaylistComplete(path string) bool {
+	data, err := os.ReadFile(path)
+	return err == nil && strings.Contains(string(data), "#EXT-X-ENDLIST") && hlsPlaylistReady(path)
+}
+
 func mediaFileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir() && info.Size() > 0
@@ -236,15 +279,24 @@ func mediaFileExists(path string) bool {
 
 func (ms *MediaServer) runHLSStream(ctx context.Context, stream *hlsStream, seriesID, episodeID string, number int, quality string) {
 	defer stream.cancel()
-	defer stream.finish(nil)
-	defer func() { <-hlsSem }()
-	defer func() { <-downloadSem }()
+	defer func() { stream.finish(ctx.Err()) }()
 
-	hlsSem <- struct{}{}
-	downloadSem <- struct{}{}
-	_ = os.MkdirAll(stream.dir, 0755)
+	select {
+	case hlsSem <- struct{}{}:
+		defer func() { <-hlsSem }()
+	case <-ctx.Done():
+		return
+	}
+	select {
+	case downloadSem <- struct{}{}:
+		defer func() { <-downloadSem }()
+	case <-ctx.Done():
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
 	ms.triggerCacheEviction()
-	_ = os.RemoveAll(stream.playlistPath)
 
 	pb, err := ms.resolvePlayback(ctx, episodeID)
 	if err != nil {
@@ -278,12 +330,15 @@ func (ms *MediaServer) runHLSStream(ctx context.Context, stream *hlsStream, seri
 	monitorDone := make(chan struct{})
 	go ms.monitorHLSOutput(ctx, stream, monitorDone)
 	command := exec.CommandContext(ctx, ffmpegPath, ffmpegHLSArgs(source.URL, pb.AudioURL, keyHex, stream.dir)...)
-	if err := command.Run(); err != nil && ctx.Err() == nil {
-		close(monitorDone)
-		ms.failHLSStream(stream, err)
+	runErr := command.Run()
+	close(monitorDone)
+	if ctx.Err() != nil {
 		return
 	}
-	close(monitorDone)
+	if runErr != nil {
+		ms.failHLSStream(stream, runErr)
+		return
+	}
 	ms.flushMediaNetworkSample()
 	if err := appendHLSEndList(stream.playlistPath); err != nil && ctx.Err() == nil {
 		ms.failHLSStream(stream, err)
@@ -297,10 +352,10 @@ func (ms *MediaServer) failHLSStream(stream *hlsStream, err error) {
 	stream.err = err
 	stream.mu.Unlock()
 	ms.observeMediaFailure()
-	_ = os.RemoveAll(stream.dir)
 
 	ms.hlsMu.Lock()
-	if ms.hlsStreams[stream.key] == stream {
+	if ms.hlsStreams[stream.key] == stream && stream.retired == nil {
+		_ = os.RemoveAll(stream.dir)
 		delete(ms.hlsStreams, stream.key)
 	}
 	ms.hlsMu.Unlock()
@@ -388,6 +443,9 @@ func evictHLSCache(root string, maxBytes, targetBytes int64, pinnedPaths map[str
 func ffmpegHLSArgs(streamURL, audioURL, keyHex, outputDir string) []string {
 	args := []string{"-y", "-hide_banner", "-loglevel", "error", "-nostdin"}
 	input := func(mediaURL string) {
+		// MP4/DASH already carries stream metadata. Bound probing so a slow
+		// source does not consume several megabytes before publishing segment 1.
+		args = append(args, "-probesize", "131072", "-analyzeduration", "1000000", "-rw_timeout", "15000000")
 		if keyHex != "" {
 			args = append(args, "-decryption_key", keyHex)
 		}
@@ -400,10 +458,12 @@ func ffmpegHLSArgs(streamURL, audioURL, keyHex, outputDir string) []string {
 	}
 	return append(args,
 		"-c", "copy",
+		"-max_interleave_delta", "1000000",
+		"-flush_packets", "1",
 		"-f", "hls",
 		"-hls_time", "2",
 		"-hls_playlist_type", "event",
-		"-hls_flags", "independent_segments+append_list+omit_endlist+temp_file",
+		"-hls_flags", "independent_segments+omit_endlist+temp_file",
 		"-hls_segment_type", "fmp4",
 		"-hls_segment_filename", filepath.Join(outputDir, "seg%03d.m4s"),
 		filepath.Join(outputDir, "index.m3u8"),
@@ -569,6 +629,11 @@ func (ms *MediaServer) serveHLSPlaylist(w http.ResponseWriter, r *http.Request, 
 	defer ticker.Stop()
 	for !hlsPlaylistReady(stream.playlistPath) {
 		select {
+		case <-stream.done:
+			if !hlsPlaylistReady(stream.playlistPath) {
+				http.Error(w, "HLS media ended before a segment was ready", http.StatusServiceUnavailable)
+				return false
+			}
 		case <-waitCtx.Done():
 			if streamErr := stream.wait(waitCtx); streamErr != nil && !errors.Is(streamErr, context.DeadlineExceeded) {
 				log.Printf("[hls] playlist unavailable for %s: %v", stream.key, streamErr)
@@ -584,6 +649,9 @@ func (ms *MediaServer) serveHLSPlaylist(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "HLS playlist is unavailable", http.StatusServiceUnavailable)
 		return false
 	}
+	// EVENT streams are generated ahead of playback. Start at the episode's
+	// beginning, not at a live-edge offset chosen from the growing playlist.
+	data = []byte(strings.Replace(string(data), "#EXTM3U\n", "#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n", 1))
 	writeHLSResponse(w, http.StatusOK, data)
 	return true
 }

@@ -128,7 +128,8 @@ type playbackCacheItem struct {
 }
 
 type playbackLoad struct {
-	done chan playbackLoadResult
+	done   chan struct{}
+	result playbackLoadResult
 }
 
 type playbackLoadResult struct {
@@ -413,10 +414,22 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 	}
 	if load, active := ms.pbLoads[episodeID]; active {
 		ms.pbLoadMu.Unlock()
-		result := <-load.done
-		return result.pb, result.err
+		select {
+		case <-load.done:
+			return load.result.pb, load.result.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-	load := &playbackLoad{done: make(chan playbackLoadResult, 1)}
+	// A request can fill the cache between our first lookup and this lock.
+	ms.pbCacheMu.RLock()
+	item, cached := ms.pbCache[episodeID]
+	ms.pbCacheMu.RUnlock()
+	if cached && time.Now().Before(item.expiresAt) {
+		ms.pbLoadMu.Unlock()
+		return item.pb, nil
+	}
+	load := &playbackLoad{done: make(chan struct{})}
 	ms.pbLoads[episodeID] = load
 	ms.pbLoadMu.Unlock()
 
@@ -445,10 +458,10 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 	}
 
 	ms.pbLoadMu.Lock()
+	load.result = playbackLoadResult{pb: pb, err: err}
+	close(load.done)
 	delete(ms.pbLoads, episodeID)
 	ms.pbLoadMu.Unlock()
-	load.done <- playbackLoadResult{pb: pb, err: err}
-	close(load.done)
 
 	return pb, err
 }
@@ -1364,7 +1377,10 @@ var (
 	}
 	sipsSem     = make(chan struct{}, 16)
 	downloadSem = make(chan struct{}, 6)
-	hlsSem      = make(chan struct{}, 1)
+	// Current playback, the immediate next video, and one look-ahead job may
+	// remux concurrently. A single slot makes every swipe wait for the entire
+	// preceding episode to download, even though its first segments are ready.
+	hlsSem = make(chan struct{}, 3)
 	// Feed cache warming is deliberately serialized: the immediate next video's
 	// progressive stream always has first claim on upstream bandwidth.
 	prefetchSem = make(chan struct{}, 1)
