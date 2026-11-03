@@ -27,7 +27,8 @@ func validContentID(id string) bool { return mediautil.ValidContentID(id) }
 func pageItems[T any](page *sdk.Page[T]) []T { return mediautil.PageItems(page) }
 
 const (
-	hlsWaitTimeout = 12 * time.Second
+	hlsWaitTimeout             = 12 * time.Second
+	activeHLSMediaRequestGrace = 8 * time.Second
 )
 
 type hlsStream struct {
@@ -41,8 +42,21 @@ type hlsStream struct {
 	// replacement may retain the newest one while resolving adjacent metadata.
 	rendererOwned bool
 
-	mu  sync.Mutex
-	err error
+	mu                 sync.Mutex
+	err                error
+	lastMediaRequestAt time.Time
+}
+
+func (stream *hlsStream) touchMediaRequest() {
+	stream.mu.Lock()
+	stream.lastMediaRequestAt = time.Now()
+	stream.mu.Unlock()
+}
+
+func (stream *hlsStream) hasRecentMediaRequest(now time.Time) bool {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return !stream.lastMediaRequestAt.IsZero() && now.Sub(stream.lastMediaRequestAt) <= activeHLSMediaRequestGrace
 }
 
 func (stream *hlsStream) wait(ctx context.Context) error {
@@ -159,14 +173,24 @@ func (ms *MediaServer) hasHLSStream(episodeID, quality string) bool {
 	return active
 }
 
+func (ms *MediaServer) touchHLSStream(episodeID, quality string) {
+	key := PrefetchTaskKey(PrefetchTask{EpisodeID: episodeID, Quality: quality})
+	ms.hlsMu.Lock()
+	if stream := ms.hlsStreams[key]; stream != nil {
+		stream.touchMediaRequest()
+	}
+	ms.hlsMu.Unlock()
+}
+
 func (ms *MediaServer) retainHLSStreams(desired map[string]PrefetchTask, preservedRendererKey string) {
 	ms.hlsMu.Lock()
 	defer ms.hlsMu.Unlock()
+	now := time.Now()
 	for key, stream := range ms.hlsStreams {
 		if _, keep := desired[key]; keep {
 			continue
 		}
-		if stream.rendererOwned && key == preservedRendererKey {
+		if stream.rendererOwned && (key == preservedRendererKey || stream.hasRecentMediaRequest(now)) {
 			continue
 		}
 		stream.cancel()
@@ -537,6 +561,7 @@ func (ms *MediaServer) serveHLSPlaylist(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "HLS media is unavailable", http.StatusServiceUnavailable)
 		return false
 	}
+	stream.touchMediaRequest()
 
 	waitCtx, cancel := context.WithTimeout(r.Context(), hlsWaitTimeout)
 	defer cancel()
@@ -574,6 +599,7 @@ func (ms *MediaServer) serveHLSSegment(w http.ResponseWriter, r *http.Request, e
 		return
 	}
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+	ms.touchHLSStream(episodeID, quality)
 	http.ServeFile(w, r, path)
 }
 

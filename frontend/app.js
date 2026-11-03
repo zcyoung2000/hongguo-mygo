@@ -1473,10 +1473,11 @@ async function scheduleFeedWarmup(centerIndex) {
 
   const profile = effectiveFeedNetworkProfile();
   const limits = feedWarmupLimits(profile);
+  const activeQuality = feedSlots[feedSlotCurr]?.quality || feedDesiredQuality();
   const requestWindow = (nextCount, previousCount) => {
     if (token !== feedWarmupToken) return;
     const { nextIDs, previousIDs } = feedSeriesIDs(items, centerIndex, nextCount, previousCount);
-    apiCall('WarmupFeed', centerDrama.id, feedSlots[feedSlotCurr]?.episodeId || '', previousIDs, nextIDs, feedDesiredQuality(), profile)
+    apiCall('WarmupFeed', centerDrama.id, feedSlots[feedSlotCurr]?.episodeId || '', previousIDs, nextIDs, activeQuality, profile)
       .catch(err => console.warn('feed warmup failed:', err));
   };
 

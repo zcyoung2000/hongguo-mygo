@@ -64,6 +64,12 @@ func (stream *progressiveStream) releaseReader() {
 	}
 }
 
+func (stream *progressiveStream) hasRequestReader() bool {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.readers > 1
+}
+
 func (stream *progressiveStream) append(chunk []byte) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()

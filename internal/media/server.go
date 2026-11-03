@@ -1270,7 +1270,10 @@ drain:
 	ms.progressiveMu.Lock()
 	for key, stream := range ms.progressiveStreams {
 		if _, keep := desired[key]; !keep {
-			if stream.rendererOwned && key == preservedRendererKey {
+			// A live media response is the renderer's current source even when a
+			// newer adjacent HLS stream has just started. Canceling it makes the
+			// video element fall back to a full-file download and rebuffer.
+			if stream.rendererOwned && (key == preservedRendererKey || stream.hasRequestReader()) {
 				continue
 			}
 			stream.cancel()

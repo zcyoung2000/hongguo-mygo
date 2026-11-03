@@ -427,3 +427,95 @@ func TestReplacePrefetchWindowPreservesNewestRendererStream(t *testing.T) {
 		t.Fatal("newest renderer-owned HLS stream was not retained")
 	}
 }
+
+func TestReplacePrefetchWindowPreservesActiveRendererReader(t *testing.T) {
+	canceled := make(chan struct{})
+	activeStream := &progressiveStream{
+		key:           "episode\x00active\x00720p",
+		startedAt:     time.Now().Add(-time.Minute),
+		rendererOwned: true,
+		readers:       2,
+		cancel: func() {
+			select {
+			case <-canceled:
+			default:
+				close(canceled)
+			}
+		},
+	}
+	newestDone := make(chan struct{})
+	close(newestDone)
+	newestStream := &hlsStream{
+		key:           "episode\x00newest\x00540p",
+		startedAt:     time.Now(),
+		rendererOwned: true,
+		cancel:        func() {},
+		done:          newestDone,
+	}
+	ms := &MediaServer{
+		prefetchQ:          make(chan PrefetchTask, 4),
+		prefetchQueued:     make(map[string]PrefetchTask),
+		prefetchActive:     make(map[string]*PrefetchExecution),
+		progressiveStreams: map[string]*progressiveStream{activeStream.key: activeStream},
+		hlsStreams:         map[string]*hlsStream{newestStream.key: newestStream},
+	}
+
+	ms.ReplacePrefetchWindow([]PrefetchTask{
+		{SeriesID: "series-current", EpisodeID: "current", Quality: "540p", ProtectOnly: true},
+	})
+
+	select {
+	case <-canceled:
+		t.Fatal("active renderer stream was canceled")
+	default:
+	}
+	ms.progressiveMu.Lock()
+	_, retained := ms.progressiveStreams[activeStream.key]
+	ms.progressiveMu.Unlock()
+	if !retained {
+		t.Fatal("active renderer stream was removed")
+	}
+}
+
+func TestReplacePrefetchWindowPreservesRecentlyRequestedHLSStream(t *testing.T) {
+	canceled := make(chan struct{})
+	activeDone := make(chan struct{})
+	close(activeDone)
+	activeStream := &hlsStream{
+		key:                "episode\x00active-hls\x00720p",
+		startedAt:          time.Now().Add(-time.Minute),
+		rendererOwned:      true,
+		cancel:             func() { close(canceled) },
+		done:               activeDone,
+		lastMediaRequestAt: time.Now(),
+	}
+	newestStream := &progressiveStream{
+		key:           "episode\x00newest-progressive\x00540p",
+		startedAt:     time.Now(),
+		rendererOwned: true,
+		cancel:        func() {},
+	}
+	ms := &MediaServer{
+		prefetchQ:          make(chan PrefetchTask, 4),
+		prefetchQueued:     make(map[string]PrefetchTask),
+		prefetchActive:     make(map[string]*PrefetchExecution),
+		progressiveStreams: map[string]*progressiveStream{newestStream.key: newestStream},
+		hlsStreams:         map[string]*hlsStream{activeStream.key: activeStream},
+	}
+
+	ms.ReplacePrefetchWindow([]PrefetchTask{
+		{SeriesID: "series-current", EpisodeID: "current", Quality: "540p", ProtectOnly: true},
+	})
+
+	select {
+	case <-canceled:
+		t.Fatal("recently requested HLS stream was canceled")
+	default:
+	}
+	ms.hlsMu.Lock()
+	_, retained := ms.hlsStreams[activeStream.key]
+	ms.hlsMu.Unlock()
+	if !retained {
+		t.Fatal("recently requested HLS stream was removed")
+	}
+}
