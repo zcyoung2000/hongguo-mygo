@@ -1,9 +1,10 @@
 package catalog
 
 import (
+	"reflect"
 	"testing"
 
-	"reflect"
+	"time"
 )
 
 func TestParseAccountShortRankBuildsItemsAndCursor(t *testing.T) {
@@ -60,6 +61,49 @@ func TestParseAccountShortRankBuildsItemsAndCursor(t *testing.T) {
 	}
 	if next.Offset != 2 || next.Session != "session" || next.Content != "all" || next.Board != "ranklist_hot_sc" {
 		t.Fatalf("unexpected cursor: %+v", next)
+	}
+}
+
+func TestInvalidatePrefixesOnlyRemovesMatchingEntries(t *testing.T) {
+	service := NewService(nil, nil, nil, Dependencies{})
+	service.cacheMu.Lock()
+	service.cache["new_releases:today"] = cacheItem{val: "stale"}
+	service.cache["new_releases:tomorrow"] = cacheItem{val: "stale"}
+	service.cache["hot_search"] = cacheItem{val: "keep"}
+	service.cacheMu.Unlock()
+
+	service.InvalidatePrefixes("new_releases:")
+
+	service.cacheMu.RLock()
+	keys := make([]string, 0, len(service.cache))
+	for key := range service.cache {
+		keys = append(keys, key)
+	}
+	service.cacheMu.RUnlock()
+	if !reflect.DeepEqual(keys, []string{"hot_search"}) {
+		t.Fatalf("remaining cache keys = %#v, want hot_search only", keys)
+	}
+}
+
+func TestExpiredCatalogCacheIsNotServed(t *testing.T) {
+	service := NewService(nil, nil, nil, Dependencies{})
+	service.cacheMu.Lock()
+	service.cache["expired"] = cacheItem{val: "old", expiresAt: time.Now().Add(-time.Second)}
+	service.cache["fresh"] = cacheItem{val: "new", expiresAt: time.Now().Add(time.Minute)}
+	service.cacheMu.Unlock()
+
+	service.cacheMu.RLock()
+	expired, expiredOK := service.cache["expired"]
+	fresh, freshOK := service.cache["fresh"]
+	service.cacheMu.RUnlock()
+	if expiredOK && time.Now().Before(expired.expiresAt) {
+		t.Fatal("expired entry is still considered valid")
+	}
+	if !freshOK || time.Now().After(fresh.expiresAt) {
+		t.Fatal("fresh entry was rejected")
+	}
+	if fresh.val != "new" || expired.val != "old" {
+		t.Fatalf("cache vals = %v/%v", expired.val, fresh.val)
 	}
 }
 

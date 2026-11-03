@@ -346,7 +346,11 @@ func (s *Service) reportPlaybackProgress(items []HistoryItem, episodeIDs []strin
 }
 
 func (s *Service) triggerPendingHistorySync() {
-	go s.syncPendingHistoryMutations()
+	s.backgroundWG.Add(1)
+	go func() {
+		defer s.backgroundWG.Done()
+		s.syncPendingHistoryMutations()
+	}()
 }
 
 func (s *Service) syncPendingHistoryMutations() {
@@ -467,7 +471,9 @@ func (s *Service) processPendingHistoryDeletes() error {
 	return s.store.DeletePendingHistoryDeletes(sendIDs)
 }
 func (s *Service) triggerPendingFavoriteSync() {
+	s.backgroundWG.Add(1)
 	go func() {
+		defer s.backgroundWG.Done()
 		if _, err := s.syncPendingFavoriteOps(); err != nil {
 			log.Printf("[favorites] pending sync failed: %v", err)
 		}

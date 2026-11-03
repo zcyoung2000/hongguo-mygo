@@ -383,3 +383,23 @@ func TestClearHistoryFiltersOldRemoteItems(t *testing.T) {
 		t.Fatalf("cleared old item returned: %+v", items)
 	}
 }
+
+func TestClearCachedEpisodesRemovesIndex(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+	if err := store.RememberEpisode("710000000000001", "710000000000101", 1, "720p"); err != nil {
+		t.Fatalf("RememberEpisode failed: %v", err)
+	}
+	if _, ok := store.GetCachedEpisode("710000000000001", "720p"); !ok {
+		t.Fatal("cached episode was not indexed")
+	}
+	if err := store.ClearCachedEpisodes(); err != nil {
+		t.Fatalf("ClearCachedEpisodes failed: %v", err)
+	}
+	if _, ok := store.GetCachedEpisode("710000000000001", "720p"); ok {
+		t.Fatal("cleared episode index still returned a row")
+	}
+}

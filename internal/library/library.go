@@ -121,11 +121,11 @@ func (s *Service) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 }
 
 type remoteHistoryRow struct {
-	SeriesID        string
-	VidIndex        int
-	EpisodeCount    int
-	CurrentPlayTime int64
-	LastWatchTime   int64
+	SeriesID        string `json:"series_id"`
+	VidIndex        int    `json:"vid_index"`
+	EpisodeCount    int    `json:"episode_cnt"`
+	CurrentPlayTime int64  `json:"current_play_time"`
+	LastWatchTime   int64  `json:"last_watch_time"`
 }
 
 type remoteHistoryPage struct {

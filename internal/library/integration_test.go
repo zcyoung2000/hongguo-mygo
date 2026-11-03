@@ -1,0 +1,325 @@
+package library
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	userstore "myguo/internal/store"
+)
+
+type capturedRequest struct {
+	path string
+	body []byte
+}
+
+type handlerTransport struct{ handler http.Handler }
+
+func (transport handlerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	recorder := httptest.NewRecorder()
+	transport.handler.ServeHTTP(recorder, request)
+	return recorder.Result(), nil
+}
+
+type requestLog struct {
+	mu      sync.Mutex
+	request []capturedRequest
+}
+
+func (log *requestLog) add(request capturedRequest) {
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	log.request = append(log.request, request)
+}
+
+func (log *requestLog) matching(suffix string) []capturedRequest {
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	var matching []capturedRequest
+	for _, request := range log.request {
+		if strings.Contains(request.path, suffix) {
+			matching = append(matching, request)
+		}
+	}
+	return matching
+}
+
+func newSyncTestService(t *testing.T, handler http.Handler) (*Service, *userstore.Store) {
+	t.Helper()
+	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
+	store, err := userstore.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("userstore.NewStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	service := NewService(Dependencies{
+		Store:       store,
+		Credentials: func() (string, string) { return "sessionid=account", "token" },
+		DeviceIdentity: func() (string, string, string, string) {
+			return "7100000000000001", "7100000000000002", "test-cdid", "test-openudid"
+		},
+		Runtime:    func() (string, string) { return "test-agent", "cn-gd" },
+		HTTPClient: &http.Client{Transport: handlerTransport{handler: handler}},
+	})
+	t.Cleanup(service.WaitForBackgroundSync)
+	return service, store
+}
+
+func writeJSON(w http.ResponseWriter, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func decodeGZIP(t *testing.T, raw []byte) map[string]any {
+	t.Helper()
+	reader, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("gzip.NewReader() error = %v", err)
+	}
+	defer reader.Close()
+	var payload map[string]any
+	if err := json.NewDecoder(reader).Decode(&payload); err != nil {
+		t.Fatalf("decode sync payload error = %v", err)
+	}
+	return payload
+}
+
+func TestRemoteHistorySyncUpdatesNewerLocalRow(t *testing.T) {
+	const seriesID = "710000000000001"
+	updatedAt := time.Now().Add(-time.Hour).Unix()
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.add(capturedRequest{path: r.URL.Path})
+		writeJSON(w, map[string]any{
+			"data": map[string]any{
+				"data_list": []map[string]any{{
+					"series_id":         seriesID,
+					"vid_index":         2,
+					"current_play_time": 22_000,
+					"last_watch_time":   time.Now().UnixMilli(),
+					"episode_cnt":       10,
+				}},
+				"has_more": false,
+			},
+		})
+	}))
+	if err := store.SaveHistory(HistoryItem{
+		SeriesID:      seriesID,
+		Title:         "Account Sync",
+		CoverURL:      "https://media.invalid/cover.jpg",
+		EpisodeNum:    2,
+		EpisodeTitle:  "第2集",
+		PositionSec:   10,
+		DurationSec:   100,
+		TotalEpisodes: 10,
+		UpdatedAt:     updatedAt,
+	}); err != nil {
+		t.Fatalf("SaveHistory() error = %v", err)
+	}
+
+	service.syncRemoteHistory(context.Background(), service.currentHistoryGeneration())
+
+	items, err := store.GetHistory()
+	if err != nil {
+		t.Fatalf("GetHistory() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("history len = %d, want 1", len(items))
+	}
+	item := items[0]
+	if item.EpisodeNum != 3 || item.EpisodeTitle != "第3集" || item.PositionSec != 22 || item.Title != "Account Sync" {
+		t.Fatalf("unexpected synced history: %+v", item)
+	}
+	if item.UpdatedAt <= updatedAt {
+		t.Fatalf("updated_at = %d, want newer than %d", item.UpdatedAt, updatedAt)
+	}
+	if len(log.matching("read_progress/list")) != 1 {
+		t.Fatalf("remote history calls = %d, want 1", len(log.matching("read_progress/list")))
+	}
+}
+
+func TestPendingHistoryUploadFlushesHistoryAndProgress(t *testing.T) {
+	const seriesID = "710000000000001"
+	const episodeID = "710000000000101"
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		log.add(capturedRequest{path: r.URL.Path, body: body})
+		writeJSON(w, map[string]any{"code": 0})
+	}))
+	item := HistoryItem{
+		SeriesID:      seriesID,
+		Title:         "Pending",
+		CoverURL:      "https://media.invalid/cover.jpg",
+		EpisodeNum:    3,
+		EpisodeTitle:  "第3集",
+		PositionSec:   12.5,
+		DurationSec:   100,
+		TotalEpisodes: 10,
+		UpdatedAt:     time.Now().Unix(),
+	}
+	if err := store.SaveHistory(item); err != nil {
+		t.Fatalf("SaveHistory() error = %v", err)
+	}
+	if err := store.QueueHistoryUpload(item, episodeID); err != nil {
+		t.Fatalf("QueueHistoryUpload() error = %v", err)
+	}
+
+	service.syncPendingHistoryMutations()
+
+	pending, err := store.PendingHistoryUploads(10)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending uploads = %#v, err = %v", pending, err)
+	}
+	historyCalls := log.matching("read_history/update")
+	progressCalls := log.matching("read_progress/upload")
+	if len(historyCalls) != 1 || len(progressCalls) != 1 {
+		t.Fatalf("history/progress calls = %d/%d, want 1/1", len(historyCalls), len(progressCalls))
+	}
+	historyPayload := decodeGZIP(t, historyCalls[0].body)
+	progressPayload := decodeGZIP(t, progressCalls[0].body)
+	if _, ok := historyPayload["update_datas"]; !ok {
+		t.Fatalf("history payload missing update_datas: %#v", historyPayload)
+	}
+	if _, ok := progressPayload["books"]; !ok {
+		t.Fatalf("progress payload missing books: %#v", progressPayload)
+	}
+}
+
+func TestFavoritePendingOperationFlushesBeforeRemoteShelfSync(t *testing.T) {
+	const seriesID = "710000000000001"
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		log.add(capturedRequest{path: r.URL.Path, body: body})
+		if strings.HasSuffix(r.URL.Path, "bookshelf/video/update/v") {
+			writeJSON(w, map[string]any{"code": 0})
+			return
+		}
+		writeJSON(w, map[string]any{"data": map[string]any{"video_shelf_info": []map[string]any{{
+			"series_id":   seriesID,
+			"modify_time": time.Now().UnixMilli(),
+		}}}})
+	}))
+	if _, err := store.ToggleFavorite(FavoriteItem{
+		SeriesID:      seriesID,
+		Title:         "Favorite",
+		CoverURL:      "https://media.invalid/cover.jpg",
+		TotalEpisodes: 10,
+	}); err != nil {
+		t.Fatalf("ToggleFavorite() error = %v", err)
+	}
+	if err := store.QueueFavoriteOp(seriesID, true); err != nil {
+		t.Fatalf("QueueFavoriteOp() error = %v", err)
+	}
+
+	service.syncRemoteFavorites(context.Background(), service.currentFavoriteGeneration())
+
+	mutationCalls := log.matching("bookshelf/video/update")
+	shelfCalls := log.matching("bookshelf/video/list")
+	if len(mutationCalls) != 1 || len(shelfCalls) != 0 {
+		t.Fatalf("mutation/shelf calls = %d/%d, want 1/0", len(mutationCalls), len(shelfCalls))
+	}
+	ops, err := store.PendingFavoriteOps(10)
+	if err != nil || len(ops) != 0 {
+		t.Fatalf("pending favorites = %#v, err = %v", ops, err)
+	}
+	favorites, err := store.GetFavorites()
+	if err != nil || len(favorites) != 1 || favorites[0].SeriesID != seriesID {
+		t.Fatalf("favorites = %#v, err = %v", favorites, err)
+	}
+}
+
+func TestRemoteLikesReplaceLocalSet(t *testing.T) {
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.add(capturedRequest{path: r.URL.Path})
+		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{"mixed_data_list": []map[string]any{{
+			"series_id":        "710000000000001",
+			"series_title":     "Liked Series",
+			"series_cover_url": "https://media.invalid/cover.jpg",
+			"video_data": map[string]any{
+				"vid":                    "710000000000101",
+				"title":                  "Episode",
+				"episode_cnt":            10,
+				"user_digg_timestamp_ms": time.Now().UnixMilli(),
+			},
+		}}}})
+	}))
+	if _, err := store.ToggleLike(LikeItem{SeriesID: "710000000000002", EpisodeID: "old"}); err != nil {
+		t.Fatalf("seed local like error = %v", err)
+	}
+
+	if err := service.syncRemoteLikes(context.Background(), service.currentLikeGeneration()); err != nil {
+		t.Fatalf("syncRemoteLikes() error = %v", err)
+	}
+
+	likes, err := store.GetLikes()
+	if err != nil {
+		t.Fatalf("GetLikes() error = %v", err)
+	}
+	if len(likes) != 1 || likes[0].SeriesID != "710000000000001" || likes[0].EpisodeID != "710000000000101" {
+		t.Fatalf("remote likes = %+v", likes)
+	}
+	if len(log.matching("ugc/action/mget")) != 1 {
+		t.Fatalf("remote like calls = %d, want 1", len(log.matching("ugc/action/mget")))
+	}
+}
+
+func TestRemoteReservationsUpgradeOnlineStateAndNotify(t *testing.T) {
+	const seriesID = "710000000000001"
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.add(capturedRequest{path: r.URL.Path})
+		online, _ := strconv.ParseBool(r.URL.Query().Get("is_online"))
+		items := []map[string]any(nil)
+		if online {
+			items = []map[string]any{{
+				"item_id":           "schedule-1",
+				"name":              "Schedule title",
+				"expected_rec_text": "already online",
+				"is_online":         true,
+				"subscribe_data": map[string]any{
+					"series_id_str": seriesID,
+					"title":         "Online Series",
+					"cover":         "https://media.invalid/cover.jpg",
+				},
+			}}
+		}
+		writeJSON(w, map[string]any{"code": 0, "data": map[string]any{"subscribe_items": items}})
+	}))
+	var notifications []Notification
+	service.notify = func(_ context.Context, notification Notification) {
+		notifications = append(notifications, notification)
+	}
+	if _, err := store.ToggleReservation(ReservationItem{
+		SeriesID: seriesID,
+		Title:    "Offline Series",
+		Note:     "预约中",
+	}); err != nil {
+		t.Fatalf("seed reservation error = %v", err)
+	}
+
+	results, err := service.syncRemoteReservations(context.Background(), service.currentReservationGeneration())
+	if err != nil {
+		t.Fatalf("syncRemoteReservations() error = %v", err)
+	}
+	if len(results) != 1 || !results[0].IsOnline || results[0].SeriesID != seriesID || results[0].Title != "Online Series" {
+		t.Fatalf("remote reservations = %+v", results)
+	}
+	if len(notifications) != 1 || notifications[0].SeriesID != seriesID {
+		t.Fatalf("notifications = %+v", notifications)
+	}
+	if len(log.matching("subscribe/list")) != 2 {
+		t.Fatalf("reservation calls = %d, want online and offline", len(log.matching("subscribe/list")))
+	}
+}

@@ -37,7 +37,11 @@ func (s *HongguoService) resetDeviceWithContext(ctx context.Context) error {
 
 func (s *HongguoService) ClearCache(ctx context.Context) (int64, error) {
 	s.invalidateUserDataCaches()
-	return s.media.ClearCache()
+	cleared, err := s.media.ClearCache()
+	if clearErr := s.store.ClearCachedEpisodes(); err == nil {
+		err = clearErr
+	}
+	return cleared, err
 }
 
 func (s *HongguoService) GetCacheSize(ctx context.Context) (int64, error) {

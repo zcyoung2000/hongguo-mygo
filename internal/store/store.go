@@ -418,6 +418,13 @@ func (s *Store) GetCachedEpisodeAt(seriesID, quality string, episodeNum int) (Ca
 	return item, true
 }
 
+func (s *Store) ClearCachedEpisodes() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec(`DELETE FROM media_cache`)
+	return err
+}
+
 type FeedProgress struct {
 	Channel    string
 	Cursor     string
@@ -621,6 +628,9 @@ func (s *Store) migrateFromJSON(jsonPath string) error {
 }
 
 func (s *Store) importOldAppData() {
+	if os.Getenv("MYGUO_TEST_NO_LEGACY_IMPORT") == "1" {
+		return
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return

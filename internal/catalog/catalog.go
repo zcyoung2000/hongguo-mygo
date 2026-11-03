@@ -217,6 +217,23 @@ func (s *Service) Invalidate() {
 	s.cacheMu.Unlock()
 }
 
+func (s *Service) InvalidatePrefixes(prefixes ...string) {
+	if len(prefixes) == 0 {
+		s.Invalidate()
+		return
+	}
+	s.cacheMu.Lock()
+	for key := range s.cache {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(key, prefix) {
+				delete(s.cache, key)
+				break
+			}
+		}
+	}
+	s.cacheMu.Unlock()
+}
+
 func shortFilterSelections(genre string, values map[string]string) map[string][]string {
 	selections := make(map[string][]string)
 	if genre != "" && genre != "all" {

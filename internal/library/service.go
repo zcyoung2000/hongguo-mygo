@@ -71,6 +71,7 @@ type Service struct {
 	likeCachedAt   time.Time
 	likeSyncing    bool
 	likeGeneration uint64
+	backgroundWG   sync.WaitGroup
 
 	resMu              sync.Mutex
 	cachedReservations []ReservationItem
@@ -78,6 +79,8 @@ type Service struct {
 	resSyncing         bool
 	resGeneration      uint64
 }
+
+func (s *Service) WaitForBackgroundSync() { s.backgroundWG.Wait() }
 
 func NewService(deps Dependencies) *Service {
 	if deps.ImageURL == nil {

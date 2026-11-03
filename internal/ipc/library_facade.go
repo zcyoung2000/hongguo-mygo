@@ -10,12 +10,12 @@ import (
 func (s *HongguoService) libraryService() *library.Service {
 	s.libraryOnce.Do(func() {
 		s.library = library.NewService(library.Dependencies{
-			Store:        s.store,
-			Client:       s.client,
-			ImageURL:     s.imageURL,
-			Credentials:  s.authCredentials,
-			HTTPClient:   s.httpClient,
-			Episodes:     s.listEpisodes,
+			Store:       s.store,
+			Client:      s.client,
+			ImageURL:    s.imageURL,
+			Credentials: s.authCredentials,
+			HTTPClient:  s.httpClient,
+			Episodes:    s.listEpisodes,
 			DeviceIdentity: func() (string, string, string, string) {
 				return s.deviceIdentity()
 			},
@@ -46,6 +46,7 @@ func (s *HongguoService) invalidateCatalogCaches(prefixes ...string) {
 		}
 	}
 	s.cacheMu.Unlock()
+	s.catalogService().InvalidatePrefixes(prefixes...)
 }
 
 func (s *HongguoService) SaveProgress(ctx context.Context, seriesID, episodeID string, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
