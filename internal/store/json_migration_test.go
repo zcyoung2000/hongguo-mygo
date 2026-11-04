@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestJSONMigrationArchiveFailureDoesNotReplayOnRestart(t *testing.T) {
+func TestJSONMigrationRemovesSourceAndDoesNotReplayOnRestart(t *testing.T) {
 	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
 	dir := t.TempDir()
 	const id, episode = "710000000000001", "710000000000101"
@@ -18,9 +18,6 @@ func TestJSONMigrationArchiveFailureDoesNotReplayOnRestart(t *testing.T) {
 	}
 	path := filepath.Join(dir, "userdata.json")
 	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(path+".bak", 0755); err != nil {
 		t.Fatal(err)
 	}
 	for startup := 0; startup < 3; startup++ {
@@ -44,6 +41,11 @@ func TestJSONMigrationArchiveFailureDoesNotReplayOnRestart(t *testing.T) {
 		}
 		if err := store.Close(); err != nil {
 			t.Fatal(err)
+		}
+		if startup == 0 {
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("migrated JSON still exists: %v", err)
+			}
 		}
 	}
 }

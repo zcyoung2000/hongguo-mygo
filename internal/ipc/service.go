@@ -2,14 +2,11 @@ package ipc
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -109,33 +106,7 @@ func episodeCachePath(cacheDir, episodeID, quality string) string {
 
 func fileExists(path string) bool { return media.FileExists(path) }
 
-type FeedMetricDTO struct {
-	Type                string `json:"type"`
-	FromIndex           int    `json:"fromIndex,omitempty"`
-	ToIndex             int    `json:"toIndex,omitempty"`
-	BufferedAtSwitch    bool   `json:"bufferedAtSwitch"`
-	DurationMS          int64  `json:"durationMs"`
-	TimeToFirstFrameMS  int64  `json:"timeToFirstFrameMs,omitempty"`
-	HandoffFirstFrameMS int64  `json:"handoffFirstFrameMs,omitempty"`
-	FirstFrameSource    string `json:"firstFrameSource,omitempty"`
-	SwitchReadyMS       int64  `json:"switchReadyMs,omitempty"`
-	RebufferCount       int    `json:"rebufferCount,omitempty"`
-	RebufferMS          int64  `json:"rebufferMs,omitempty"`
-	NetworkProfile      string `json:"networkProfile,omitempty"`
-	NetworkBytesPerSec  int64  `json:"networkBytesPerSec,omitempty"`
-	NetworkFailures     int64  `json:"networkFailures,omitempty"`
-	PrefetchCompleted   int64  `json:"prefetchCompleted,omitempty"`
-	PrefetchFailed      int64  `json:"prefetchFailed,omitempty"`
-	PrefetchCanceled    int64  `json:"prefetchCanceled,omitempty"`
-	PrefetchDropped     int64  `json:"prefetchDropped,omitempty"`
-	HLSStarts           int64  `json:"hlsStarts,omitempty"`
-	HLSHits             int64  `json:"hlsHits,omitempty"`
-	StreamMode          string `json:"streamMode,omitempty"`
-	CacheHit            bool   `json:"cacheHit"`
-	FullFallback        bool   `json:"fullFallback"`
-	Quality             string `json:"quality,omitempty"`
-	At                  string `json:"at"`
-}
+type FeedMetricDTO = userstore.FeedMetric
 
 type cacheItem struct {
 	val       any
@@ -167,7 +138,7 @@ type HongguoService struct {
 	appDir               string
 	deviceProfileStore   sdk.ProfileStore
 	authTransport        auth.CredentialTransport
-	deviceMu             sync.RWMutex
+	identityMu           sync.RWMutex
 	accountMu            sync.Mutex
 	authMu               sync.RWMutex
 	authUserID           string
@@ -183,7 +154,6 @@ type HongguoService struct {
 	cacheMu              sync.RWMutex
 	cache                map[string]cacheItem
 	feedMu               sync.Mutex
-	metricsMu            sync.Mutex
 	feedWarmupMu         sync.Mutex
 	feedWarmupGeneration uint64
 	episodeMu            sync.Mutex
@@ -202,8 +172,7 @@ func WithDeviceProfileStore(store sdk.ProfileStore) ServiceOption {
 }
 
 func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string, opts ...ServiceOption) *HongguoService {
-	home, _ := os.UserHomeDir()
-	return newHongguoService(client, store, media, appDir, home, opts...)
+	return newHongguoService(client, store, media, appDir, "", opts...)
 }
 
 func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir, home string, opts ...ServiceOption) *HongguoService {
@@ -244,51 +213,16 @@ func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 	if err := svc.restoreSavedAccount(); err != nil {
 		log.Printf("[account] restore failed: %v", err)
 	}
-
-	// 2. Try loading anonymous.json / device.json for matching device credentials
-	anonPaths := []string{
-		filepath.Join(appDir, "anonymous.json"),
-		filepath.Join(home, "Library", "Application Support", "hgplayer", "anonymous.json"),
+	if err := svc.reloadDeviceIdentity(); err != nil {
+		// The SDK will generate and persist a profile on first network use.
+		log.Printf("[device] stored identity unavailable: %v", err)
 	}
-	for _, p := range anonPaths {
-		if data, err := os.ReadFile(p); err == nil {
-			var anon struct {
-				DeviceID  string `json:"device_id_str"`
-				InstallID string `json:"install_id_str"`
-				CDID      string `json:"cdid"`
-				OpenUDID  string `json:"openudid"`
-			}
-			if err := json.Unmarshal(data, &anon); err == nil && anon.DeviceID != "" {
-				svc.deviceID = anon.DeviceID
-				svc.iid = anon.InstallID
-				svc.cdid = anon.CDID
-				svc.openudid = anon.OpenUDID
-				break
-			}
+	if userAgent, region, ok := svc.store.GetDeviceRuntime(); ok {
+		if userAgent != "" {
+			svc.userAgent = userAgent
 		}
-	}
-
-	devPaths := []string{
-		filepath.Join(appDir, "device.json"),
-		filepath.Join(home, "Library", "Application Support", "hgplayer", "device.json"),
-	}
-	for _, p := range devPaths {
-		if data, err := os.ReadFile(p); err == nil {
-			var dev struct {
-				DeviceID    string `json:"device_id"`
-				IID         string `json:"iid"`
-				UserAgent   string `json:"user_agent"`
-				StoreRegion string `json:"store_region"`
-			}
-			if err := json.Unmarshal(data, &dev); err == nil {
-				if dev.UserAgent != "" {
-					svc.userAgent = dev.UserAgent
-				}
-				if dev.StoreRegion != "" {
-					svc.storeRegion = dev.StoreRegion
-				}
-				break
-			}
+		if region != "" {
+			svc.storeRegion = region
 		}
 	}
 
@@ -296,9 +230,14 @@ func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 }
 
 func (s *HongguoService) setDeviceProfileStore(store sdk.ProfileStore) {
-	s.deviceMu.Lock()
-	defer s.deviceMu.Unlock()
+	s.identityMu.Lock()
+	defer s.identityMu.Unlock()
 	s.deviceProfileStore = store
+	if sqliteStore, ok := store.(*userstore.SQLiteProfileStore); ok {
+		// The hook is internal to the desktop service and is never exposed as
+		// an IPC method.
+		sqliteStore.SetSavedHook(s.applyDeviceProfile)
+	}
 }
 
 func (s *HongguoService) setAuthTransport(transport auth.CredentialTransport) {
@@ -307,8 +246,8 @@ func (s *HongguoService) setAuthTransport(transport auth.CredentialTransport) {
 }
 
 func (s *HongguoService) deviceIdentity() (deviceID, iid, cdid, openudid string) {
-	s.deviceMu.RLock()
-	defer s.deviceMu.RUnlock()
+	s.identityMu.RLock()
+	defer s.identityMu.RUnlock()
 	return s.deviceID, s.iid, s.cdid, s.openudid
 }
 
@@ -351,12 +290,6 @@ func (s *HongguoService) syncAuthTransport() {
 }
 
 func (s *HongguoService) reloadDeviceIdentity() error {
-	s.deviceMu.Lock()
-	defer s.deviceMu.Unlock()
-	return s.reloadDeviceIdentityLocked()
-}
-
-func (s *HongguoService) reloadDeviceIdentityLocked() error {
 	if s.deviceProfileStore == nil {
 		return nil
 	}
@@ -369,11 +302,26 @@ func (s *HongguoService) reloadDeviceIdentityLocked() error {
 	if profile == nil || profile.DeviceID == "" || profile.InstallID == "" {
 		return fmt.Errorf("device profile has no identity")
 	}
+	s.applyDeviceProfile(profile)
+	return nil
+}
+
+// applyDeviceProfile is called after SQLite has committed the SDK profile.
+// It uses a separate lock from SDK registration so a device reset callback can
+// update the in-memory identity while the old profile is being replaced.
+func (s *HongguoService) applyDeviceProfile(profile *sdk.DeviceProfile) {
+	s.identityMu.Lock()
 	s.deviceID = profile.DeviceID
 	s.iid = profile.InstallID
 	s.cdid = profile.CDID
 	s.openudid = profile.OpenUDID
-	return nil
+	if profile.StoreRegion != "" {
+		s.storeRegion = profile.StoreRegion
+	}
+	s.identityMu.Unlock()
+	// Guest registration can establish the store region before the first
+	// login; authenticated transports must sign with the updated region.
+	s.syncAuthTransport()
 }
 
 func (s *HongguoService) invalidateUserDataCaches() {

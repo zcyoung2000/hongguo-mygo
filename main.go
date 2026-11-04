@@ -9,8 +9,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/beilunyang/openhongguo/adapters"
-	"github.com/beilunyang/openhongguo/adapters/filestore"
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/egoist/mygo"
 	"myguo/internal/appdirs"
@@ -44,23 +42,24 @@ func main() {
 		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
 	}
 
-	// 1. Initialize OpenHongguo client with persistent anonymous device profile
-	profilePath := filepath.Join(appDir, "anonymous.json")
-	authenticatedTransport := auth.New()
-	client, err := adapters.NewClient(profilePath, sdk.Options{
-		Transport:     authenticatedTransport,
-		RetryAttempts: 3,
-	})
-	if err != nil {
-		log.Fatalf("failed to init openhongguo client: %v", err)
-	}
-
-	// 2. Initialize persistent store for user data (history, favorites, likes, reservations)
+	// 1. Initialize SQLite first; account and anonymous-device identities live
+	// beside user data in the same permissioned database.
 	store, err := userstore.NewStore(appDir)
 	if err != nil {
 		log.Fatalf("failed to init store: %v", err)
 	}
 	defer store.Close()
+
+	profileStore := store.ProfileStore()
+	authenticatedTransport := auth.New()
+	client, err := sdk.NewClient(sdk.Options{
+		Transport:     authenticatedTransport,
+		ProfileStore:  profileStore,
+		RetryAttempts: 3,
+	})
+	if err != nil {
+		log.Fatalf("failed to init openhongguo client: %v", err)
+	}
 
 	// 3. Initialize local media streaming & decryption server
 	mediaServer, err := media.NewMediaServer(client)
@@ -84,7 +83,7 @@ func main() {
 		mediaServer,
 		appDir,
 		ipc.WithAuthTransport(authenticatedTransport),
-		ipc.WithDeviceProfileStore(filestore.New(profilePath)),
+		ipc.WithDeviceProfileStore(profileStore),
 	)
 	defer ipc.CloseService(service)
 	mediaServer.SetDeviceResetter(service.ResetDevice)

@@ -128,9 +128,12 @@ func TestSQLiteMigrationAndStore(t *testing.T) {
 		t.Errorf("Reservations mismatch: %+v", res)
 	}
 
-	// 7. Check backup file created
-	if _, err := os.Stat(filepath.Join(tmpDir, "userdata.json.bak")); err != nil {
-		t.Errorf("Backup userdata.json.bak not found")
+	// 7. Check legacy JSON was removed after durable migration
+	if _, err := os.Stat(filepath.Join(tmpDir, "userdata.json")); !os.IsNotExist(err) {
+		t.Errorf("userdata.json still exists, err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "userdata.json.bak")); !os.IsNotExist(err) {
+		t.Errorf("userdata.json.bak still exists, err = %v", err)
 	}
 
 	// 8. Test runtime updates (point progress update)
@@ -251,8 +254,8 @@ func TestSQLiteMigratesFavoritesOnlyUser(t *testing.T) {
 	if len(items) != 1 || items[0].SeriesID != "fav_1" {
 		t.Fatalf("favorites = %+v, want one fav_1", items)
 	}
-	if _, err := os.Stat(jsonPath + ".bak"); err != nil {
-		t.Fatalf("migration backup missing: %v", err)
+	if _, err := os.Stat(jsonPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy JSON still exists: %v", err)
 	}
 }
 
@@ -381,6 +384,48 @@ func TestClearHistoryFiltersOldRemoteItems(t *testing.T) {
 	}
 	if len(items) != 0 {
 		t.Fatalf("cleared old item returned: %+v", items)
+	}
+}
+
+func TestClearUserDataKeepsScopedIntents(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+	if err := store.SaveHistory(HistoryItem{SeriesID: "710000000000001", EpisodeNum: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ToggleFavorite(FavoriteItem{SeriesID: "710000000000001", Title: "favorite"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ToggleLike(LikeItem{SeriesID: "710000000000001", EpisodeID: "710000000000101"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ToggleReservation(ReservationItem{SeriesID: "710000000000001", Title: "reservation"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.QueueHistoryUpload(HistoryItem{SeriesID: "710000000000002", EpisodeNum: 1}, "710000000000102", "user:one"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.ClearUserData(); err != nil {
+		t.Fatalf("ClearUserData failed: %v", err)
+	}
+	if items, err := store.GetHistory(); err != nil || len(items) != 0 {
+		t.Fatalf("history survived ClearUserData: %v, %v", items, err)
+	}
+	if favorites, err := store.GetFavorites(); err != nil || len(favorites) != 0 {
+		t.Fatalf("favorites survived ClearUserData: %v, %v", favorites, err)
+	}
+	if likes, err := store.GetLikes(); err != nil || len(likes) != 0 {
+		t.Fatalf("likes survived ClearUserData: %v, %v", likes, err)
+	}
+	if reservations, err := store.GetReservations(); err != nil || len(reservations) != 0 {
+		t.Fatalf("reservations survived ClearUserData: %v, %v", reservations, err)
+	}
+	if pending, err := store.PendingHistoryUploads(10, "user:one"); err != nil || len(pending) != 1 {
+		t.Fatalf("scoped intent lost: %v, %v", pending, err)
 	}
 }
 

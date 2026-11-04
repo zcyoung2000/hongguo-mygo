@@ -1695,6 +1695,7 @@ const state = {
     loading: false,
     errors: {}
   },
+  libraryRefreshAt: {},
 
   // Recommend vertical feed state (TikTok/Douyin full-bleed vertical player)
   feed: {
@@ -1813,6 +1814,17 @@ const state = {
     userPaused: false
   }
 };
+
+const LIBRARY_REFRESH_INTERVAL_MS = 15000;
+
+function shouldRefreshLibraryData(key) {
+  const lastAt = state.libraryRefreshAt[key] || 0;
+  return Date.now() - lastAt >= LIBRARY_REFRESH_INTERVAL_MS;
+}
+
+function markLibraryDataRefreshed(key) {
+  state.libraryRefreshAt[key] = Date.now();
+}
 
 // IPC Helper with auto-wait for window.mygo injection
 async function apiCall(method, ...args) {
@@ -6681,6 +6693,7 @@ function historyProgress(item) {
 
 async function loadHistory() {
   const grid = document.getElementById('history-grid');
+  const token = beginViewRequest('history');
   if (!state.historyView.list || state.historyView.list.length === 0) {
     grid.innerHTML = renderDramaGridSkeleton(8);
   } else {
@@ -6689,9 +6702,22 @@ async function loadHistory() {
 
   try {
     const list = await apiCall('GetHistory') || [];
+    if (!isViewRequestCurrent('history', token)) return;
     state.historyView.list = list;
     renderHistoryRows();
+    if (shouldRefreshLibraryData('history')) {
+      try {
+        const refreshed = await apiCall('RefreshHistory');
+        if (!isViewRequestCurrent('history', token)) return;
+        state.historyView.list = refreshed || [];
+        renderHistoryRows();
+        markLibraryDataRefreshed('history');
+      } catch (refreshErr) {
+        console.warn('history cloud refresh failed:', refreshErr);
+      }
+    }
   } catch (err) {
+    if (!isViewRequestCurrent('history', token)) return;
     grid.innerHTML = '';
     grid.appendChild(renderViewError({
       title: '读取观看历史失败',
@@ -6904,9 +6930,9 @@ async function loadFavoritesAndLikes() {
   }
 
   try {
-    const results = await Promise.allSettled([
-      apiCall('GetFavorites'), apiCall('GetLikes')
-    ]);
+    const shouldRefresh = shouldRefreshLibraryData('favorites');
+    const methods = shouldRefresh ? ['RefreshFavorites', 'RefreshLikes'] : ['GetFavorites', 'GetLikes'];
+    const results = await Promise.allSettled([apiCall(methods[0]), apiCall(methods[1])]);
     if (!isViewRequestCurrent('favorites', token)) return;
     const errors = state.favoritesView.errors || (state.favoritesView.errors = {});
     ['favorites', 'likes'].forEach((tab, index) => {
@@ -6921,6 +6947,9 @@ async function loadFavoritesAndLikes() {
 
     updateFavoritesTabsCount();
     renderFavoritesOrLikes();
+    if (shouldRefresh && results.every(result => result.status === 'fulfilled')) {
+      markLibraryDataRefreshed('favorites');
+    }
   } catch (err) {
     if (!isViewRequestCurrent('favorites', token)) return;
     grid.innerHTML = '';
@@ -7089,9 +7118,12 @@ async function loadReservations() {
   }
 
   try {
-    const list = await apiCall('GetReservations') || [];
+    const shouldRefresh = shouldRefreshLibraryData('reservations');
+    const method = shouldRefresh ? 'RefreshReservations' : 'GetReservations';
+    const list = await apiCall(method) || [];
     state.reservationsCache = list;
     renderReservationsList(list);
+    if (shouldRefresh) markLibraryDataRefreshed('reservations');
   } catch (err) {
     if (!state.reservationsCache || state.reservationsCache.length === 0) {
       grid.innerHTML = '';

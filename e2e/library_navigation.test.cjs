@@ -53,6 +53,7 @@ function harness(view, names) {
       createElement: () => new Element('created'),
       createDocumentFragment: () => Object.assign(new Element('fragment'), { fragment: true })
     },
+    LIBRARY_REFRESH_INTERVAL_MS: 15000,
     state: {
       currentView: view, historyStack: [view], historyIndex: 0,
       feed: {}, player: {},
@@ -63,6 +64,7 @@ function harness(view, names) {
         tab: 'favorites', favoritesList: [{ seriesId: 'A', title: 'Saved favorite' }],
         likesList: [{ seriesId: 'A', episodeId: 'episode', title: 'Saved like' }]
       },
+      libraryRefreshAt: {},
       historyView: { list: [], filter: 'all', search: '' }
     },
     DEFAULT_POSTER: 'poster', discoverRequestToken: 0, discoverPanelToken: 0,
@@ -82,7 +84,10 @@ function harness(view, names) {
     loadReservations() {}, loadSettings() {},
     apiCall: (method, ...args) => new Promise((resolve, reject) => requests.push({ method, args, resolve, reject }))
   });
-  for (const name of new Set(['beginViewRequest', 'isViewRequestCurrent', 'invalidateViewRequests', ...names])) {
+  for (const name of new Set([
+    'beginViewRequest', 'isViewRequestCurrent', 'invalidateViewRequests',
+    'shouldRefreshLibraryData', 'markLibraryDataRefreshed', ...names
+  ])) {
     const index = declarations.findIndex(match => match[1] === name);
     assert.ok(index >= 0, `missing function ${name}`);
     vm.runInContext(source.slice(declarations[index].index, declarations[index + 1]?.index), c);
@@ -326,4 +331,18 @@ test('history filters and badges agree and require the last episode to be finish
   c.state.historyView.filter = 'unwatched'; c.renderHistoryRows();
   assert.equal(element('history-grid').children.length, 5);
   assert.equal(c.historyProgress({ durationSec: 0, positionSec: 999 }).percent, 0);
+});
+
+test('history view replaces cached rows with the refreshed cloud snapshot', async () => {
+  const { c, requests } = harness('history', ['loadHistory', 'historyProgress', 'renderHistoryRows']);
+  c.state.historyView.list = [{ seriesId: 'cached', title: 'Cached' }];
+  const pending = c.loadHistory();
+  assert.equal(requests[0].method, 'GetHistory');
+  requests[0].resolve([{ seriesId: 'cached', title: 'Cached' }]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests[1].method, 'RefreshHistory');
+  requests[1].resolve([{ seriesId: 'fresh', title: 'Fresh' }]);
+  await pending;
+  assert.equal(c.state.historyView.list[0].seriesId, 'fresh');
+  assert.equal(Number.isFinite(c.state.libraryRefreshAt.history), true);
 });

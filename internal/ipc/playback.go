@@ -1,12 +1,8 @@
 package ipc
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -340,22 +336,8 @@ func (s *HongguoService) RecordFeedMetrics(ctx context.Context, metrics []FeedMe
 	if len(metrics) > 32 {
 		metrics = metrics[len(metrics)-32:]
 	}
-	s.metricsMu.Lock()
-	defer s.metricsMu.Unlock()
-
-	path := filepath.Join(s.appDir, "feed-metrics.jsonl")
-	if info, err := os.Stat(path); err == nil && info.Size() > 1024*1024 {
-		_ = os.Rename(path, path+".1")
-	}
-
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	writer := bufio.NewWriter(file)
 	for _, metric := range metrics {
 		metric.Type = truncateString(metric.Type, 32)
 		metric.NetworkProfile = truncateString(metric.NetworkProfile, 16)
@@ -367,13 +349,6 @@ func (s *HongguoService) RecordFeedMetrics(ctx context.Context, metrics []FeedMe
 		} else {
 			metric.At = truncateString(metric.At, 48)
 		}
-		encoded, err := json.Marshal(metric)
-		if err != nil {
-			continue
-		}
-		if _, err := writer.Write(append(encoded, '\n')); err != nil {
-			return err
-		}
 	}
-	return writer.Flush()
+	return s.store.AppendFeedMetrics(metrics)
 }

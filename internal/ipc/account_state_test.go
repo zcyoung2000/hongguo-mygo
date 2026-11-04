@@ -3,12 +3,13 @@ package ipc
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	userstore "myguo/internal/store"
 )
 
 func accountTestService(t *testing.T, appDir, home string) (*HongguoService, *Store) {
@@ -61,7 +62,7 @@ func TestLogoutRestartDoesNotImportLegacyCredentials(t *testing.T) {
 func TestLoginPersistenceFailureDoesNotPublishSession(t *testing.T) {
 	appDir := t.TempDir()
 	service, store := accountTestService(t, appDir, t.TempDir())
-	if err := os.Mkdir(filepath.Join(appDir, "account.json"), 0755); err != nil {
+	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
 	profile, err := service.LoginWithCookies(context.Background(), "sessionid=new", "token")
@@ -74,27 +75,26 @@ func TestLoginPersistenceFailureDoesNotPublishSession(t *testing.T) {
 }
 
 func TestLoginDatabaseFailureRestoresPreviousCredentials(t *testing.T) {
-	appDir := t.TempDir()
-	service, store := accountTestService(t, appDir, t.TempDir())
-	previous, err := json.Marshal(savedAccount{Cookies: "sessionid=previous", Profile: UserProfile{UserID: "710000000000001", Nickname: "Previous", LoggedIn: true}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	accountPath := filepath.Join(appDir, "account.json")
-	if err := writeAccountFile(accountPath, previous); err != nil {
+	service, store := accountTestService(t, t.TempDir(), t.TempDir())
+	if err := store.SetAuthenticatedAccount(userstore.AccountAuth{
+		Cookies: "sessionid=previous",
+		Token:   "previous-token",
+	}, UserProfile{
+		UserID: "710000000000001", Nickname: "Previous", LoggedIn: true,
+	}, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.restoreSavedAccount(); err != nil {
 		t.Fatal(err)
+	}
+	if cookies, _ := service.authCredentials(); cookies != "sessionid=previous" {
+		t.Fatal("stored credentials were not restored")
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if profile, err := service.LoginWithCookies(context.Background(), "sessionid=new", "token"); err == nil || profile != nil {
 		t.Fatal("database failure reported login success")
-	}
-	if data, err := os.ReadFile(accountPath); err != nil || !bytes.Equal(data, previous) {
-		t.Fatal("failed login replaced the previously saved credentials")
 	}
 	if cookies, _ := service.authCredentials(); cookies != "sessionid=previous" {
 		t.Fatal("failed login replaced the in-memory session")
@@ -108,9 +108,11 @@ func TestSavedAccountRestoresAndUsesPrivateFilePermissions(t *testing.T) {
 	if _, err := service.LoginWithCookies(context.Background(), "sessionid=current", "token"); err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(appDir, "account.json"))
-	if err != nil || info.Mode().Perm() != 0600 {
-		t.Fatalf("credential file permissions = %v, %v", info, err)
+	if _, err := os.Stat(filepath.Join(appDir, "account.json")); !os.IsNotExist(err) {
+		t.Fatalf("account.json exists, err = %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(appDir, "userdata.db")); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("database permissions = %v, %v", info, err)
 	}
 	restarted := newHongguoService(nil, store, nil, appDir, home)
 	t.Cleanup(func() { CloseService(restarted) })
@@ -124,12 +126,47 @@ func TestMissingCredentialsClearStaleLoggedInProfile(t *testing.T) {
 	if err := store.UpdateProfile(UserProfile{UserID: "710000000000001", Nickname: "Previous", DeviceID: "device", LoggedIn: true}); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SaveHistory(HistoryItem{SeriesID: "710000000000002", EpisodeNum: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.restoreSavedAccount(); err != nil {
 		t.Fatal(err)
 	}
 	profile := store.GetProfile()
 	if profile.LoggedIn || profile.UserID != "anonymous" || profile.DeviceID != "device" {
 		t.Fatalf("stale profile survived: %+v", profile)
+	}
+	if items, err := store.GetHistory(); err != nil || len(items) != 0 {
+		t.Fatalf("stale visible account data survived: %v, %v", items, err)
+	}
+}
+
+func TestLogoutClearsVisibleAccountData(t *testing.T) {
+	service, store := accountTestService(t, t.TempDir(), t.TempDir())
+	if _, err := service.LoginWithCookies(context.Background(), "sessionid=current", "token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveHistory(HistoryItem{SeriesID: "710000000000002", EpisodeNum: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Logout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if items, err := store.GetHistory(); err != nil || len(items) != 0 {
+		t.Fatalf("visible account data survived logout: %v, %v", items, err)
+	}
+}
+
+func TestAnonymousGuestLibraryIsPreservedWithoutCredentials(t *testing.T) {
+	service, store := accountTestService(t, t.TempDir(), t.TempDir())
+	if err := store.SaveHistory(HistoryItem{SeriesID: "710000000000002", EpisodeNum: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.restoreSavedAccount(); err != nil {
+		t.Fatal(err)
+	}
+	if items, err := store.GetHistory(); err != nil || len(items) != 1 {
+		t.Fatalf("guest library = %v, %v; want one local row", items, err)
 	}
 }
 

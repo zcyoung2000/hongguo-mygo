@@ -2,17 +2,15 @@ package ipc
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/beilunyang/openhongguo/adapters"
 	"github.com/beilunyang/openhongguo/adapters/memstore"
 	"github.com/beilunyang/openhongguo/sdk"
+	userstore "myguo/internal/store"
 )
 
 func TestNonZeroUserID(t *testing.T) {
@@ -50,10 +48,14 @@ func TestWarmupWindowLimitsAdaptToNetworkProfile(t *testing.T) {
 	}
 }
 
-func TestRecordFeedMetricsWritesJSONL(t *testing.T) {
-	dir := t.TempDir()
-	svc := &HongguoService{appDir: dir}
-	err := svc.RecordFeedMetrics(context.Background(), []FeedMetricDTO{{
+func TestRecordFeedMetricsWritesSQLite(t *testing.T) {
+	store, err := userstore.NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore err = %v", err)
+	}
+	defer store.Close()
+	svc := &HongguoService{store: store}
+	err = svc.RecordFeedMetrics(context.Background(), []FeedMetricDTO{{
 		Type:           "switch",
 		FromIndex:      1,
 		ToIndex:        2,
@@ -67,16 +69,9 @@ func TestRecordFeedMetricsWritesJSONL(t *testing.T) {
 		t.Fatalf("RecordFeedMetrics err = %v", err)
 	}
 
-	raw, err := os.ReadFile(filepath.Join(dir, "feed-metrics.jsonl"))
-	if err != nil {
-		t.Fatalf("read metrics err = %v", err)
-	}
-	var metric FeedMetricDTO
-	if err := json.Unmarshal(raw[:len(raw)-1], &metric); err != nil {
-		t.Fatalf("decode metrics err = %v", err)
-	}
-	if metric.Type != "switch" || metric.NetworkProfile != "medium" || !metric.FullFallback {
-		t.Fatalf("unexpected metric: %+v", metric)
+	count, err := store.FeedMetricCount()
+	if err != nil || count != 1 {
+		t.Fatalf("SQLite metric count = %d, %v; want 1, nil", count, err)
 	}
 }
 

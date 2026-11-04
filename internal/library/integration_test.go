@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -147,6 +148,126 @@ func TestRemoteHistorySyncUpdatesNewerLocalRow(t *testing.T) {
 	}
 }
 
+func TestCompleteRemoteHistorySnapshotDeletesRemoteRemovedRow(t *testing.T) {
+	const keptID, deletedID = "710000000000001", "710000000000002"
+	seed := []HistoryItem{
+		{SeriesID: keptID, Title: "Kept", CoverURL: "https://media.invalid/kept.jpg", EpisodeNum: 1, TotalEpisodes: 10, UpdatedAt: 100},
+		{SeriesID: deletedID, Title: "Deleted remotely", CoverURL: "https://media.invalid/deleted.jpg", EpisodeNum: 1, TotalEpisodes: 10, UpdatedAt: 100},
+	}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"data": map[string]any{
+				"data_list": []map[string]any{{
+					"series_id":         keptID,
+					"vid_index":         1,
+					"current_play_time": 10_000,
+					"last_watch_time":   time.Now().UnixMilli(),
+				}},
+				"has_more": false,
+			},
+		})
+	}))
+	for _, item := range seed {
+		if err := store.SaveHistory(item); err != nil {
+			t.Fatalf("SaveHistory() error = %v", err)
+		}
+	}
+
+	if err := service.syncRemoteHistory(context.Background(), service.currentHistoryGeneration()); err != nil {
+		t.Fatalf("syncRemoteHistory() error = %v", err)
+	}
+
+	items, err := store.GetHistory()
+	if err != nil {
+		t.Fatalf("GetHistory() error = %v", err)
+	}
+	if len(items) != 1 || items[0].SeriesID != keptID {
+		t.Fatalf("complete snapshot = %+v, want only %s", items, keptID)
+	}
+}
+
+func TestRecentHistoryMutationBlocksAuthoritativeRemoteSnapshot(t *testing.T) {
+	const keptID, recentID = "710000000000001", "710000000000002"
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"data": map[string]any{
+				"data_list": []map[string]any{{
+					"series_id":         keptID,
+					"vid_index":         1,
+					"current_play_time": 10_000,
+					"last_watch_time":   time.Now().UnixMilli(),
+				}},
+				"has_more": false,
+			},
+		})
+	}))
+	for _, item := range []HistoryItem{
+		{SeriesID: keptID, Title: "Kept", CoverURL: "https://media.invalid/kept.jpg", EpisodeNum: 1, TotalEpisodes: 10, UpdatedAt: 100},
+		{SeriesID: recentID, Title: "Recent upload", CoverURL: "https://media.invalid/recent.jpg", EpisodeNum: 1, TotalEpisodes: 10, UpdatedAt: time.Now().Unix()},
+	} {
+		if err := store.SaveHistory(item); err != nil {
+			t.Fatalf("SaveHistory() error = %v", err)
+		}
+	}
+	service.touchHistoryMutation()
+
+	if err := service.syncRemoteHistory(context.Background(), service.currentHistoryGeneration()); err != nil {
+		t.Fatalf("first syncRemoteHistory() error = %v", err)
+	}
+	items, err := store.GetHistory()
+	if err != nil || len(items) != 2 {
+		t.Fatalf("recent upload removed by unsettled snapshot = %v, %v", items, err)
+	}
+
+	service.historyMu.Lock()
+	service.historyMutationAt = time.Now().Add(-time.Minute)
+	service.historyMu.Unlock()
+	if err := service.syncRemoteHistory(context.Background(), service.currentHistoryGeneration()); err != nil {
+		t.Fatalf("settled syncRemoteHistory() error = %v", err)
+	}
+	items, err = store.GetHistory()
+	if err != nil || len(items) != 1 || items[0].SeriesID != keptID {
+		t.Fatalf("settled snapshot = %v, %v", items, err)
+	}
+}
+
+func TestIncompleteRemoteHistorySnapshotKeepsLocalRows(t *testing.T) {
+	const keptID, absentID = "710000000000001", "710000000000002"
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, map[string]any{
+			"data": map[string]any{
+				"data_list": []map[string]any{{
+					"series_id":         keptID,
+					"vid_index":         1,
+					"current_play_time": 10_000,
+					"last_watch_time":   time.Now().UnixMilli(),
+				}},
+				"has_more": true,
+			},
+		})
+	}))
+	for _, item := range []HistoryItem{
+		{SeriesID: keptID, Title: "Kept", CoverURL: "https://media.invalid/kept.jpg", EpisodeNum: 1, TotalEpisodes: 10, UpdatedAt: 100},
+		{SeriesID: absentID, Title: "Local", CoverURL: "https://media.invalid/local.jpg", EpisodeNum: 1, TotalEpisodes: 10, UpdatedAt: 100},
+	} {
+		if err := store.SaveHistory(item); err != nil {
+			t.Fatalf("SaveHistory() error = %v", err)
+		}
+	}
+
+	if err := service.syncRemoteHistory(context.Background(), service.currentHistoryGeneration()); err != nil {
+		t.Fatalf("syncRemoteHistory() error = %v", err)
+	}
+
+	items, err := store.GetHistory()
+	if err != nil {
+		t.Fatalf("GetHistory() error = %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("incomplete snapshot = %+v, want both local rows", items)
+	}
+}
+
 func TestPendingHistoryUploadFlushesHistoryAndProgress(t *testing.T) {
 	const seriesID = "710000000000001"
 	const episodeID = "710000000000101"
@@ -174,7 +295,7 @@ func TestPendingHistoryUploadFlushesHistoryAndProgress(t *testing.T) {
 		t.Fatalf("QueueHistoryUpload() error = %v", err)
 	}
 
-	service.syncPendingHistoryMutations()
+	_, _ = service.syncPendingHistoryMutations()
 
 	pending, err := store.PendingHistoryUploads(10)
 	if err != nil || len(pending) != 0 {
@@ -192,6 +313,140 @@ func TestPendingHistoryUploadFlushesHistoryAndProgress(t *testing.T) {
 	}
 	if _, ok := progressPayload["books"]; !ok {
 		t.Fatalf("progress payload missing books: %#v", progressPayload)
+	}
+}
+
+func TestHistoryMutationBatchesSplitAfterUpstreamLimit(t *testing.T) {
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var count int
+		if strings.Contains(r.URL.Path, "read_progress/upload") {
+			payload := decodeGZIP(t, raw)
+			count = len(payload["books"].([]any))
+		} else {
+			payload := decodeGZIP(t, raw)
+			count = len(payload["update_datas"].([]any))
+		}
+		log.add(capturedRequest{path: r.URL.Path, body: []byte(strconv.Itoa(count))})
+		if count > 1 {
+			writeJSON(w, map[string]any{"code": 100103, "message": "PARAM_INVALID"})
+			return
+		}
+		writeJSON(w, map[string]any{"code": 0})
+	}))
+	for i, episodeID := range []string{"710000000000101", "710000000000102"} {
+		item := HistoryItem{
+			SeriesID:   fmt.Sprintf("71000000000000%d", i+1),
+			EpisodeNum: 1,
+			UpdatedAt:  100 + int64(i),
+		}
+		if err := store.SaveHistory(item); err != nil {
+			t.Fatalf("SaveHistory() error = %v", err)
+		}
+		if err := store.QueueHistoryUpload(item, episodeID); err != nil {
+			t.Fatalf("QueueHistoryUpload() error = %v", err)
+		}
+	}
+
+	uploaded, err := service.processPendingHistoryUploads()
+	if err != nil {
+		t.Fatalf("processPendingHistoryUploads() error = %v", err)
+	}
+	if uploaded != 2 {
+		t.Fatalf("uploaded = %d, want 2", uploaded)
+	}
+	if pending, err := store.PendingHistoryUploads(10); err != nil || len(pending) != 0 {
+		t.Fatalf("pending uploads = %v, %v", pending, err)
+	}
+	historyCalls := log.matching("read_history/update")
+	if len(historyCalls) != 3 || string(historyCalls[0].body) != "2" ||
+		string(historyCalls[1].body) != "1" || string(historyCalls[2].body) != "1" {
+		t.Fatalf("history calls = %v; want batch 2 then 1, 1", historyCalls)
+	}
+	progressCalls := log.matching("read_progress/upload")
+	if len(progressCalls) != 2 || string(progressCalls[0].body) != "1" || string(progressCalls[1].body) != "1" {
+		t.Fatalf("progress calls = %v; want single-item calls 1, 1", progressCalls)
+	}
+}
+
+func TestHistoryDeleteBatchesSplitAfterUpstreamLimit(t *testing.T) {
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		payload := decodeGZIP(t, raw)
+		count := len(payload["update_datas"].([]any))
+		log.add(capturedRequest{path: r.URL.Path, body: []byte(strconv.Itoa(count))})
+		if count > 1 {
+			writeJSON(w, map[string]any{"code": 100103, "message": "PARAM_INVALID"})
+			return
+		}
+		writeJSON(w, map[string]any{"code": 0})
+	}))
+	for i, episodeID := range []string{"710000000000101", "710000000000102"} {
+		seriesID := fmt.Sprintf("71000000000000%d", i+1)
+		item := HistoryItem{SeriesID: seriesID, EpisodeNum: 1, UpdatedAt: 100}
+		if err := store.SaveHistory(item); err != nil {
+			t.Fatalf("SaveHistory() error = %v", err)
+		}
+		if err := store.RememberEpisode(seriesID, episodeID, 1, "720p"); err != nil {
+			t.Fatalf("RememberEpisode() error = %v", err)
+		}
+		if err := store.DeleteHistory(seriesID); err != nil {
+			t.Fatalf("DeleteHistory() error = %v", err)
+		}
+	}
+
+	deleted, err := service.processPendingHistoryDeletes()
+	if err != nil {
+		t.Fatalf("processPendingHistoryDeletes() error = %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2", deleted)
+	}
+	if pending, err := store.PendingHistoryDeletes(10); err != nil || len(pending) != 0 {
+		t.Fatalf("pending deletes = %v, %v", pending, err)
+	}
+	calls := log.matching("read_history/update")
+	if len(calls) != 3 {
+		t.Fatalf("delete calls = %d, want a rejected batch followed by single-item calls", len(calls))
+	}
+	if string(calls[0].body) != "2" || string(calls[1].body) != "1" || string(calls[2].body) != "1" {
+		t.Fatalf("delete batch sizes = %s, %s, %s; want 2, 1, 1", calls[0].body, calls[1].body, calls[2].body)
+	}
+}
+
+func TestHistoryMutationKeepsBatchWhenUpstreamAcceptsIt(t *testing.T) {
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		payload := decodeGZIP(t, raw)
+		var count int
+		if strings.Contains(r.URL.Path, "read_progress/upload") {
+			count = len(payload["books"].([]any))
+		} else {
+			count = len(payload["update_datas"].([]any))
+		}
+		log.add(capturedRequest{path: r.URL.Path, body: []byte(strconv.Itoa(count))})
+		writeJSON(w, map[string]any{"code": 0})
+	}))
+	for i, episodeID := range []string{"710000000000101", "710000000000102"} {
+		item := HistoryItem{SeriesID: fmt.Sprintf("71000000000000%d", i+1), EpisodeNum: 1, UpdatedAt: 100 + int64(i)}
+		if err := store.SaveHistory(item); err != nil {
+			t.Fatalf("SaveHistory() error = %v", err)
+		}
+		if err := store.QueueHistoryUpload(item, episodeID); err != nil {
+			t.Fatalf("QueueHistoryUpload() error = %v", err)
+		}
+	}
+
+	if uploaded, err := service.processPendingHistoryUploads(); err != nil || uploaded != 2 {
+		t.Fatalf("processPendingHistoryUploads() = %d, %v; want 2, nil", uploaded, err)
+	}
+	for _, suffix := range []string{"read_history/update", "read_progress/upload"} {
+		if calls := log.matching(suffix); len(calls) != 1 || string(calls[0].body) != "2" {
+			t.Fatalf("%s calls = %v; want one two-item batch", suffix, calls)
+		}
 	}
 }
 
@@ -272,6 +527,60 @@ func TestRemoteLikesReplaceLocalSet(t *testing.T) {
 	}
 	if len(log.matching("ugc/action/mget")) != 1 {
 		t.Fatalf("remote like calls = %d, want 1", len(log.matching("ugc/action/mget")))
+	}
+}
+
+func TestRemoteLikesFollowPagination(t *testing.T) {
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+		log.add(capturedRequest{path: r.URL.Path, body: []byte(strconv.Itoa(offset))})
+		hasMore := offset == 0
+		nextOffset := 0
+		ids := []string{"710000000000001", "710000000000002"}
+		if offset != 0 {
+			ids = []string{"710000000000003"}
+			nextOffset = 2
+		}
+		rows := make([]map[string]any, 0, len(ids))
+		for i, seriesID := range ids {
+			rows = append(rows, map[string]any{
+				"series_id":    seriesID,
+				"series_title": "Like " + strconv.Itoa(offset+i+1),
+				"video_data": map[string]any{
+					"vid":         fmt.Sprintf("7100000000001%02d", offset+i+1),
+					"episode_cnt": 10,
+				},
+			})
+		}
+		writeJSON(w, map[string]any{
+			"code":     0,
+			"has_more": hasMore,
+			"data": map[string]any{
+				"has_more":        hasMore,
+				"next_offset":     nextOffset,
+				"mixed_data_list": rows,
+			},
+		})
+	}))
+	if _, err := store.ToggleLike(LikeItem{SeriesID: "710000000000004", EpisodeID: "old"}); err != nil {
+		t.Fatalf("seed local like error = %v", err)
+	}
+
+	if err := service.syncRemoteLikes(context.Background(), service.currentLikeGeneration()); err != nil {
+		t.Fatalf("syncRemoteLikes() error = %v", err)
+	}
+
+	likes, err := store.GetLikes()
+	if err != nil {
+		t.Fatalf("GetLikes() error = %v", err)
+	}
+	if len(likes) != 3 {
+		t.Fatalf("remote likes = %+v, want three paginated rows", likes)
+	}
+	calls := log.matching("ugc/action/mget")
+	if len(calls) != 2 || string(calls[0].body) != "0" || string(calls[1].body) != "2" {
+		t.Fatalf("like page offsets = %v, want 0 then 2", calls)
 	}
 }
 

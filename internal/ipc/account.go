@@ -3,7 +3,6 @@ package ipc
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"myguo/internal/native"
@@ -22,15 +21,13 @@ func (s *HongguoService) ResetDevice(ctx context.Context) error {
 }
 
 func (s *HongguoService) resetDeviceWithContext(ctx context.Context) error {
-	s.deviceMu.Lock()
-	defer s.deviceMu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := s.client.ResetDevice(ctx); err != nil {
 		return err
 	}
 	if s.deviceProfileStore != nil {
-		if err := s.reloadDeviceIdentityLocked(); err != nil {
+		if err := s.reloadDeviceIdentity(); err != nil {
 			return err
 		}
 	}
@@ -69,6 +66,7 @@ func (s *HongguoService) GetDeviceInfo(ctx context.Context) (map[string]string, 
 func (s *HongguoService) LoginWithCookies(ctx context.Context, cookies, token string) (*UserProfile, error) {
 	s.accountMu.Lock()
 	defer s.accountMu.Unlock()
+	previousUserID, _, _ := s.authSession()
 	cookies = strings.TrimSpace(cookies)
 	token = strings.TrimSpace(token)
 
@@ -160,21 +158,11 @@ func (s *HongguoService) LoginWithCookies(ctx context.Context, cookies, token st
 		UserID: uid, Nickname: nickname, Avatar: avatar, LoggedIn: true,
 		DeviceID: s.store.GetProfile().DeviceID,
 	}
-	// Publish the new session only after both durable representations succeed.
-	accPath := filepath.Join(s.appDir, "account.json")
-	previous, err := readAccountFile(accPath)
-	if err != nil {
-		return nil, fmt.Errorf("读取原登录信息失败: %w", err)
-	}
-	accBytes, err := json.MarshalIndent(savedAccount{Cookies: cookies, Token: token, Profile: profile}, "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	if err := writeAccountFile(accPath, accBytes); err != nil {
-		return nil, fmt.Errorf("保存登录信息失败: %w", err)
-	}
-	if err := s.store.UpdateProfile(profile); err != nil {
-		return nil, errors.Join(fmt.Errorf("保存用户资料失败: %w", err), restoreAccountFile(accPath, previous))
+	if err := s.store.SetAuthenticatedAccount(store.AccountAuth{
+		Cookies: cookies,
+		Token:   token,
+	}, profile, previousUserID != uid); err != nil {
+		return nil, fmt.Errorf("保存登录账号失败: %w", err)
 	}
 	s.setAuthCredentials(cookies, token, uid)
 
@@ -206,17 +194,9 @@ func (s *HongguoService) RefreshUserProfile(ctx context.Context) (*UserProfile, 
 func (s *HongguoService) Logout(ctx context.Context) error {
 	s.accountMu.Lock()
 	defer s.accountMu.Unlock()
-	accPath := filepath.Join(s.appDir, "account.json")
-	previous, err := readAccountFile(accPath)
-	if err != nil {
-		return fmt.Errorf("读取登录信息失败: %w", err)
-	}
-	if err := os.Remove(accPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("清除登录信息失败: %w", err)
-	}
-
-	if err := s.store.UpdateProfile(anonymousProfile(s.store.GetProfile().DeviceID)); err != nil {
-		return errors.Join(fmt.Errorf("保存退出状态失败: %w", err), restoreAccountFile(accPath, previous))
+	deviceID := s.store.GetProfile().DeviceID
+	if err := s.store.SignOut(deviceID); err != nil {
+		return fmt.Errorf("退出登录失败: %w", err)
 	}
 	s.setAuthCredentials("", "")
 

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -25,6 +26,8 @@ const (
 	userSyncPageSize = 20
 	userSyncMaxBody  = 1 << 20
 )
+
+var errParameterInvalid = errors.New("parameter invalid")
 
 func contentInt(value string) (int64, error) {
 	parsed, err := strconv.ParseInt(value, 10, 64)
@@ -108,6 +111,9 @@ func (s *Service) postSignedMutation(ctx context.Context, operation, path string
 		message := result.Message
 		if message == "" {
 			message = "unknown error"
+		}
+		if *result.Code == 100103 {
+			return fmt.Errorf("%s接口返回 code %d: %w", operation, *result.Code, errParameterInvalid)
 		}
 		return fmt.Errorf("%s接口返回 code %d: %s", operation, *result.Code, message)
 	}
@@ -328,6 +334,19 @@ func (s *Service) requestHistoryDelete(ctx context.Context, items []HistoryItem,
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	if len(items) > 1 {
+		err := s.postSignedMutation(ctx, "历史删除", "/reading/bookapi/read_history/update/v", payload)
+		if err == nil || !errors.Is(err, errParameterInvalid) {
+			return err
+		}
+		// Split only after the server explicitly rejects the parameters,
+		// isolating a batch-size limit without acknowledging a partial page.
+		middle := len(items) / 2
+		if err := s.requestHistoryDelete(ctx, items[:middle], episodeIDs[:middle]); err != nil {
+			return err
+		}
+		return s.requestHistoryDelete(ctx, items[middle:], episodeIDs[middle:])
+	}
 	return s.postSignedMutation(ctx, "历史删除", "/reading/bookapi/read_history/update/v", payload)
 }
 
@@ -335,6 +354,24 @@ func (s *Service) reportPlaybackProgress(ctx context.Context, items []HistoryIte
 	if len(items) == 0 || len(items) != len(episodeIDs) {
 		return nil
 	}
+	if len(items) > 1 {
+		if err := s.reportPlaybackProgressBatch(ctx, items, episodeIDs); err == nil {
+			return nil
+		} else if !errors.Is(err, errParameterInvalid) {
+			return err
+		}
+		// Split only after the server explicitly rejects the parameters,
+		// isolating a batch-size limit without acknowledging a partial page.
+		middle := len(items) / 2
+		if err := s.reportPlaybackProgress(ctx, items[:middle], episodeIDs[:middle]); err != nil {
+			return err
+		}
+		return s.reportPlaybackProgress(ctx, items[middle:], episodeIDs[middle:])
+	}
+	return s.reportPlaybackProgressBatch(ctx, items, episodeIDs)
+}
+
+func (s *Service) reportPlaybackProgressBatch(ctx context.Context, items []HistoryItem, episodeIDs []string) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	historyPayload := historyUpdateBatchPayload(items, episodeIDs)
@@ -353,29 +390,48 @@ func (s *Service) reportPlaybackProgress(ctx context.Context, items []HistoryIte
 
 func (s *Service) triggerPendingHistorySync() {
 	s.background.Go(func(context.Context) {
-		s.syncPendingHistoryMutations()
+		if _, err := s.syncPendingHistoryMutations(); err != nil {
+			log.Printf("[history] pending sync failed: %v", err)
+		}
 	})
 }
 
-func (s *Service) syncPendingHistoryMutations() {
+func (s *Service) syncPendingHistoryMutations() (int, error) {
 	s.historyMutationMu.Lock()
 	if s.historyMutationSyncing {
 		s.historyMutationWake = true
 		s.historyMutationMu.Unlock()
-		return
+		return 0, nil
 	}
 	s.historyMutationSyncing = true
 	s.historyMutationMu.Unlock()
 
+	processed := 0
 	for {
 		// Upload first, then delete. If a save is followed immediately by a
 		// delete, this preserves the operation order on the server. A delete
 		// followed by a save removes its delete intent while saving.
-		if err := s.processPendingHistoryUploads(); err != nil {
-			log.Printf("[history] pending upload sync failed: %v", err)
+		uploaded, err := s.processPendingHistoryUploads()
+		processed += uploaded
+		if err != nil {
+			s.historyMutationMu.Lock()
+			s.historyMutationSyncing = false
+			s.historyMutationMu.Unlock()
+			if processed > 0 {
+				s.touchHistoryMutation()
+			}
+			return processed, err
 		}
-		if err := s.processPendingHistoryDeletes(); err != nil {
-			log.Printf("[history] pending delete sync failed: %v", err)
+		deleted, err := s.processPendingHistoryDeletes()
+		processed += deleted
+		if err != nil {
+			s.historyMutationMu.Lock()
+			s.historyMutationSyncing = false
+			s.historyMutationMu.Unlock()
+			if processed > 0 {
+				s.touchHistoryMutation()
+			}
+			return processed, err
 		}
 		s.historyMutationMu.Lock()
 		again := s.historyMutationWake
@@ -383,21 +439,24 @@ func (s *Service) syncPendingHistoryMutations() {
 		if !again {
 			s.historyMutationSyncing = false
 			s.historyMutationMu.Unlock()
-			return
+			if processed > 0 {
+				s.touchHistoryMutation()
+			}
+			return processed, nil
 		}
 		s.historyMutationMu.Unlock()
 	}
 }
 
-func (s *Service) processPendingHistoryUploads() error {
+func (s *Service) processPendingHistoryUploads() (int, error) {
 	ctx := s.bindSyncSession(s.background.Context())
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {
-		return nil
+		return 0, nil
 	}
 	items, err := s.store.PendingHistoryUploads(userSyncPageSize, session.scope)
 	if err != nil || len(items) == 0 {
-		return err
+		return 0, err
 	}
 
 	valid := make([]HistoryItem, 0, len(items))
@@ -406,7 +465,7 @@ func (s *Service) processPendingHistoryUploads() error {
 	for _, pending := range items {
 		if s.store.HistoryDeleted(pending.SeriesID) {
 			if err := s.store.AckHistoryUploads([]userstore.PendingHistoryUpload{pending}); err != nil {
-				return err
+				return 0, err
 			}
 			continue
 		}
@@ -416,33 +475,34 @@ func (s *Service) processPendingHistoryUploads() error {
 			episodeID = s.resolveHistoryEpisodeID(item)
 		}
 		if _, err := contentInt(item.SeriesID); err != nil {
-			return err
+			return 0, err
 		}
 		if _, err := contentInt(episodeID); err != nil {
-			return fmt.Errorf("历史 %s 缺少有效分集 ID", item.SeriesID)
+			return 0, fmt.Errorf("历史 %s 缺少有效分集 ID", item.SeriesID)
 		}
 		valid = append(valid, item)
 		ack = append(ack, pending)
 		validEpisodeIDs = append(validEpisodeIDs, episodeID)
 	}
 	if len(valid) == 0 {
-		return nil
+		return 0, nil
 	}
 	if err := s.reportPlaybackProgress(ctx, valid, validEpisodeIDs); err != nil {
-		return err
+		return 0, err
 	}
-	return s.store.AckHistoryUploads(ack)
+	acknowledged := len(ack)
+	return acknowledged, s.store.AckHistoryUploads(ack)
 }
 
-func (s *Service) processPendingHistoryDeletes() error {
+func (s *Service) processPendingHistoryDeletes() (int, error) {
 	ctx := s.bindSyncSession(s.background.Context())
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {
-		return nil
+		return 0, nil
 	}
 	pending, err := s.store.PendingHistoryDeletes(50, session.scope)
 	if err != nil || len(pending) == 0 {
-		return err
+		return 0, err
 	}
 	items := make([]HistoryItem, 0, len(pending))
 	episodeIDs := make([]string, 0, len(pending))
@@ -466,12 +526,13 @@ func (s *Service) processPendingHistoryDeletes() error {
 		sendEpisodeIDs = append(sendEpisodeIDs, episodeID)
 	}
 	if len(send) == 0 {
-		return fmt.Errorf("待删除历史缺少可解析分集")
+		return 0, fmt.Errorf("待删除历史缺少可解析分集")
 	}
 	if err := s.requestHistoryDelete(ctx, send, sendEpisodeIDs); err != nil {
-		return err
+		return 0, err
 	}
-	return s.store.AckHistoryDeletes(ack)
+	acknowledged := len(ack)
+	return acknowledged, s.store.AckHistoryDeletes(ack)
 }
 func (s *Service) triggerPendingFavoriteSync() {
 	s.background.Go(func(context.Context) {
@@ -495,6 +556,9 @@ func (s *Service) syncPendingFavoriteOps() (int, error) {
 	for {
 		items, err := s.store.PendingFavoriteOps(userSyncPageSize, session.scope)
 		if err != nil || len(items) == 0 {
+			if processed > 0 {
+				s.touchFavoriteMutation()
+			}
 			return processed, err
 		}
 		for _, item := range items {
@@ -505,6 +569,9 @@ func (s *Service) syncPendingFavoriteOps() (int, error) {
 				err = s.store.AckFavoriteOps([]userstore.PendingFavoriteOp{item})
 			}
 			if err != nil {
+				if processed > 0 {
+					s.touchFavoriteMutation()
+				}
 				return processed, err
 			}
 			processed++
