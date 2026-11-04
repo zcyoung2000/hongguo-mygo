@@ -148,7 +148,8 @@ type episodeCacheEntry struct {
 }
 
 type episodeLoad struct {
-	done chan episodeListResult
+	done   chan struct{}
+	result episodeListResult
 }
 
 type episodeListResult struct {
@@ -719,12 +720,15 @@ func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string
 		return entry.page, nil
 	}
 	if load, ok := s.episodeLoads[seriesID]; ok {
-		done := load.done
 		s.episodeMu.Unlock()
-		result := <-done
-		return result.page, result.err
+		select {
+		case <-load.done:
+			return load.result.page, load.result.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
-	load := &episodeLoad{done: make(chan episodeListResult, 1)}
+	load := &episodeLoad{done: make(chan struct{})}
 	s.episodeLoads[seriesID] = load
 	s.episodeMu.Unlock()
 
@@ -734,10 +738,9 @@ func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string
 	if err == nil && page != nil && len(page.Items) > 0 {
 		s.episodeCache[seriesID] = episodeCacheEntry{page: page, expiresAt: time.Now().Add(episodeCacheTTL)}
 	}
-	s.episodeMu.Unlock()
-
-	load.done <- episodeListResult{page: page, err: err}
+	load.result = episodeListResult{page: page, err: err}
 	close(load.done)
+	s.episodeMu.Unlock()
 	return page, err
 }
 
