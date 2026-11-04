@@ -116,6 +116,8 @@ type FeedMetricDTO struct {
 	BufferedAtSwitch    bool   `json:"bufferedAtSwitch"`
 	DurationMS          int64  `json:"durationMs"`
 	TimeToFirstFrameMS  int64  `json:"timeToFirstFrameMs,omitempty"`
+	PlaybackInfoMS      int64  `json:"playbackInfoMs,omitempty"`
+	MediaStartupMS      int64  `json:"mediaStartupMs,omitempty"`
 	HandoffFirstFrameMS int64  `json:"handoffFirstFrameMs,omitempty"`
 	FirstFrameSource    string `json:"firstFrameSource,omitempty"`
 	SwitchReadyMS       int64  `json:"switchReadyMs,omitempty"`

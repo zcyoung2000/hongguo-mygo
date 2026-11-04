@@ -377,6 +377,7 @@ function setActiveFeedSlot(slot, { force = false } = {}) {
   feedSlotCurr = slot.id;
   feedActiveVideo = slot.video;
   syncFeedMediaChrome();
+  requestFeedDramaMetadata(slot);
 }
 
 function syncFeedMediaChrome() {
@@ -421,6 +422,8 @@ function initFeedVideoPool() {
       durationSec: 0,
       metadataDurationSec: 0,
       completeCached: false,
+      metadataRequested: false,
+      progressiveMedia: null,
       fullStreamUrl: '',
       progressiveStreamUrl: '',
       hlsStreamUrl: '',
@@ -443,6 +446,7 @@ function initFeedVideoPool() {
       sourceRetryTimer: null,
       failureHintTimer: null,
       metricPreparedAt: 0,
+      metricSourceAssignedAt: 0,
       metricFirstFrameAt: 0,
       metricFirstFrameSource: '',
       metricReadyAt: 0,
@@ -592,8 +596,10 @@ function scheduleFeedFrameMetric(slot) {
   slot.video.requestVideoFrameCallback(() => {
     delete slot.video.dataset.frameMetricScheduled;
     if (!slot.metricPreparedAt) return;
-    slot.metricFirstFrameAt = performance.now();
-    slot.metricFirstFrameSource = 'rendered-frame';
+    if (!slot.metricFirstFrameAt && feedVideoHasFirstFrame(slot.video)) {
+      slot.metricFirstFrameAt = performance.now();
+      slot.metricFirstFrameSource = 'rendered-frame';
+    }
     if (!slot.metricReadyAt && feedVideoHasPlaybackBuffer(slot.video)) {
       slot.metricReadyAt = performance.now();
     }
@@ -714,6 +720,8 @@ function rememberFeedPlayback(key, playback) {
 
 function clearFeedSlot(slot) {
   if (!slot) return;
+  slot.progressiveMedia?.dispose();
+  slot.progressiveMedia = null;
   slot.loadToken++;
   slot.preparing = null;
   slot.itemIndex = -1;
@@ -725,6 +733,7 @@ function clearFeedSlot(slot) {
   slot.durationSec = 0;
   slot.metadataDurationSec = 0;
   slot.completeCached = false;
+  slot.metadataRequested = false;
   slot.streamUrl = '';
   slot.fullStreamUrl = '';
   slot.progressiveStreamUrl = '';
@@ -755,6 +764,7 @@ function clearFeedSlot(slot) {
     slot.failureHintTimer = null;
   }
   slot.metricPreparedAt = 0;
+  slot.metricSourceAssignedAt = 0;
   slot.metricFirstFrameAt = 0;
   slot.metricFirstFrameSource = '';
   slot.metricReadyAt = 0;
@@ -798,7 +808,8 @@ function feedSlotMatches(slot, itemIndex, seriesId, quality) {
     slot.streamUrl &&
     slot.video?.src &&
     !slot.video.error &&
-    normalizeFeedMediaURL(slot.streamUrl) === normalizeFeedMediaURL(slot.video.src)
+    (normalizeFeedMediaURL(slot.streamUrl) === normalizeFeedMediaURL(slot.video.src) ||
+      (slot.progressiveMedia?.url === slot.streamUrl && slot.progressiveMedia?.objectURL === slot.video.src))
   );
 }
 
@@ -1047,6 +1058,35 @@ async function assessFeedMediaCapabilities() {
   }
 }
 
+function assignFeedMediaSource(slot, source, progressive = false) {
+  slot.progressiveMedia?.dispose();
+  slot.progressiveMedia = null;
+  slot.streamUrl = source;
+  if (progressive && window.ProgressiveMediaSource?.isSupported()) {
+    const token = slot.loadToken;
+    slot.progressiveMedia = new window.ProgressiveMediaSource(slot.video, source, {
+      duration: slot.metadataDurationSec,
+      onError: error => {
+        if (slot.loadToken === token) slot.video.onerror?.(error);
+      },
+      onComplete: () => {
+        if (slot.loadToken === token) slot.completeCached = true;
+      }
+    });
+  } else {
+    slot.video.src = source;
+    slot.video.load();
+  }
+}
+
+function hasWarmFeedHLS(playback) {
+  if (playback.isHlsCached) return true;
+  const key = `${playback.episodeId}:${playback.quality}`;
+  const status = feedWarmupSession?.statuses.get(key);
+  return Boolean(status?.active || status?.complete || status?.cachedSeconds > 0 ||
+    feedWarmupSession?.pendingMedia?.has(key));
+}
+
 async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = null, primeFirstFrame = false, quality = null) {
   if (!slot || !slot.video) return null;
   if (itemIndex < 0 || itemIndex >= state.feed.items.length) {
@@ -1068,6 +1108,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
 
   if (feedSlotMatches(slot, itemIndex, drama.id, requestedQuality)) {
     syncActiveFeedSlot(slot);
+    requestFeedDramaMetadata(slot);
     state.feed.consecutiveSourceFailures = 0;
     if (primeFirstFrame && !feedVideoHasFirstFrame(slot.video) && !slot.firstFramePriming) {
       slot.firstFramePriming = primeFeedSlotFirstFrame(slot);
@@ -1095,9 +1136,9 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
   }
 
   const loadPlayback = async () => {
-    // Metadata prefetch and the visible slot share one load. Prefer the same
-    // native HLS rendition for cold starts and warm handoffs; changing formats
-    // at activation discards the decoder buffer and starts another download.
+    // Metadata prefetch and the visible slot share one load. Warm slots keep
+    // their HLS rendition; a foreground cold start can consume MP4 fragments
+    // before the next source keyframe closes a complete HLS segment.
     const pb = await prefetchFeedPlaybackInfo(itemIndex, true, requestedQuality);
     if (loadToken !== slot.loadToken) return;
     if (!pb || !pb.streamUrl) {
@@ -1121,15 +1162,19 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     slot.hlsStreamUrl = pb.hlsStreamUrl || '';
     slot.streamUrl = pb.hlsStreamUrl || pb.streamUrl;
     if (pb.isFullCached) slot.streamUrl = slot.fullStreamUrl;
+    const foreground = autoPlay || (feedSwitchWaitDir && itemIndex === state.feed.index + feedSwitchWaitDir);
+    const progressive = foreground && !pb.isFullCached && !hasWarmFeedHLS(pb) && pb.progressiveStreamUrl &&
+      window.ProgressiveMediaSource?.isSupported();
+    if (progressive) slot.streamUrl = pb.progressiveStreamUrl;
     slot.usedHLSFallback = normalizeFeedMediaURL(slot.streamUrl) === normalizeFeedMediaURL(slot.hlsStreamUrl);
     slot.usedProgressiveFallback = normalizeFeedMediaURL(slot.streamUrl) === normalizeFeedMediaURL(slot.progressiveStreamUrl);
     slot.video.crossOrigin = 'anonymous';
-    slot.video.src = slot.streamUrl;
     slot.video.preload = 'auto';
     state.feed.consecutiveSourceFailures = 0;
     scheduleFeedFrameMetric(slot);
     slot.video.playbackRate = state.feed.playbackSpeed || 1;
-    slot.video.load();
+    slot.metricSourceAssignedAt = performance.now();
+    assignFeedMediaSource(slot, slot.streamUrl, progressive);
     slot.ready = true;
     slot.metricCacheHit = slot.completeCached;
     slot.metricStreamMode = pb.isFullCached
@@ -1148,13 +1193,16 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     const startPlayback = () => {
       if (loadToken !== slot.loadToken) return;
       slot.loaded = true;
+      requestFeedDramaMetadata(slot);
+      if (feedSlots[feedSlotCurr] === slot) ensureFeedItemsAhead();
       clearFeedFailureHint(slot);
       if (slot.poster) slot.poster.classList.add('hidden');
       showFeedSkeleton(false);
       const loader = document.getElementById('feed-loader');
       if (loader && feedSlots[feedSlotCurr] === slot) loader.style.display = 'none';
-      if (shouldRestore && Number.isFinite(slot.video.duration)) {
-        slot.video.currentTime = Math.min(restorePosition, slot.video.duration - 0.5);
+      const duration = feedMediaDuration(slot.video);
+      if (shouldRestore && duration > 0) {
+        slot.video.currentTime = Math.min(restorePosition, duration - 0.5);
       }
       if (autoPlay && state.currentView === 'recommend' && !state.feed.userPaused && feedSlots[feedSlotCurr] === slot) {
         beginFeedPlayback(slot.video, feedPlayToken);
@@ -1178,6 +1226,8 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     slot.video.onplaying = () => {
       if (loadToken !== slot.loadToken) return;
       slot.loaded = true;
+      requestFeedDramaMetadata(slot);
+      if (feedSlots[feedSlotCurr] === slot) ensureFeedItemsAhead();
       clearFeedFailureHint(slot);
       if (slot.poster) slot.poster.classList.add('hidden');
       showFeedSkeleton(false);
@@ -1193,11 +1243,9 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
       if (loader) loader.style.display = 'none';
       const resumePosition = slot.video.currentTime || 0;
       const fallbackTo = source => {
-        if (!source || slot.video.src === source) return false;
-        slot.streamUrl = source;
+        if (!source || slot.video.src === source || (slot.progressiveMedia && slot.streamUrl === source)) return false;
         slot.ready = true;
-        slot.video.src = source;
-        slot.video.load();
+        assignFeedMediaSource(slot, source, source === slot.progressiveStreamUrl);
         slot.video.onloadeddata = () => {
           if (loadToken !== slot.loadToken) return;
           slot.loaded = true;
@@ -1430,7 +1478,7 @@ function recordFeedSwitchMetric(fromIndex, toIndex, bufferedAtSwitch, durationMs
   setTimeout(() => recordFeedPlaybackMetric(metric.toIndex), 5000);
 }
 
-function recordFeedPlaybackMetric(itemIndex) {
+function recordFeedPlaybackMetric(itemIndex, type = 'playback-sample') {
   const slot = feedSlots[feedSlotCurr];
   if (!slot || slot.itemIndex !== itemIndex) return;
   const diagnostics = state.feed.networkDiagnostics || {};
@@ -1438,13 +1486,17 @@ function recordFeedPlaybackMetric(itemIndex) {
     ? Math.max(0, performance.now() - slot.metricRebufferStartedAt)
     : 0;
   const metric = {
-    type: 'playback-sample',
+    type,
     toIndex: itemIndex,
     bufferedAtSwitch: feedVideoHasPlaybackBuffer(slot.video),
     durationMs: Math.round(performance.now() - (slot.metricFirstFrameAt || slot.metricPreparedAt)),
     timeToFirstFrameMs: slot.metricFirstFrameAt && slot.metricPreparedAt
       ? Math.max(0, Math.round(slot.metricFirstFrameAt - slot.metricPreparedAt))
       : 0,
+    playbackInfoMs: slot.metricSourceAssignedAt && slot.metricPreparedAt
+      ? Math.max(0, Math.round(slot.metricSourceAssignedAt - slot.metricPreparedAt)) : 0,
+    mediaStartupMs: slot.metricSourceAssignedAt && slot.metricFirstFrameAt
+      ? Math.max(0, Math.round(slot.metricFirstFrameAt - slot.metricSourceAssignedAt)) : 0,
     firstFrameSource: slot.metricFirstFrameSource || '',
     switchReadyMs: slot.metricReadyAt && slot.metricPreparedAt
       ? Math.max(0, Math.round(slot.metricReadyAt - slot.metricPreparedAt))
@@ -1623,7 +1675,8 @@ async function runFeedWarmup(session) {
     }
     // Negotiation is cheap and does not start a media download. Keep a small,
     // bounded metadata window ready even while current playback needs recovery.
-    for (let offset = 1; offset <= 3; offset++) {
+    const firstFrameReady = feedVideoHasFirstFrame(session.current.video);
+    for (let offset = 1; firstFrameReady && offset <= 3; offset++) {
       const index = session.centerIndex + offset;
       if (!state.feed.items[index] || cachedFeedPlayback(index)) continue;
       const lastTry = session.metadataTries.get(index) ?? -Infinity;
@@ -1641,8 +1694,8 @@ async function runFeedWarmup(session) {
       return Boolean(pb?.isFullCached || pb?.isHlsCached || status?.complete || status?.cachedSeconds >= 6);
     };
     session.policy = decideFeedPreload({
-      now, bufferSec: ahead, rate: video.playbackRate, profile: effectiveFeedNetworkProfile(),
-      complete: feedSlotIsFullyBuffered(session.current),
+      now, bufferSec: firstFrameReady ? ahead : 0, rate: video.playbackRate, profile: effectiveFeedNetworkProfile(),
+      complete: firstFrameReady && feedSlotIsFullyBuffered(session.current),
       waiting: video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA &&
         !video.ended && (video.currentTime > 0 || session.policy.depth > 0),
       nextReady: ready(1), secondReady: ready(2),
@@ -1656,6 +1709,14 @@ async function runFeedWarmup(session) {
     for (let offset = 1; offset <= depth; offset++) {
       const pb = cachedFeedPlayback(session.centerIndex + offset);
       if (!pb?.episodeId) break;
+      const progressiveSlot = feedSlots.find(slot => slot.ready && slot.progressiveMedia &&
+        slot.episodeId === pb.episodeId && slot.quality === pb.quality);
+      if (progressiveSlot) {
+        // Foreground MP4 fragments already own this asset. Do not admit a
+        // second HLS download for the same pending swipe or cached decoder.
+        if (feedVideoBufferAhead(progressiveSlot.video) < 6) break;
+        continue;
+      }
       items.push({ seriesId: state.feed.items[session.centerIndex + offset].id,
         episodeId: pb.episodeId, number: pb.episodeNum || 1, quality: pb.quality });
     }
@@ -1663,7 +1724,9 @@ async function runFeedWarmup(session) {
     if (!depth && nextSlot?.itemIndex === session.centerIndex + 1 && !feedSlotIsFullyBuffered(nextSlot)) {
       clearFeedSlot(nextSlot);
     }
+    session.pendingMedia = new Set(items.map(item => `${item.episodeId}:${item.quality}`));
     const statuses = await updateFeedPreloadWindow(session.current, items);
+    session.pendingMedia = null;
     if (!valid()) return;
     session.statuses = new Map((statuses || []).map(status => [`${status.episodeId}:${status.quality}`, status]));
     if (items.length && nextSlot && !nextSlot.preparing) {
@@ -1675,6 +1738,7 @@ async function runFeedWarmup(session) {
   } catch (err) {
     console.warn('feed preload scheduling failed:', err);
   } finally {
+    session.pendingMedia = null;
     session.running = false;
     if (valid()) {
       session.timer = setTimeout(() => runFeedWarmup(session), session.pending ? 250 : 1000);
@@ -1707,6 +1771,7 @@ const state = {
     pageRetryTimer: null,
     emptyFeedPages: 0,
     consecutiveSourceFailures: 0,
+    hasStartedPlayback: false,
     lastSwitchTime: 0,
     seriesId: '',
     seriesTitle: '',
@@ -3662,6 +3727,7 @@ async function loadFeed(reset = false, channel = '', forceRefresh = false) {
 
 function ensureFeedItemsAhead(minAhead = 8) {
   if (state.currentView !== 'recommend' || !state.feed.hasMore || state.feed.loading) return;
+  if (state.feed.items.length && !feedVideoHasFirstFrame(getFeedVideo())) return;
   const remaining = state.feed.items.length - (state.feed.index + 1);
   if (remaining >= minAhead) return;
   const loadPage = () => {
@@ -3728,16 +3794,32 @@ function activateFeedDrama(drama, itemIndex, slot = null) {
   updateFeedCommentCount(state.feed.commentCount);
 }
 
+function requestFeedDramaMetadata(slot) {
+  if (!slot || slot.metadataRequested || state.currentView !== 'recommend' ||
+      feedSlots[feedSlotCurr] !== slot || !feedVideoHasFirstFrame(slot.video)) return;
+  const drama = state.feed.items[slot.itemIndex];
+  if (!drama || drama.id !== slot.seriesId) return;
+  if (!state.feed.hasStartedPlayback) {
+    state.feed.hasStartedPlayback = true;
+    recordFeedPlaybackMetric(slot.itemIndex, 'startup');
+  }
+  slot.metadataRequested = true;
+  const loadToken = slot.loadToken;
+  Promise.resolve(loadFeedDramaMetadata(drama)).then(loaded => {
+    if (!loaded && slot.loadToken === loadToken) slot.metadataRequested = false;
+  });
+}
+
 function loadFeedDramaMetadata(drama) {
-  if (!drama) return;
+  if (!drama) return Promise.resolve(false);
   apiCall('IsFavorite', drama.id).then(isFavorite => {
     if (state.feed.seriesId !== drama.id) return;
     state.feed.isFavorite = Boolean(isFavorite);
     document.getElementById('feed-fav')?.classList.toggle('active', Boolean(isFavorite));
   }).catch(() => {});
 
-  apiCall('GetSeriesDetail', drama.id).then(detail => {
-    if (!detail || detail.id !== state.feed.seriesId) return;
+  return apiCall('GetSeriesDetail', drama.id).then(detail => {
+    if (!detail || detail.id !== state.feed.seriesId) return false;
     const episodes = detail.episodes || [];
     const totalEpisodes = detail.episodeCount || episodes.length || 1;
     const currentSlot = feedSlots[feedSlotCurr];
@@ -3755,7 +3837,8 @@ function loadFeedDramaMetadata(drama) {
     if (currentSlot?.seriesId === drama.id) currentSlot.commentCount = state.feed.commentCount;
     updateFeedCommentCount(state.feed.commentCount);
     renderFeedPlaylistDrawer();
-  }).catch(() => {});
+    return true;
+  }).catch(() => false);
 }
 
 async function playFeedIndex(idx, resumeAt = null) {
@@ -3765,7 +3848,6 @@ async function playFeedIndex(idx, resumeAt = null) {
 
   const currentSlot = feedSlots[feedSlotCurr];
   activateFeedDrama(drama, idx, currentSlot?.itemIndex === idx ? currentSlot : null);
-  loadFeedDramaMetadata(drama);
 
   if (state.currentView !== 'recommend') return;
 
@@ -4145,8 +4227,8 @@ function switchFeedDrama(dir) {
   if ((!targetReadyBeforeMove || !feedVideoHasFirstFrame(targetSlot.video)) && targetWaitMs < targetStartupDeadline) {
     // Give an imminent first frame a short head start while current playback
     // continues. A stalled offscreen decoder must not block navigation.
-    prepareFeedTargetForSwitch(targetSlot, targetIdx, requestedTargetQuality);
     schedulePendingFeedSwitch(dir);
+    prepareFeedTargetForSwitch(targetSlot, targetIdx, requestedTargetQuality);
     return;
   }
 
@@ -4178,7 +4260,6 @@ function switchFeedDrama(dir) {
   const targetBuffered = Boolean(targetReady && feedVideoHasPlaybackBuffer(targetSlot.video));
   activateFeedDrama(targetDrama, targetIdx, targetReady ? targetSlot : null);
   if (targetReady) prepareFeedStartPosition(targetSlot, dir);
-  loadFeedDramaMetadata(targetDrama);
   setActiveFeedSlot(targetSlot);
   if (targetReady && (feedVideoHasFirstFrame(targetSlot.video) || feedVideoHasPlaybackBuffer(targetSlot.video))) {
     state.feed.consecutiveSourceFailures = 0;

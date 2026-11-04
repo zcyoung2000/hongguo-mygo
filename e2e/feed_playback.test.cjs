@@ -15,7 +15,7 @@ function harness() {
     window: { location: { href: 'http://localhost/' } },
     document: { getElementById: () => null },
     HTMLMediaElement: { HAVE_CURRENT_DATA: 2, HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4 },
-    feedPlaybackGeneration: 0, feedPlayToken: 0, feedPlayPromise: null,
+    feedPlaybackGeneration: 0, feedPlayToken: 0, feedPlayPromise: null, feedWarmupSession: null,
     feedSlots: [], feedSlotCurr: 0, feedActiveVideo: null,
     state: {
       currentView: 'recommend',
@@ -29,6 +29,8 @@ function harness() {
     syncActiveFeedSlot: () => {}, assessFeedMediaCapabilities: () => {},
     scheduleFeedFrameMetric: () => {}, scheduleFeedAutoplayRetry: () => {},
     scheduleFeedWarmup: () => {}, clearFeedFailureHint: () => {},
+    ensureFeedItemsAhead() {}, loadFeedDramaMetadata: () => Promise.resolve(true),
+    recordFeedPlaybackMetric() {},
     showFeedSkeleton: () => {}, reportFeedFailure: () => {},
     clearFeedSlot: slot => {
       slot.loadToken = (slot.loadToken || 0) + 1;
@@ -41,8 +43,9 @@ function harness() {
     'feedAssetKey', 'feedPlaybackKey', 'rememberFeedPlayback', 'normalizeFeedMediaURL',
     'feedSlotMatches', 'feedVideoHasFirstFrame', 'feedSlotForVideo', 'feedMediaDuration',
     'feedQualityForItem', 'rememberFeedQuality', 'feedSlotIsFullyBuffered',
-    'primeFeedSlotFirstFrame',
-    'prefetchFeedPlaybackInfo', 'prepareFeedSlot', 'beginFeedPlayback',
+    'primeFeedSlotFirstFrame', 'scheduleFeedFrameMetric',
+    'requestFeedDramaMetadata', 'playFeedIndex',
+    'prefetchFeedPlaybackInfo', 'assignFeedMediaSource', 'hasWarmFeedHLS', 'prepareFeedSlot', 'beginFeedPlayback',
     'ensureFeedSource',
     'playbackBufferedRange', 'updatePlaybackBufferIndicator'
   ]) {
@@ -93,6 +96,133 @@ test('metadata prefetch and foreground preparation share a single IPC load', asy
   assert.equal(slot.video.src, 'http://localhost/hls/index.m3u8');
   assert.ok(slot.video.playCount > 0, 'play must be requested before loadeddata exists');
   assert.equal(slot.video.readyState, 0, 'test must not simulate a completed download');
+});
+
+test('cold-start playback gets the first frame before requesting series decorations', async () => {
+  const c = harness();
+  const slot = videoSlot();
+  c.feedSlots = [slot];
+  const calls = [];
+  c.activateFeedDrama = drama => { c.state.feed.seriesId = drama.id; };
+  c.loadFeedDramaMetadata = drama => { calls.push(['detail', drama.id]); return Promise.resolve(true); };
+  c.apiCall = (...args) => { calls.push(args); return Promise.resolve(playback()); };
+  await c.playFeedIndex(0);
+  assert.deepEqual(calls.map(call => call[0]), ['PlayEpisode']);
+  Object.assign(slot.video, { readyState: 3, videoWidth: 320, duration: 60 });
+  slot.video.onloadeddata();
+  slot.video.onplaying();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.map(call => call[0]), ['PlayEpisode', 'detail']);
+});
+
+test('the initial uncached video opens progressive fragments through MSE and reuses its blob decoder', async () => {
+  const c = harness();
+  const sources = [];
+  c.window.ProgressiveMediaSource = class {
+    static isSupported() { return true; }
+    constructor(video, url, options) {
+      this.url = url; this.objectURL = 'blob:cold-video'; this.options = options;
+      video.src = this.objectURL; video.load(); sources.push(this);
+    }
+    dispose() { this.disposed = true; }
+  };
+  c.apiCall = () => Promise.resolve(playback());
+  const slot = videoSlot();
+  c.feedSlots = [slot];
+  await c.prepareFeedSlot(slot, 0, true);
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].url, playback().progressiveStreamUrl);
+  assert.equal(slot.metricStreamMode, 'progressive');
+  const loads = slot.video.loadCount;
+  await c.prepareFeedSlot(slot, 0, true);
+  assert.equal(sources.length, 1);
+  assert.equal(slot.video.loadCount, loads, 'blob ownership must count as a matching resident source');
+  sources[0].options.onComplete();
+  assert.equal(slot.completeCached, true);
+  slot.video.onerror(new Error('unsupported configuration'));
+  assert.equal(sources[0].disposed, true);
+  assert.equal(slot.video.src, playback().hlsStreamUrl, 'a failed MSE source retains native HLS fallback');
+});
+
+test('completed or preloaded HLS keeps the existing rendition on the first play', async () => {
+  const c = harness();
+  c.window.ProgressiveMediaSource = class { static isSupported() { return true; } };
+  c.apiCall = () => Promise.resolve({ ...playback(), isHlsCached: true });
+  const slot = videoSlot();
+  c.feedSlots = [slot];
+  await c.prepareFeedSlot(slot, 0, true);
+  assert.equal(slot.video.src, playback().hlsStreamUrl);
+  assert.equal(slot.completeCached, true);
+});
+
+test('later cold videos and an explicit pending swipe can use fragments without waiting for HLS', async () => {
+  for (const autoPlay of [true, false]) {
+    const c = harness();
+    c.state.feed.index = 0;
+    c.state.feed.hasStartedPlayback = true;
+    vm.runInContext('feedSwitchWaitDir = 1', c);
+    c.window.ProgressiveMediaSource = class {
+      static isSupported() { return true; }
+      constructor(video, url) { this.url = url; this.objectURL = 'blob:next-cold'; video.src = this.objectURL; }
+    };
+    c.apiCall = () => Promise.resolve(playback());
+    const slot = videoSlot();
+    c.feedSlots = [slot];
+    await c.prepareFeedSlot(slot, 1, autoPlay);
+    assert.equal(slot.video.src, 'blob:next-cold');
+    assert.equal(slot.progressiveMedia.url, playback().progressiveStreamUrl);
+  }
+});
+
+test('active and in-flight HLS admission retain one transport instead of starting a duplicate MP4', async () => {
+  for (const pending of [true, false]) {
+    const c = harness();
+    c.window.ProgressiveMediaSource = class {
+      static isSupported() { return true; }
+      constructor() { throw new Error('must reuse the admitted HLS download'); }
+    };
+    const key = 'episode-a:720p';
+    c.feedWarmupSession = {
+      statuses: new Map(pending ? [] : [[key, { active: true }]]),
+      pendingMedia: new Set(pending ? [key] : [])
+    };
+    c.apiCall = () => Promise.resolve(playback());
+    const slot = videoSlot();
+    c.feedSlots = [slot];
+    await c.prepareFeedSlot(slot, 0, true);
+    assert.equal(slot.video.src, playback().hlsStreamUrl);
+    assert.equal(slot.progressiveMedia, null);
+  }
+});
+
+test('a streaming duration can still restore an authentic saved position', async () => {
+  const c = harness();
+  c.apiCall = () => Promise.resolve({ ...playback(), lastPosition: 20 });
+  const slot = videoSlot();
+  slot.video.duration = Infinity;
+  c.feedSlots = [slot];
+  await c.prepareFeedSlot(slot, 0, true);
+  Object.assign(slot.video, { readyState: 3, videoWidth: 320 });
+  slot.video.onloadeddata();
+  assert.equal(slot.video.currentTime, 20);
+});
+
+test('later rendered frames cannot inflate the measured cold-start time', () => {
+  const c = harness();
+  let now = 200;
+  c.performance = { now: () => now };
+  c.feedVideoHasPlaybackBuffer = () => true;
+  const callbacks = [];
+  const slot = videoSlot();
+  slot.metricPreparedAt = 100;
+  Object.assign(slot.video, { src: 'blob:playing', readyState: 3, videoWidth: 320,
+    requestVideoFrameCallback: callback => callbacks.push(callback) });
+  c.scheduleFeedFrameMetric(slot);
+  callbacks.shift()();
+  assert.equal(slot.metricFirstFrameAt, 200);
+  now = 1200;
+  callbacks.shift()();
+  assert.equal(slot.metricFirstFrameAt, 200);
 });
 
 test('activating a warm source with no first frame preserves its URL and decoder', async () => {
