@@ -1,14 +1,30 @@
 package mediautil
 
 import (
+	"crypto/md5"
 	"encoding/base64"
+	"encoding/hex"
 	"net/url"
+	"path/filepath"
 	"strings"
 
 	"github.com/beilunyang/openhongguo/sdk"
 )
 
 const DefaultVideoQuality = "720p"
+
+// ImageCacheKey is shared by the image proxy and native artwork lookup.
+func ImageCacheKey(raw string) string {
+	hash := md5.Sum([]byte(NormalizeImageURL(raw)))
+	return hex.EncodeToString(hash[:])
+}
+
+func ImageCachePath(cacheDir, raw string) string {
+	if cacheDir == "" || NormalizeImageURL(raw) == "" {
+		return ""
+	}
+	return filepath.Join(cacheDir, "images", ImageCacheKey(raw)+".jpg")
+}
 
 var videoQualities = []string{"1080p", "720p", "540p", "480p", "360p"}
 

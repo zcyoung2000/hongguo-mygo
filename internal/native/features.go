@@ -1,15 +1,14 @@
 package native
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/egoist/mygo"
+	"myguo/internal/mediautil"
 )
 
 type MediaCommandPayload struct {
@@ -242,6 +241,15 @@ func emitNavigate(view, seriesID string) {
 	})
 }
 
+func cachedArtwork(cacheDir, coverURL string) []byte {
+	path := mediautil.ImageCachePath(cacheDir, coverURL)
+	if path == "" {
+		return nil
+	}
+	data, _ := os.ReadFile(path)
+	return data
+}
+
 func UpdateNowPlaying(cacheDir string, args UpdateNowPlayingArgs) {
 	nowPlayingMu.Lock()
 	defer nowPlayingMu.Unlock()
@@ -266,14 +274,7 @@ func UpdateNowPlaying(cacheDir string, args UpdateNowPlayingArgs) {
 		}
 	}
 
-	var artworkBytes []byte
-	if args.CoverURL != "" && cacheDir != "" {
-		hexHash := fmt.Sprintf("%x", sha256.Sum256([]byte(args.CoverURL)))
-		coverPath := filepath.Join(cacheDir, "images", hexHash+".jpg")
-		if data, err := os.ReadFile(coverPath); err == nil && len(data) > 0 {
-			artworkBytes = data
-		}
-	}
+	artworkBytes := cachedArtwork(cacheDir, args.CoverURL)
 
 	dur := time.Duration(args.Duration * float64(time.Second))
 	pos := time.Duration(args.Position * float64(time.Second))
