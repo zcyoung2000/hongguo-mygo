@@ -4157,6 +4157,39 @@ body.comments-open .video-container > video {
   min-width: 0;
 }
 
+#detail-seasons-section,
+#detail-adapted-section {
+  padding-top: 16px;
+}
+
+#detail-seasons-section .detail-section-heading,
+#detail-adapted-section .detail-section-heading {
+  margin-bottom: 18px;
+}
+
+#detail-seasons-section .detail-section-title,
+#detail-adapted-section .detail-section-title {
+  margin-bottom: 0;
+}
+
+#detail-seasons-grid,
+#detail-adapted-grid {
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: clamp(160px, 18vw, 200px);
+  gap: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: x proximity;
+  padding-bottom: 12px;
+}
+
+#detail-seasons-grid > .drama-card,
+#detail-adapted-grid > .drama-card {
+  scroll-snap-align: start;
+}
+
 .detail-inline-loader {
   grid-column: 1 / -1;
   display: grid;
