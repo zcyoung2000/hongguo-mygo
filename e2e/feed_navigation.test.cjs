@@ -15,7 +15,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function harness() {
   let now = 10000, nextTimer = 0;
-  const timers = new Map(), moves = [], hints = [], loads = [];
+  const timers = new Map(), moves = [], hints = [], loads = [], traces = [];
   class Clock extends Date { static now() { return now; } }
   const layer = () => ({ style: {}, classList: { add() {}, remove() {} } });
   const slots = [0, 1, -1].map((index, id) => ({
@@ -38,6 +38,7 @@ function harness() {
     HTMLMediaElement: { HAVE_CURRENT_DATA: 2 },
     commentState: { open: false }, nativeFeedScrollReady: false,
     feedLastFallbackScrollAt: -Infinity, feedScrollCaptureSync: null,
+    feedInputSequence: 0, feedLastRepeatAt: -Infinity,
     feedSlots: slots, feedSlotCurr: 0, feedSlotNext: 1, feedSlotPrev: 2, feedPlayToken: 1,
     state: { currentView: 'recommend', feed: {
       index: 0, lastSwitchTime: 0, items: [0, 1, 2, 3].map(i => ({ id: `series-${i}` })),
@@ -45,6 +46,7 @@ function harness() {
     } },
     feedDesiredQuality: () => '720p',
     showFeedHint: text => hints.push(text), persistFeedProgress() {},
+    updateFeedPlayIndicator() {}, recordFeedDiagnostic: (event, details) => traces.push({event, ...details}),
     prepareFeedStartPosition() {}, loadFeedDramaMetadata() {}, hideFeedPosterImmediately() {},
     ensureFeedItemsAhead() {}, scheduleFeedWarmup() {}, scheduleFeedAutoplayRetry() {},
     updateFeedDramaInfo() {}, recordFeedSwitchMetric() {}, scheduleFeedRecoveryAdvance() {},
@@ -81,7 +83,7 @@ function harness() {
     now = end;
     await flush();
   }
-  return { c, slots, moves, hints, loads, advance };
+  return { c, slots, moves, hints, loads, advance, traces };
 }
 
 test('a decoder without a first frame cannot reset the navigation deadline forever', async () => {
@@ -116,6 +118,60 @@ test('animation retains one downward intent and coalesces key repeats', async ()
   assert.deepEqual(moves, ['series-1', 'series-2']);
 });
 
+test('independent down-arrow presses survive the first-frame wait and keep their input IDs', async () => {
+  const { c, slots, moves, advance, traces } = harness();
+  slots[1].ready = false;
+  slots[1].video.readyState = 0;
+  c.requestFeedSwitch(1, 'keyboard', false);
+  await advance(150);
+  c.requestFeedSwitch(1, 'keyboard', false);
+  await advance(1800);
+  assert.deepEqual(moves, ['series-1', 'series-2']);
+  const complete = traces.filter(row => row.event === 'navigation-complete');
+  assert.deepEqual(complete.map(row => row.inputId), [1, 2]);
+  assert.ok(complete[0].durationMs >= 670, 'input latency includes first-frame waiting and animation');
+});
+
+test('three distinct keys remain distinct while held-key repeats remain bounded', async () => {
+  const { c, moves, advance } = harness();
+  c.requestFeedSwitch(1, 'keyboard', false);
+  await advance(100);
+  c.requestFeedSwitch(1, 'keyboard', false);
+  c.requestFeedSwitch(1, 'keyboard', false);
+  await advance(2000);
+  assert.deepEqual(moves, ['series-1', 'series-2', 'series-3']);
+});
+
+test('a cold-target hold coalesces repeats and cancellation cannot replay them later', async () => {
+  const { c, slots, moves, advance } = harness();
+  slots[1].ready = false;
+  slots[1].video.readyState = 0;
+  c.requestFeedSwitch(1, 'keyboard', false);
+  for (let n = 0; n < 20; n++) c.requestFeedSwitch(1, 'keyboard', true);
+  await advance(2000);
+  assert.deepEqual(moves, ['series-1', 'series-2']);
+  c.requestFeedSwitch(1, 'keyboard', false);
+  c.cancelPendingFeedSwitch();
+  c.state.currentView = 'history';
+  await advance(1000);
+  assert.equal(moves.length, 2);
+});
+
+test('catalog boundary waits log their cause and complete a queued key after the page arrives', async () => {
+  const { c, moves, advance, traces } = harness();
+  c.state.feed.items.length = 1;
+  c.state.feed.hasMore = true;
+  c.state.feed.loading = true;
+  c.requestFeedSwitch(1, 'keyboard', false);
+  await advance(300);
+  c.requestFeedSwitch(1, 'keyboard', false);
+  assert.ok(traces.some(row => row.event === 'navigation-wait' && row.reason === 'catalog-page'));
+  c.state.feed.items.push({ id: 'series-1' }, { id: 'series-2' });
+  c.state.feed.loading = false;
+  await advance(1500);
+  assert.deepEqual(moves, ['series-1', 'series-2']);
+});
+
 test('the latest opposite direction replaces an intent queued during animation', async () => {
   const { c, advance, moves } = harness();
   c.switchFeedDrama(1);
@@ -124,6 +180,18 @@ test('the latest opposite direction replaces an intent queued during animation',
   c.switchFeedDrama(-1);
   await advance(700);
   assert.deepEqual(moves, ['series-1', 'series-0']);
+});
+
+test('a reversed queued key records why the original input will not complete', async () => {
+  const { c, moves, advance, traces } = harness();
+  c.requestFeedSwitch(1, 'keyboard', false);
+  await advance(100);
+  c.requestFeedSwitch(1, 'keyboard', false);
+  c.requestFeedSwitch(-1, 'keyboard', false);
+  await advance(1500);
+  assert.deepEqual(moves, ['series-1', 'series-0']);
+  assert.ok(traces.some(row => row.event === 'navigation-cancelled' && row.inputId === 2 && row.reason === 'direction-changed'));
+  assert.deepEqual(traces.filter(row => row.event === 'navigation-complete').map(row => row.inputId), [1, 3]);
 });
 
 test('a page-boundary load continues the original navigation without swallowing it', async () => {

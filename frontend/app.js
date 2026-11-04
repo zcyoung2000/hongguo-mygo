@@ -279,6 +279,10 @@ let feedTimeSyncHandleType = '';
 let feedTimeSyncVideo = null;
 let feedTimeSyncLastAt = 0;
 let feedTimeSyncGeneration = 0;
+let feedBufferingTimer = null;
+let feedInputSequence = 0;
+let feedLastRepeatAt = -Infinity;
+const feedDiagnosticSession = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 function updateFeedPlayButtonState(video = null) {
   const feedVideo = video || getFeedVideo();
@@ -422,6 +426,8 @@ function initFeedVideoPool() {
       durationSec: 0,
       metadataDurationSec: 0,
       completeCached: false,
+      mediaWaiting: false,
+      failed: false,
       metadataRequested: false,
       progressiveMedia: null,
       fullStreamUrl: '',
@@ -476,23 +482,36 @@ function attachFeedVideoMetrics(slot) {
     if (slot.metricPreparedAt && !slot.metricFirstFrameAt) {
       slot.metricFirstFrameAt = performance.now();
       slot.metricFirstFrameSource = 'loaded-data';
+      recordFeedDiagnostic('media-data-ready', { toIndex: slot.itemIndex }, slot);
     }
   });
   ['canplay', 'canplaythrough', 'loadeddata', 'progress'].forEach(event => {
     slot.video.addEventListener(event, () => {
       if (slot.metricPreparedAt && !slot.metricReadyAt && feedVideoHasPlaybackBuffer(slot.video)) {
         slot.metricReadyAt = performance.now();
+        recordFeedDiagnostic('media-buffer-ready', { toIndex: slot.itemIndex }, slot);
       }
     });
   });
   slot.video.addEventListener('waiting', () => {
+    const wasWaiting = slot.mediaWaiting;
+    slot.mediaWaiting = true;
+    if (!wasWaiting && feedSlots[feedSlotCurr] === slot) recordFeedDiagnostic('media-waiting');
     if (!slot.metricPreparedAt || slot.metricRebufferStartedAt) return;
     if (slot.isPriming) return;
     slot.metricRebufferStartedAt = performance.now();
   });
   slot.video.addEventListener('playing', () => {
+    if (slot.mediaWaiting && slot.metricPlayingAt && feedSlots[feedSlotCurr] === slot) {
+      recordFeedDiagnostic('media-resumed');
+    }
+    slot.mediaWaiting = false;
     if (!slot.metricPreparedAt) return;
     if (!slot.metricFirstFrameAt) slot.metricFirstFrameAt = performance.now();
+    if (!slot.metricPlayingAt) {
+      slot.metricPlayingAt = performance.now();
+      recordFeedDiagnostic('media-playing', { toIndex: slot.itemIndex }, slot);
+    }
     if (slot.metricRebufferStartedAt) {
       slot.metricRebufferMS += Math.max(0, performance.now() - slot.metricRebufferStartedAt);
       slot.metricRebufferStartedAt = 0;
@@ -599,6 +618,10 @@ function scheduleFeedFrameMetric(slot) {
     if (!slot.metricFirstFrameAt && feedVideoHasFirstFrame(slot.video)) {
       slot.metricFirstFrameAt = performance.now();
       slot.metricFirstFrameSource = 'rendered-frame';
+    }
+    if (!slot.metricRenderedAt && feedVideoHasFirstFrame(slot.video)) {
+      slot.metricRenderedAt = performance.now();
+      recordFeedDiagnostic('media-rendered', { toIndex: slot.itemIndex }, slot);
     }
     if (!slot.metricReadyAt && feedVideoHasPlaybackBuffer(slot.video)) {
       slot.metricReadyAt = performance.now();
@@ -733,6 +756,8 @@ function clearFeedSlot(slot) {
   slot.durationSec = 0;
   slot.metadataDurationSec = 0;
   slot.completeCached = false;
+  slot.mediaWaiting = false;
+  slot.failed = false;
   slot.metadataRequested = false;
   slot.streamUrl = '';
   slot.fullStreamUrl = '';
@@ -766,6 +791,8 @@ function clearFeedSlot(slot) {
   slot.metricPreparedAt = 0;
   slot.metricSourceAssignedAt = 0;
   slot.metricFirstFrameAt = 0;
+  slot.metricPlayingAt = 0;
+  slot.metricRenderedAt = 0;
   slot.metricFirstFrameSource = '';
   slot.metricReadyAt = 0;
   slot.metricRebufferCount = 0;
@@ -921,8 +948,8 @@ function handleNativeFeedScroll(payload) {
   // gesture first. Hand ownership over without navigating twice.
   if (!wasReady && Date.now() - feedLastFallbackScrollAt < 300) return;
   const direction = String(payload?.direction || '').toLowerCase();
-  if (direction === 'down') switchFeedDrama(1);
-  if (direction === 'up') switchFeedDrama(-1);
+  if (direction === 'down') requestFeedSwitch(1, 'native-scroll');
+  if (direction === 'up') requestFeedSwitch(-1, 'native-scroll');
 }
 
 function resetFeedVideoPool() {
@@ -1113,7 +1140,8 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     if (primeFirstFrame && !feedVideoHasFirstFrame(slot.video) && !slot.firstFramePriming) {
       slot.firstFramePriming = primeFeedSlotFirstFrame(slot);
     }
-    if (autoPlay && state.currentView === 'recommend' && !state.feed.userPaused) {
+    if (autoPlay && state.currentView === 'recommend' && !state.feed.userPaused &&
+        feedSlots[feedSlotCurr] === slot && slot.video.paused !== false) {
       beginFeedPlayback(slot.video, feedPlayToken);
     }
     return null;
@@ -1134,6 +1162,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     slot.poster.style.backgroundImage = safeImageCSS(drama.coverUrl);
     slot.poster.classList.remove('hidden');
   }
+  if (feedSlots[feedSlotCurr] === slot) updateFeedPlayIndicator();
 
   const loadPlayback = async () => {
     // Metadata prefetch and the visible slot share one load. Warm slots keep
@@ -1162,7 +1191,8 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     slot.hlsStreamUrl = pb.hlsStreamUrl || '';
     slot.streamUrl = pb.hlsStreamUrl || pb.streamUrl;
     if (pb.isFullCached) slot.streamUrl = slot.fullStreamUrl;
-    const foreground = autoPlay || (feedSwitchWaitDir && itemIndex === state.feed.index + feedSwitchWaitDir);
+    const foreground = (state.currentView === 'recommend' && feedSlots[feedSlotCurr] === slot && state.feed.index === itemIndex) ||
+      (feedSwitchWaitDir && itemIndex === state.feed.index + feedSwitchWaitDir);
     const progressive = foreground && !pb.isFullCached && !hasWarmFeedHLS(pb) && pb.progressiveStreamUrl &&
       window.ProgressiveMediaSource?.isSupported();
     if (progressive) slot.streamUrl = pb.progressiveStreamUrl;
@@ -1180,6 +1210,8 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     slot.metricStreamMode = pb.isFullCached
       ? 'full-cache'
       : (slot.usedHLSFallback ? 'hls' : 'progressive');
+    recordFeedDiagnostic('source-selected', { reason: foreground ? 'foreground' : 'preload',
+      toIndex: itemIndex }, slot);
     slot.preparedAt = Date.now();
     slot.expiresAt = slot.preparedAt + 10 * 60 * 1000;
     syncActiveFeedSlot(slot, pb);
@@ -1198,13 +1230,12 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
       clearFeedFailureHint(slot);
       if (slot.poster) slot.poster.classList.add('hidden');
       showFeedSkeleton(false);
-      const loader = document.getElementById('feed-loader');
-      if (loader && feedSlots[feedSlotCurr] === slot) loader.style.display = 'none';
+      if (feedSlots[feedSlotCurr] === slot) updateFeedPlayIndicator();
       const duration = feedMediaDuration(slot.video);
       if (shouldRestore && duration > 0) {
         slot.video.currentTime = Math.min(restorePosition, duration - 0.5);
       }
-      if (autoPlay && state.currentView === 'recommend' && !state.feed.userPaused && feedSlots[feedSlotCurr] === slot) {
+      if (state.currentView === 'recommend' && !state.feed.userPaused && feedSlots[feedSlotCurr] === slot) {
         beginFeedPlayback(slot.video, feedPlayToken);
         scheduleFeedAutoplayRetry(slot);
       }
@@ -1231,8 +1262,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
       clearFeedFailureHint(slot);
       if (slot.poster) slot.poster.classList.add('hidden');
       showFeedSkeleton(false);
-      const loader = document.getElementById('feed-loader');
-      if (loader && feedSlots[feedSlotCurr] === slot) loader.style.display = 'none';
+      if (feedSlots[feedSlotCurr] === slot) updateFeedPlayIndicator();
     };
     slot.video.onerror = event => {
       if (loadToken !== slot.loadToken) return;
@@ -1253,7 +1283,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
           if (resumePosition > 0 && Number.isFinite(slot.video.duration)) {
             slot.video.currentTime = Math.min(resumePosition, slot.video.duration - 0.5);
           }
-          if (autoPlay && state.currentView === 'recommend' && !state.feed.userPaused && feedSlots[feedSlotCurr] === slot) {
+          if (state.currentView === 'recommend' && !state.feed.userPaused && feedSlots[feedSlotCurr] === slot) {
             beginFeedPlayback(slot.video, feedPlayToken);
             scheduleFeedAutoplayRetry(slot);
           }
@@ -1295,7 +1325,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     }
     // WebKit may wait for play() before fetching/decoding. Waiting for
     // loadeddata before the first play() creates a cold-start deadlock.
-    if (autoPlay && state.currentView === 'recommend' && !state.feed.userPaused && feedSlots[feedSlotCurr] === slot) {
+    if (state.currentView === 'recommend' && !state.feed.userPaused && feedSlots[feedSlotCurr] === slot) {
       beginFeedPlayback(slot.video, feedPlayToken);
       scheduleFeedAutoplayRetry(slot);
       scheduleFeedWarmup(itemIndex);
@@ -1326,6 +1356,9 @@ function clearFeedFailureHint(slot) {
 }
 
 function reportFeedFailure(slot, text, delay = 3000) {
+  if (slot) slot.failed = true;
+  recordFeedDiagnostic('media-failure', { reason: 'source-unavailable' }, slot);
+  updateFeedPlayIndicator();
   if (!slot) return;
   clearFeedFailureHint(slot);
   const loadToken = slot.loadToken;
@@ -1395,6 +1428,7 @@ function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true, quality = feedQua
     });
   }
 
+  const requestedAt = performance.now();
   const load = apiCall('PlayEpisode', drama.id, '', 1, quality, preferHLS)
     .then(playback => {
       if (generation !== feedPlaybackGeneration) return null;
@@ -1406,6 +1440,8 @@ function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true, quality = feedQua
       return playback;
     })
     .catch(err => {
+      recordFeedDiagnostic('playback-info-failed', { toIndex: itemIndex,
+        durationMs: Math.round(performance.now() - requestedAt), reason: 'request-failed' });
       console.warn('feed playback info prefetch failed:', drama.id, err);
       return null;
     })
@@ -1471,9 +1507,7 @@ function recordFeedSwitchMetric(fromIndex, toIndex, bufferedAtSwitch, durationMs
   };
   feedSwitchMetrics.push(metric);
   if (feedSwitchMetrics.length > 100) feedSwitchMetrics.shift();
-  feedMetricQueue.push(metric);
-  if (feedMetricQueue.length > 32) feedMetricQueue.splice(0, feedMetricQueue.length - 32);
-  scheduleFeedMetricFlush();
+  enqueueFeedMetric(metric);
   console.debug('[feed-metric]', metric);
   setTimeout(() => recordFeedPlaybackMetric(metric.toIndex), 5000);
 }
@@ -1518,8 +1552,38 @@ function recordFeedPlaybackMetric(itemIndex, type = 'playback-sample') {
     quality: slot.quality || state.feed.quality,
     at: new Date().toISOString()
   };
+  enqueueFeedMetric(metric);
+}
+
+function recordFeedDiagnostic(event, details = {}, slot = feedSlots[feedSlotCurr]) {
+  // Diagnostics must never interrupt playback or consume a navigation input.
+  try {
+    const video = slot?.video;
+    const metric = {
+      type: 'diagnostic', event, sessionId: feedDiagnosticSession,
+      fromIndex: state.feed.index, toIndex: slot?.itemIndex ?? state.feed.index,
+      readyState: video?.readyState || 0, bufferedSec: feedVideoBufferAhead(video),
+      pageLoading: Boolean(state.feed.loading), itemCount: state.feed.items.length,
+      streamMode: slot?.metricStreamMode || '', quality: slot?.quality || '',
+      seriesId: slot?.seriesId || '', episodeId: slot?.episodeId || '',
+      slotId: slot?.id ?? -1, loadToken: slot?.loadToken || 0,
+      sincePageMs: Math.round(performance.now()),
+      playingMs: slot?.metricPlayingAt ? Math.round(slot.metricPlayingAt - slot.metricPreparedAt) : 0,
+      renderedMs: slot?.metricRenderedAt ? Math.round(slot.metricRenderedAt - slot.metricPreparedAt) : 0,
+      playbackInfoMs: slot?.metricSourceAssignedAt ? Math.round(slot.metricSourceAssignedAt - slot.metricPreparedAt) : 0,
+      timeToFirstFrameMs: slot?.metricFirstFrameAt ? Math.round(slot.metricFirstFrameAt - slot.metricPreparedAt) : 0,
+      switchReadyMs: slot?.metricReadyAt ? Math.round(slot.metricReadyAt - slot.metricPreparedAt) : 0,
+      ...details, at: new Date().toISOString()
+    };
+    enqueueFeedMetric(metric);
+  } catch (_) { /* Best effort during media/DOM teardown. */ }
+}
+
+function enqueueFeedMetric(metric) {
   feedMetricQueue.push(metric);
-  scheduleFeedMetricFlush();
+  if (feedMetricQueue.length > 128) feedMetricQueue.splice(0, feedMetricQueue.length - 128);
+  if (feedMetricQueue.length >= 24 && !feedMetricFlushInFlight) void flushFeedMetrics();
+  else scheduleFeedMetricFlush();
 }
 
 function scheduleFeedMetricFlush() {
@@ -1545,6 +1609,7 @@ async function flushFeedMetrics() {
     scheduleFeedMetricFlush();
   } finally {
     feedMetricFlushInFlight = false;
+    if (feedMetricQueue.length) scheduleFeedMetricFlush();
   }
 }
 
@@ -1557,6 +1622,12 @@ window.addEventListener('beforeunload', () => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') flushFeedMetrics();
 });
+window.addEventListener('error', event => {
+  recordFeedDiagnostic('frontend-error', { reason: `${event.error?.name || 'Error'}:line-${event.lineno || 0}` });
+});
+window.addEventListener('unhandledrejection', event => {
+  recordFeedDiagnostic('frontend-rejection', { reason: String(event.reason?.name || 'Error').slice(0, 40) });
+});
 
 async function refreshFeedNetworkDiagnostics() {
   try {
@@ -1568,11 +1639,12 @@ async function refreshFeedNetworkDiagnostics() {
 }
 
 function feedVideoBufferAhead(video) {
-  if (!video?.src) return 0;
+  const ranges = video?.buffered;
+  if (!video?.src || !ranges) return 0;
   const position = video.currentTime || 0;
-  for (let i = 0; i < video.buffered.length; i++) {
-    if (video.buffered.start(i) <= position && video.buffered.end(i) >= position) {
-      return Math.max(0, video.buffered.end(i) - position);
+  for (let i = 0; i < ranges.length; i++) {
+    if (ranges.start(i) <= position && ranges.end(i) >= position) {
+      return Math.max(0, ranges.end(i) - position);
     }
   }
   return 0;
@@ -2169,6 +2241,7 @@ function initNativeBridgeEvents() {
 // ==========================================================================
 
 document.addEventListener('DOMContentLoaded', () => {
+  recordFeedDiagnostic('page-ready');
   initNativeBridgeEvents();
   initNavigation();
   initSearch();
@@ -3653,6 +3726,8 @@ async function loadRecommend() {
 async function loadFeed(reset = false, channel = '', forceRefresh = false) {
   if (!reset && state.feed.loading) return;
   const requestToken = ++feedRequestToken;
+  const requestedAt = performance.now();
+  recordFeedDiagnostic('catalog-request', { reason: reset ? 'initial' : 'fill' });
   state.feed.loading = true;
   if (state.feed.pageRetryTimer) {
     clearTimeout(state.feed.pageRetryTimer);
@@ -3683,6 +3758,8 @@ async function loadFeed(reset = false, channel = '', forceRefresh = false) {
     const queryCursor = forceRefresh ? 'refresh' : (reset ? '' : state.feed.cursor);
     const method = reset ? 'GetRecommendFeed' : 'GetRecommendFeedBatch';
     const res = await apiCall(method, state.feed.channel, queryCursor, reset ? 1 : 12);
+    recordFeedDiagnostic('catalog-response', { durationMs: Math.round(performance.now() - requestedAt),
+      itemCount: res?.items?.length || 0, reason: requestToken === feedRequestToken ? 'current' : 'stale' });
     if (requestToken !== feedRequestToken) return;
 
     if (!res || !res.items || res.items.length === 0) {
@@ -3720,6 +3797,7 @@ async function loadFeed(reset = false, channel = '', forceRefresh = false) {
       else state.feed.emptyFeedPages++;
     }
   } catch (err) {
+    recordFeedDiagnostic('catalog-failed', { durationMs: Math.round(performance.now() - requestedAt), reason: 'request-failed' });
     console.error('loadFeed error:', err);
     showFeedSkeleton(false);
     if (!reset) {
@@ -3730,8 +3808,7 @@ async function loadFeed(reset = false, channel = '', forceRefresh = false) {
   } finally {
     if (requestToken === feedRequestToken) {
       state.feed.loading = false;
-      const loader = document.getElementById('feed-loader');
-      if (loader) loader.style.display = 'none';
+      updateFeedPlayIndicator();
       ensureFeedItemsAhead();
     }
   }
@@ -4109,44 +4186,92 @@ let feedSwitchWaitTimer = null;
 let feedSwitchWaitDir = 0;
 let feedSwitchWaitStartedAt = 0;
 let feedSwitchWaitOrigin = -1;
+let feedSwitchWaitReason = '';
 let feedSwitchIntentGeneration = 0;
-let feedQueuedSwitchDir = 0;
+let feedQueuedSwitches = [];
 let feedQueuedSwitchTimer = null;
+let feedActiveSwitchRequest = null;
 let feedAnimationToken = 0;
 
-function cancelPendingFeedSwitch({ keepQueue = false } = {}) {
+function cancelPendingFeedSwitch({ keepQueue = false, reason = 'cancelled' } = {}) {
+  if (feedSwitchWaitDir) recordFeedDiagnostic('navigation-wait-end', {
+    reason, waitingMs: Date.now() - feedSwitchWaitStartedAt, inputId: feedActiveSwitchRequest?.id || 0 });
+  if (!keepQueue) {
+    for (const queued of feedQueuedSwitches) recordFeedDiagnostic('navigation-cancelled', {
+      reason, inputId: queued.request?.id || 0 });
+  }
   if (feedSwitchWaitTimer) clearTimeout(feedSwitchWaitTimer);
   feedSwitchWaitTimer = null;
   feedSwitchWaitDir = 0;
   feedSwitchWaitStartedAt = 0;
   feedSwitchWaitOrigin = -1;
+  feedSwitchWaitReason = '';
+  feedActiveSwitchRequest = null;
   feedSwitchIntentGeneration++;
   if (!keepQueue) {
     if (feedQueuedSwitchTimer) clearTimeout(feedQueuedSwitchTimer);
     feedQueuedSwitchTimer = null;
-    feedQueuedSwitchDir = 0;
+    feedQueuedSwitches = [];
   }
+  updateFeedPlayIndicator();
 }
 
-function queueFeedSwitch(dir) {
-  feedQueuedSwitchDir = dir;
-  if (feedQueuedSwitchTimer) clearTimeout(feedQueuedSwitchTimer);
-  const delay = Math.max(isFeedAnimating ? 16 : 0,
-    state.feed.lastSwitchTime + (isFeedAnimating ? 340 : 320) - Date.now());
+function queueFeedSwitch(dir, request = null) {
+  const last = feedQueuedSwitches.at(-1);
+  if (last && last.dir !== dir) {
+    for (const queued of feedQueuedSwitches) recordFeedDiagnostic('navigation-cancelled', {
+      reason: 'direction-changed', inputId: queued.request?.id || 0 });
+    feedQueuedSwitches = [];
+  }
+  const discrete = request?.source === 'keyboard' && !request.repeat;
+  if (discrete && feedQueuedSwitches.length >= 4) {
+    recordFeedDiagnostic('navigation-ignored', { inputId: request.id, reason: 'queue-full', queueDepth: 4 });
+    showFeedHint('正在切换，请稍候', false, 1000);
+    return;
+  }
+  if (discrete && feedQueuedSwitches.length < 4) feedQueuedSwitches.push({ dir, request });
+  else if (!discrete && !feedQueuedSwitches.length) feedQueuedSwitches.push({ dir, request });
+  recordFeedDiagnostic('navigation-queued', { inputId: request?.id || 0,
+    queueDepth: feedQueuedSwitches.length, reason: discrete ? 'key-press' : 'coalesced' });
+  drainFeedSwitchQueue();
+}
+
+function drainFeedSwitchQueue() {
+  if (!feedQueuedSwitches.length || feedQueuedSwitchTimer || isFeedAnimating || feedSwitchWaitDir) return;
+  const delay = Math.max(0, state.feed.lastSwitchTime + 320 - Date.now());
   feedQueuedSwitchTimer = setTimeout(() => {
     feedQueuedSwitchTimer = null;
-    const queued = feedQueuedSwitchDir;
-    feedQueuedSwitchDir = 0;
-    if (queued && shouldCaptureFeedScroll()) switchFeedDrama(queued);
+    if (!shouldCaptureFeedScroll()) {
+      cancelPendingFeedSwitch({ reason: 'scene-blocked' });
+      return;
+    }
+    const queued = feedQueuedSwitches.shift();
+    if (queued) switchFeedDrama(queued.dir, queued.request);
   }, delay);
 }
 
-function schedulePendingFeedSwitch(dir, delay = 50) {
+function requestFeedSwitch(dir, source = 'gesture', repeat = false) {
+  if (repeat && Date.now() - feedLastRepeatAt < 200) return;
+  if (repeat) feedLastRepeatAt = Date.now();
+  const request = { id: ++feedInputSequence, source, repeat, at: Date.now() };
+  recordFeedDiagnostic('navigation-input', { inputId: request.id, inputSource: source, repeat,
+    toIndex: state.feed.index + dir });
+  switchFeedDrama(dir, request);
+}
+
+function schedulePendingFeedSwitch(dir, delay = 50, reason = 'first-frame') {
   if (feedSwitchWaitDir !== dir || feedSwitchWaitOrigin !== state.feed.index) {
+    const request = feedActiveSwitchRequest;
     cancelPendingFeedSwitch({ keepQueue: true });
+    feedActiveSwitchRequest = request;
     feedSwitchWaitDir = dir;
     feedSwitchWaitOrigin = state.feed.index;
     feedSwitchWaitStartedAt = Date.now();
+  }
+  if (feedSwitchWaitReason !== reason) {
+    feedSwitchWaitReason = reason;
+    recordFeedDiagnostic('navigation-wait', { reason, inputId: feedActiveSwitchRequest?.id || 0 });
+    updateFeedPlayIndicator();
   }
   if (feedSwitchWaitTimer) return;
   const generation = feedSwitchIntentGeneration;
@@ -4173,11 +4298,17 @@ function prepareFeedTargetForSwitch(slot, itemIndex, quality) {
   });
 }
 
-function switchFeedDrama(dir) {
-  if (!shouldCaptureFeedScroll() || (dir !== 1 && dir !== -1)) return;
+function switchFeedDrama(dir, request = null) {
+  if (!shouldCaptureFeedScroll() || (dir !== 1 && dir !== -1)) {
+    if (request) recordFeedDiagnostic('navigation-ignored', { reason: 'scene-blocked', inputId: request.id });
+    return;
+  }
   const now = Date.now();
   if (feedSwitchWaitDir && (feedSwitchWaitDir !== dir || feedSwitchWaitOrigin !== state.feed.index)) {
-    cancelPendingFeedSwitch({ keepQueue: true });
+    cancelPendingFeedSwitch({ reason: 'direction-changed' });
+  } else if (feedSwitchWaitDir && request) {
+    queueFeedSwitch(dir, request);
+    return;
   }
   if (isFeedAnimating && now - state.feed.lastSwitchTime > 1000) {
     // The normal completion callback and watchdog above are defensive, but a
@@ -4187,9 +4318,10 @@ function switchFeedDrama(dir) {
     isFeedAnimating = false;
   }
   if (isFeedAnimating || now - state.feed.lastSwitchTime < 320) {
-    queueFeedSwitch(dir);
+    queueFeedSwitch(dir, request);
     return;
   }
+  if (request) feedActiveSwitchRequest = request;
 
   const targetIdx = state.feed.index + dir;
   if (targetIdx < 0) {
@@ -4200,10 +4332,10 @@ function switchFeedDrama(dir) {
   if (targetIdx >= state.feed.items.length) {
     if (state.feed.hasMore) {
       const switchOrigin = state.feed.index;
-      schedulePendingFeedSwitch(dir, 150);
+      schedulePendingFeedSwitch(dir, 150, 'catalog-page');
       const generation = feedSwitchIntentGeneration;
       if (now - feedSwitchWaitStartedAt > 10000) {
-        cancelPendingFeedSwitch();
+        cancelPendingFeedSwitch({ reason: 'catalog-timeout' });
         showFeedHint('加载较慢，请稍后重试', false, 1800);
         return;
       }
@@ -4253,12 +4385,14 @@ function switchFeedDrama(dir) {
     // registered, this watchdog still releases the carousel for the next swipe.
     console.warn('feed animation completion watchdog released a stuck switch');
     isFeedAnimating = false;
+    drainFeedSwitchQueue();
   }, 420);
   const switchStartedAt = performance.now();
   const fromIndex = state.feed.index;
+  const completedRequest = feedActiveSwitchRequest;
 
   persistFeedProgress();
-  cancelPendingFeedSwitch({ keepQueue: true });
+  cancelPendingFeedSwitch({ keepQueue: true, reason: 'committed' });
 
   if (dir > 0) {
     feedSlotPrev = oldCurrentSlot.id;
@@ -4351,12 +4485,15 @@ function switchFeedDrama(dir) {
 
       ensureFeedItemsAhead();
       recordFeedSwitchMetric(fromIndex, targetIdx, targetBuffered, performance.now() - switchStartedAt);
+      recordFeedDiagnostic('navigation-complete', { inputId: completedRequest?.id || 0,
+        inputSource: completedRequest?.source || 'automatic',
+        durationMs: completedRequest ? Date.now() - completedRequest.at : 0, fromIndex, toIndex: targetIdx });
     } catch (err) {
       // A metrics or DOM cleanup error must never leave the carousel locked.
       console.error('feed switch cleanup failed:', err);
     } finally {
       isFeedAnimating = false;
-      if (feedQueuedSwitchDir) queueFeedSwitch(feedQueuedSwitchDir);
+      drainFeedSwitchQueue();
     }
   }, duration);
 }
@@ -5219,8 +5356,30 @@ function updateFeedPlayIndicator() {
   const feedVideo = typeof getFeedVideo === 'function' ? getFeedVideo() : null;
   if (!centerPlay) return;
 
-  const isFeedBuffering = (loader && loader.style.display !== 'none') ||
-    (feedVideo && feedVideo.classList.contains('is-loading'));
+  const slot = feedSlotForVideo(feedVideo);
+  const isFeedBuffering = state.currentView === 'recommend' && !state.feed.userPaused &&
+    (Boolean(feedSwitchWaitReason) || (state.feed.items.length > 0 && feedVideo &&
+      !feedVideo.error && !slot?.failed && (!feedVideo.src || feedVideo.readyState < 3 || slot?.mediaWaiting)));
+
+  if (!isFeedBuffering) {
+    if (feedBufferingTimer) clearTimeout(feedBufferingTimer);
+    feedBufferingTimer = null;
+    if (loader) loader.style.display = 'none';
+  } else if (loader && loader.style.display === 'none' && !feedBufferingTimer) {
+    const index = state.feed.index;
+    feedBufferingTimer = setTimeout(() => {
+      feedBufferingTimer = null;
+      if (state.currentView === 'recommend' && state.feed.index === index && !state.feed.userPaused) {
+        loader.style.display = 'flex';
+      }
+      updateFeedPlayIndicator();
+    }, 200);
+  }
+  const label = feedSwitchWaitReason === 'catalog-page' ? '正在加载下一条推荐' :
+    (feedSwitchWaitReason ? '正在准备下一条视频' : '视频缓冲中');
+  loader?.setAttribute('aria-label', label);
+  const loaderText = document.getElementById('feed-loader-text');
+  if (loaderText) loaderText.textContent = label;
 
 
   if (feedStage) {
@@ -5708,7 +5867,7 @@ function initFeedControls() {
       wheelLowCount = 0;
       wheelLowEnergy = 0;
       feedLastFallbackScrollAt = Date.now();
-      switchFeedDrama(dir);
+      requestFeedSwitch(dir, 'wheel');
     }, { passive: false });
 
   }
@@ -5733,7 +5892,7 @@ function initFeedControls() {
       const minVerticalDistance = Math.max(60, feedStage.clientHeight * 0.08);
       const isVertical = Math.abs(diffY) > Math.abs(diffX) * 1.5;
       if (Math.abs(diffY) >= minVerticalDistance && isVertical && duration < 800) {
-        switchFeedDrama(diffY < 0 ? 1 : -1);
+        requestFeedSwitch(diffY < 0 ? 1 : -1, 'pointer');
       }
     });
     feedStage.addEventListener('pointercancel', () => {
@@ -5742,18 +5901,29 @@ function initFeedControls() {
   }
 
   document.addEventListener('keydown', (e) => {
-    if (!shouldCaptureFeedScroll()) return;
+    if (state.currentView === 'recommend' && ['ArrowDown', 'ArrowUp'].includes(e.code) && !e.repeat) {
+      recordFeedDiagnostic('key-received', { reason: e.target?.tagName || 'document', inputSource: 'keyboard' });
+    }
+  }, true);
+
+  document.addEventListener('keydown', (e) => {
     const targetTag = e.target.tagName;
-    if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || e.target.isContentEditable) return;
+    const typing = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || e.target.isContentEditable;
+    if (!shouldCaptureFeedScroll() || typing) {
+      if (state.currentView === 'recommend' && ['ArrowDown', 'ArrowUp'].includes(e.code) && !e.repeat) {
+        recordFeedDiagnostic('navigation-ignored', { reason: typing ? 'editable-focus' : 'overlay-open', inputSource: 'keyboard' });
+      }
+      return;
+    }
 
     switch (e.code) {
       case 'ArrowDown':
         e.preventDefault();
-        switchFeedDrama(1);
+        requestFeedSwitch(1, 'keyboard', Boolean(e.repeat));
         break;
       case 'ArrowUp':
         e.preventDefault();
-        switchFeedDrama(-1);
+        requestFeedSwitch(-1, 'keyboard', Boolean(e.repeat));
         break;
       case 'Space':
         e.preventDefault();

@@ -36,9 +36,11 @@ function harness() {
   const c = vm.createContext({
     console, clearTimeout, video, window: {}, playerRequestToken: 0, playerPlaybackIdentity: null,
     nativeFeedScrollReady: false, feedLastFallbackScrollAt: -Infinity,
+    feedInputSequence: 0, feedLastRepeatAt: -Infinity, recordFeedDiagnostic() {},
     document: { getElementById: element, querySelectorAll: () => [], documentElement: {}, body: element('body') },
     state: {
       currentView: 'detail', detail: { data: null },
+      feed: { index: 0 },
       player: {
         seriesId: 'series', episodeNum: 1, episodeId: 'episode1', seriesTitle: 'Drama',
         seriesCover: '', totalEpisodes: 3, quality: '720p', playbackSpeed: 1,
@@ -60,6 +62,7 @@ function harness() {
   for (const name of [
     'clearPlayerVideo', 'openPlayer', 'playEpisodeNumber', 'persistProgress', 'closePlayer',
     'isPlayerRequestCurrent', 'playNextSeason', 'shouldCaptureFeedScroll', 'handleNativeFeedScroll',
+    'requestFeedSwitch',
     'clearMediaCache'
   ]) {
     const index = declarations.findIndex(match => match[1] === name);

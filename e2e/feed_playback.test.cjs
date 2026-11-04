@@ -21,7 +21,7 @@ function harness() {
       currentView: 'recommend',
       feed: {
         items: [{ id: 'series-a' }, { id: 'series-b' }],
-        quality: '720p', userPaused: false, playbackSpeed: 1,
+        index: 0, quality: '720p', userPaused: false, playbackSpeed: 1,
         playbackPositions: new Map(), preloadMap: new Map(), playbackInfoLoads: new Map()
       }
     },
@@ -31,6 +31,7 @@ function harness() {
     scheduleFeedWarmup: () => {}, clearFeedFailureHint: () => {},
     ensureFeedItemsAhead() {}, loadFeedDramaMetadata: () => Promise.resolve(true),
     recordFeedPlaybackMetric() {},
+    recordFeedDiagnostic() {}, updateFeedPlayIndicator() {},
     showFeedSkeleton: () => {}, reportFeedFailure: () => {},
     clearFeedSlot: slot => {
       slot.loadToken = (slot.loadToken || 0) + 1;
@@ -69,10 +70,10 @@ function playback({ hls = true } = {}) {
 
 function videoSlot() {
   const video = {
-    src: '', dataset: {}, readyState: 0, videoWidth: 0, currentTime: 0, duration: NaN,
+    src: '', dataset: {}, readyState: 0, videoWidth: 0, currentTime: 0, duration: NaN, paused: true,
     loadCount: 0, playCount: 0,
     load() { this.loadCount++; },
-    play() { this.playCount++; return Promise.resolve(); }
+    play() { this.playCount++; this.paused = false; return Promise.resolve(); }
   };
   return { id: 0, video, loadToken: 0 };
 }
@@ -113,6 +114,20 @@ test('cold-start playback gets the first frame before requesting series decorati
   slot.video.onplaying();
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls.map(call => call[0]), ['PlayEpisode', 'detail']);
+});
+
+test('foreground preparation exposes loading before playback metadata returns', async () => {
+  const c = harness();
+  let resolve, loadingUpdates = 0;
+  c.apiCall = () => new Promise(done => { resolve = done; });
+  c.updateFeedPlayIndicator = () => { loadingUpdates++; };
+  const slot = videoSlot();
+  c.feedSlots = [slot];
+  const pending = c.prepareFeedSlot(slot, 0, true);
+  assert.equal(slot.video.src, '');
+  assert.ok(loadingUpdates > 0, 'a slow SDK reply must not leave the visible page without feedback');
+  resolve(playback());
+  await pending;
 });
 
 test('the initial uncached video opens progressive fragments through MSE and reuses its blob decoder', async () => {
@@ -262,6 +277,48 @@ test('activation during preparation waits for the existing slot without resettin
   assert.equal(slot.loadToken, token);
   assert.equal(slot.video.loadCount, 1);
   assert.equal(slot.video.playCount, 1);
+});
+
+test('a late preload reply promoted to the foreground still selects cold fragments and starts playback', async () => {
+  const c = harness();
+  let resolve;
+  c.apiCall = () => new Promise(done => { resolve = done; });
+  const slot = videoSlot();
+  slot.id = 1;
+  c.feedSlots = [videoSlot(), slot];
+  c.window.ProgressiveMediaSource = class {
+    static isSupported() { return true; }
+    constructor(video, url) { this.url = url; this.objectURL = 'blob:promoted'; video.src = this.objectURL; }
+  };
+  c.primeFeedSlotFirstFrame = () => { throw new Error('the visible target must not remain background priming'); };
+  const preparing = c.prepareFeedSlot(slot, 1, false, null, true);
+  c.state.feed.index = 1;
+  c.feedSlotCurr = 1;
+  vm.runInContext('feedSwitchWaitDir = 0', c);
+  resolve(playback());
+  await preparing;
+  assert.equal(slot.video.src, 'blob:promoted');
+  assert.equal(slot.video.playCount, 1);
+  assert.equal(slot.metricStreamMode, 'progressive');
+});
+
+test('a foreground waiter cannot restart the old slot after another swipe made it background', async () => {
+  const c = harness();
+  let resolve;
+  c.apiCall = () => new Promise(done => { resolve = done; });
+  const slot = videoSlot();
+  slot.id = 1;
+  c.feedSlots = [videoSlot(), slot];
+  const preload = c.prepareFeedSlot(slot, 1, false);
+  c.feedSlotCurr = 1;
+  c.state.feed.index = 1;
+  const activate = c.prepareFeedSlot(slot, 1, true);
+  c.feedSlotCurr = 0;
+  c.state.feed.index = 0;
+  resolve(playback());
+  await Promise.all([preload, activate]);
+  assert.equal(slot.video.playCount, 0);
+  assert.equal(slot.video.loadCount, 1, 'the late cache can remain resident without stealing playback');
 });
 
 test('metadata-only lookahead upgrades to HLS when admitted for media warmup', async () => {
