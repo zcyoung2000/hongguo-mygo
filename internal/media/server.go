@@ -3,9 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +25,7 @@ import (
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"myguo/internal/appdirs"
+	"myguo/internal/lifecycle"
 	"myguo/internal/mediautil"
 )
 
@@ -78,6 +77,7 @@ type QualitySelection struct {
 }
 
 type MediaServer struct {
+	tasks              lifecycle.Group
 	client             *sdk.Client
 	cacheDir           string
 	port               int
@@ -96,6 +96,11 @@ type MediaServer struct {
 	progressiveStreams map[string]*progressiveStream
 	hlsMu              sync.Mutex
 	hlsStreams         map[string]*hlsStream
+	feedPreloadMu      sync.Mutex
+	feedPreloadVersion int64
+	feedPreloadTasks   map[string]PrefetchTask
+	feedPreloadCurrent string
+	feedPreloadTries   map[string]time.Time
 	cachePinMu         sync.RWMutex
 	cachePins          map[string]int
 	onEpisodeCacheFn   atomic.Pointer[func(seriesID, episodeID string, num int, quality string) error]
@@ -608,7 +613,10 @@ func NewMediaServer(client *sdk.Client) (*MediaServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	cacheDir := appdirs.AppCacheDir(home)
+	return newMediaServer(client, appdirs.AppCacheDir(home))
+}
+
+func newMediaServer(client *sdk.Client, cacheDir string) (*MediaServer, error) {
 	if err := os.MkdirAll(filepath.Join(cacheDir, "episodes"), 0755); err != nil {
 		return nil, err
 	}
@@ -616,7 +624,9 @@ func NewMediaServer(client *sdk.Client) (*MediaServer, error) {
 		return nil, err
 	}
 	removeLegacyPreviews(filepath.Join(cacheDir, "episodes"))
-	removeHLSCache(filepath.Join(cacheDir, "episodes", "hls"))
+	if err := pruneIncompleteHLSCache(filepath.Join(cacheDir, "episodes", "hls")); err != nil {
+		log.Printf("[media cache] HLS cleanup failed: %v", err)
+	}
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -648,16 +658,28 @@ func NewMediaServer(client *sdk.Client) (*MediaServer, error) {
 		w.Write([]byte("OK"))
 	})
 
-	ms.server = &http.Server{Handler: mux}
-	go func() {
+	ms.server = &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		root, done, err := ms.tasks.Acquire()
+		if err != nil {
+			http.Error(w, "media server closed", http.StatusServiceUnavailable)
+			return
+		}
+		defer done()
+		ctx, cancel := context.WithCancel(r.Context())
+		stop := context.AfterFunc(root, cancel)
+		defer stop()
+		defer cancel()
+		mux.ServeHTTP(w, r.WithContext(ctx))
+	})}
+	ms.tasks.Go(func(context.Context) {
 		if err := ms.server.Serve(l); err != nil && err != http.ErrServerClosed {
 			log.Printf("media server error: %v", err)
 		}
-	}()
+	})
 
 	// Start concurrent prefetch workers
 	for i := 0; i < 3; i++ {
-		go ms.prefetchWorker()
+		ms.tasks.Go(ms.prefetchWorker)
 	}
 
 	// Trigger initial cache check to clean up obsolete cache from previous runs
@@ -808,6 +830,8 @@ func (ms *MediaServer) pinCacheFile(path string) func() {
 }
 
 func (ms *MediaServer) serveEpisodeFile(w http.ResponseWriter, r *http.Request, path string) {
+	release := ms.pinCacheFile(path)
+	defer release()
 	file, err := os.Open(path)
 	if err != nil {
 		http.Error(w, "cached media is no longer available", http.StatusNotFound)
@@ -936,7 +960,11 @@ func (ms *MediaServer) downloadAndDecrypt(ctx context.Context, episodeID, qualit
 	if !hasFreeDiskSpace(filepath.Dir(destPath), MinFreeCacheDiskBytes) {
 		return fmt.Errorf("insufficient disk space for media cache")
 	}
-	downloadSem <- struct{}{}
+	select {
+	case downloadSem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	defer func() { <-downloadSem }()
 
 	tmpPath := filepath.Join(filepath.Dir(destPath), "tmp_"+filepath.Base(destPath))
@@ -1028,11 +1056,20 @@ func (ms *MediaServer) downloadWithQualityFallback(ctx context.Context, episodeI
 	return normalizeVideoQuality(requestedQuality), episodeCachePath(ms.cacheDir, episodeID, requestedQuality), fmt.Errorf("all video qualities failed for %s", episodeID)
 }
 
-func (ms *MediaServer) prefetchWorker() {
-	for task := range ms.prefetchQ {
+func (ms *MediaServer) prefetchWorker(root context.Context) {
+	for {
+		var task PrefetchTask
+		select {
+		case <-root.Done():
+			return
+		case task = <-ms.prefetchQ:
+		}
+		if root.Err() != nil {
+			return
+		}
 		task = normalizePrefetchTask(task)
 		key := PrefetchTaskKey(task)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		ctx, cancel := context.WithTimeout(root, 10*time.Minute)
 
 		ms.prefetchMu.Lock()
 		if ms.prefetchQueued == nil {
@@ -1113,7 +1150,11 @@ func (ms *MediaServer) runPrefetchTask(ctx context.Context, task PrefetchTask, t
 		cancel()
 	}
 
-	prefetchSem <- struct{}{}
+	select {
+	case prefetchSem <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
 	// A video element may open its progressive stream while episode metadata was
 	// being resolved. Recheck under the prefetch semaphore before allocating a
 	// second upstream connection.
@@ -1206,6 +1247,11 @@ drain:
 }
 
 func (ms *MediaServer) PrefetchEpisode(seriesID, episodeID string, number int, quality string) {
+	_, done, err := ms.tasks.Acquire()
+	if err != nil {
+		return
+	}
+	defer done()
 	if seriesID == "" && episodeID == "" {
 		return
 	}
@@ -1236,6 +1282,11 @@ func (ms *MediaServer) PrefetchEpisode(seriesID, episodeID string, number int, q
 // ReplacePrefetchWindow replaces queued background work with the active feed
 // window. Active downloads are cancelled unless their key remains desired.
 func (ms *MediaServer) ReplacePrefetchWindow(tasks []PrefetchTask) {
+	_, done, err := ms.tasks.Acquire()
+	if err != nil {
+		return
+	}
+	defer done()
 	orderedTasks := make([]PrefetchTask, 0, len(tasks))
 	desired := make(map[string]PrefetchTask, len(tasks))
 	for _, task := range tasks {
@@ -1423,9 +1474,8 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash := md5.Sum([]byte(targetURL))
-	hexHash := hex.EncodeToString(hash[:])
-	cacheJpg := filepath.Join(ms.cacheDir, "images", hexHash+".jpg")
+	hexHash := mediautil.ImageCacheKey(targetURL)
+	cacheJpg := mediautil.ImageCachePath(ms.cacheDir, targetURL)
 	releaseCachePin := ms.pinCacheFile(cacheJpg)
 	defer releaseCachePin()
 
@@ -1514,7 +1564,7 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Only invoke Apple sips CLI for HEIC or other non-native formats
 		sipsSem <- struct{}{}
-		cmd := exec.Command("/usr/bin/sips", "-s", "format", "jpeg", tmpRaw, "--out", cacheJpg)
+		cmd := exec.CommandContext(ctx, "/usr/bin/sips", "-s", "format", "jpeg", tmpRaw, "--out", cacheJpg)
 		sipsErr := cmd.Run()
 		<-sipsSem
 		if sipsErr != nil {
@@ -1573,25 +1623,91 @@ func (ms *MediaServer) GetCacheSize() int64 {
 }
 
 func (ms *MediaServer) ClearCache() (int64, error) {
+	_, done, err := ms.tasks.Acquire()
+	if err != nil {
+		return 0, err
+	}
+	defer done()
+	// Serialize admission, stream creation and new file pins with removal.
+	// Existing writers/readers continue using their pinned files. Never wait
+	// for a conversion while holding these locks.
+	ms.feedPreloadMu.Lock()
+	defer ms.feedPreloadMu.Unlock()
+	ms.cachePinMu.Lock()
+	defer ms.cachePinMu.Unlock()
+	ms.progressiveMu.Lock()
+	defer ms.progressiveMu.Unlock()
+	ms.hlsMu.Lock()
+	defer ms.hlsMu.Unlock()
+
+	pinned := make(map[string]bool)
+	for path := range ms.cachePins {
+		pinned[path] = true
+		pinned[filepath.Join(filepath.Dir(path), "tmp_"+filepath.Base(path))] = true
+	}
+	for _, stream := range ms.progressiveStreams {
+		pinned[stream.tempPath] = true
+		pinned[stream.finalPath] = true
+	}
+	now := time.Now()
+	for key, stream := range ms.hlsStreams {
+		active := false
+		select {
+		case <-stream.done:
+		default:
+			active = true
+		}
+		if active || pinned[stream.dir] || stream.retired != nil || key == ms.feedPreloadCurrent || stream.hasRecentMediaRequest(now) {
+			pinned[stream.dir] = true
+		} else {
+			// Dropping the completed object is as important as deleting its files:
+			// the next request must be able to regenerate the rendition.
+			delete(ms.hlsStreams, key)
+		}
+	}
 	var totalSize int64
-	_ = filepath.Walk(ms.cacheDir, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			if strings.HasPrefix(info.Name(), "tmp_") {
-				return nil
+	err = filepath.Walk(ms.cacheDir, func(path string, info os.FileInfo, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if pinned[path] {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !info.IsDir() {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return err
 			}
 			totalSize += info.Size()
-			_ = os.Remove(path)
 		}
 		return nil
 	})
-	_ = os.MkdirAll(filepath.Join(ms.cacheDir, "episodes"), 0755)
-	_ = os.MkdirAll(filepath.Join(ms.cacheDir, "images"), 0755)
-	return totalSize, nil
+	return totalSize, err
 }
 
 func (ms *MediaServer) Close() {
+	ms.tasks.Stop()
 	if ms.server != nil {
 		_ = ms.server.Close()
+	}
+	ms.tasks.Wait()
+	// Retired HLS writers own a short directory-cleanup goroutine. Admission is
+	// closed and writers are drained, so this snapshot cannot acquire new work.
+	ms.hlsMu.Lock()
+	var retired []chan struct{}
+	for _, stream := range ms.hlsStreams {
+		if stream.retired != nil {
+			retired = append(retired, stream.retired)
+		}
+	}
+	ms.hlsMu.Unlock()
+	for _, done := range retired {
+		<-done
 	}
 }
 
@@ -1677,7 +1793,7 @@ func (ms *MediaServer) triggerCacheEviction() {
 		return
 	}
 	ms.lastEvictionAt.Store(time.Now().UnixMilli())
-	go func() {
+	if !ms.tasks.Go(func(context.Context) {
 		defer ms.evicting.Store(false)
 		ms.cachePinMu.RLock()
 		pinnedPaths := make(map[string]struct{}, len(ms.cachePins))
@@ -1695,5 +1811,7 @@ func (ms *MediaServer) triggerCacheEviction() {
 		}
 		ms.hlsMu.Unlock()
 		evictHLSCache(filepath.Join(ms.cacheDir, "episodes", "hls"), MaxHLSCacheBytes, TargetHLSCacheBytes, activeHLS)
-	}()
+	}) {
+		ms.evicting.Store(false)
+	}
 }

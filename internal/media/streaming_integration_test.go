@@ -83,7 +83,7 @@ func TestStreamingPublishesMediaBeforeUpstreamCompletes(t *testing.T) {
 	ffmpegCommand = func() (string, error) { return ffmpegPath, nil }
 	t.Cleanup(func() { ffmpegCommand = previousCommand })
 
-	for _, mode := range []string{"hls", "progressive"} {
+	for _, mode := range []string{"hls", "progressive", "adaptive preloads"} {
 		t.Run(mode, func(t *testing.T) {
 			gate := make(chan struct{})
 			var release sync.Once
@@ -97,13 +97,15 @@ func TestStreamingPublishesMediaBeforeUpstreamCompletes(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(ms.cacheDir, "episodes"), 0755); err != nil {
 				t.Fatal(err)
 			}
-			for _, id := range []string{"710000000000001", "710000000000002"} {
+			for _, id := range []string{"710000000000001", "710000000000002", "710000000000003", "710000000000004"} {
 				ms.pbCache[id] = playbackCacheItem{
 					pb:        &model.Playback{Streams: []model.Stream{{Definition: "720p", URL: upstream.URL}}},
 					expiresAt: time.Now().Add(time.Minute),
 				}
 			}
-			if mode == "hls" {
+			if mode == "adaptive preloads" {
+				testAdaptivePreloadStreaming(t, ms, func() { release.Do(func() { close(gate) }) })
+			} else if mode == "hls" {
 				partialDir := ms.hlsCacheDir("710000000000002", "720p")
 				if err := os.MkdirAll(partialDir, 0755); err != nil {
 					t.Fatal(err)
@@ -214,6 +216,23 @@ func TestStreamingPublishesMediaBeforeUpstreamCompletes(t *testing.T) {
 				if !hlsPlaylistComplete(restarted.playlistPath) {
 					t.Fatal("window replacement deleted a completed reusable cache")
 				}
+				cached, err := ms.StartHLSStream("series", "710000000000002", 1, "720p")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := ms.ClearCache(); err != nil {
+					t.Fatal(err)
+				}
+				regenerated, err := ms.StartHLSStream("series", "710000000000002", 1, "720p")
+				if err != nil || regenerated == cached {
+					t.Fatalf("cache clear reused deleted output: %v", err)
+				}
+				waitCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+				err = regenerated.wait(waitCtx)
+				cancel()
+				if err != nil || !hlsPlaylistComplete(regenerated.playlistPath) {
+					t.Fatalf("cache clear did not regenerate HLS: %v", err)
+				}
 			} else {
 				local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					ms.serveProgressiveVideo(w, r, "series", "710000000000001", 1, "720p",
@@ -251,6 +270,90 @@ func TestStreamingPublishesMediaBeforeUpstreamCompletes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func testAdaptivePreloadStreaming(t *testing.T, ms *MediaServer, release func()) {
+	t.Helper()
+	current, err := ms.StartHLSStream("series", "710000000000001", 1, "720p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		release()
+		ms.hlsMu.Lock()
+		streams := make([]*hlsStream, 0, len(ms.hlsStreams))
+		for _, stream := range ms.hlsStreams {
+			stream.cancel()
+			streams = append(streams, stream)
+		}
+		ms.hlsMu.Unlock()
+		for _, stream := range streams {
+			<-stream.done
+			if stream.retired != nil {
+				<-stream.retired
+			}
+		}
+	}()
+	items := []FeedPreloadItem{
+		{SeriesID: "next", EpisodeID: "710000000000002", Number: 1, Quality: "720p"},
+		{SeriesID: "far", EpisodeID: "710000000000003", Number: 1, Quality: "720p"},
+		{SeriesID: "farthest", EpisodeID: "710000000000004", Number: 1, Quality: "720p"},
+	}
+	var version int64
+	var statuses []FeedPreloadStatus
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		version++
+		statuses = ms.SetFeedPreloadWindow(version, "710000000000001", "720p", items)
+		if statuses[2].Active {
+			t.Fatal("third speculative download competed with current + next + second-next")
+		}
+		if statuses[1].Active && statuses[0].CachedSeconds < 6 {
+			t.Fatal("second-next started before the immediate next had a playable prefix")
+		}
+		if statuses[1].CachedSeconds >= 6 && hlsPlaylistReady(current.playlistPath) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(statuses) != 3 || statuses[0].CachedSeconds < 6 || statuses[1].CachedSeconds < 6 {
+		t.Fatalf("next two videos did not warm while current was still downloading: %+v", statuses)
+	}
+	if statuses[0].Complete || statuses[1].Complete || hlsPlaylistComplete(current.playlistPath) {
+		t.Fatal("upstream completed before the adaptive scheduling assertions")
+	}
+	// Promoting the next video must reuse its existing writer and cache. Old
+	// foreground and speculative work are canceled as the window moves/shrinks.
+	key := PrefetchTaskKey(PrefetchTask{EpisodeID: items[0].EpisodeID, Quality: "720p"})
+	ms.hlsMu.Lock()
+	promoted := ms.hlsStreams[key]
+	ms.hlsMu.Unlock()
+	version++
+	ms.SetFeedPreloadWindow(version, items[0].EpisodeID, "720p", items[1:2])
+	version++
+	ms.SetFeedPreloadWindow(version, items[0].EpisodeID, "720p", nil)
+	select {
+	case <-promoted.done:
+		t.Fatal("backpressure canceled the video just promoted to current")
+	default:
+	}
+	ms.hlsMu.Lock()
+	if ms.hlsStreams[key] != promoted {
+		ms.hlsMu.Unlock()
+		t.Fatal("promotion restarted rather than reusing the warmed writer")
+	}
+	ms.hlsMu.Unlock()
+	starts := ms.hlsStarts.Load()
+	ms.SetFeedPreloadWindow(version-1, "710000000000001", "720p", items)
+	if ms.hlsStarts.Load() != starts {
+		t.Fatal("stale IPC window resurrected canceled background downloads")
+	}
+	release()
+	waitCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	if err := promoted.wait(waitCtx); err != nil || !hlsPlaylistComplete(promoted.playlistPath) {
+		t.Fatalf("promoted video did not finish normally after backpressure: %v", err)
 	}
 }
 

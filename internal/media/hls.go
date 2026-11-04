@@ -116,6 +116,16 @@ func urlPathEscape(value string) string {
 }
 
 func (ms *MediaServer) StartHLSStream(seriesID, episodeID string, number int, quality string) (*hlsStream, error) {
+	root, taskDone, err := ms.tasks.Acquire()
+	if err != nil {
+		return nil, err
+	}
+	async := false
+	defer func() {
+		if !async {
+			taskDone()
+		}
+	}()
 	if !validContentID(episodeID) {
 		return nil, errors.New("invalid episode id")
 	}
@@ -129,8 +139,19 @@ func (ms *MediaServer) StartHLSStream(seriesID, episodeID string, number int, qu
 			<-retired
 			return ms.StartHLSStream(seriesID, episodeID, number, quality)
 		}
-		ms.hlsMu.Unlock()
-		return stream, nil
+		completed := false
+		select {
+		case <-stream.done:
+			completed = true
+		default:
+		}
+		if !completed || hlsPlaylistComplete(stream.playlistPath) {
+			ms.hlsMu.Unlock()
+			return stream, nil
+		}
+		// External cleanup or a damaged cache must not leave an immortal done
+		// task whose missing output can never be regenerated.
+		delete(ms.hlsStreams, key)
 	}
 	if ms.hlsStreams == nil {
 		ms.hlsStreams = make(map[string]*hlsStream)
@@ -164,7 +185,7 @@ func (ms *MediaServer) StartHLSStream(seriesID, episodeID string, number int, qu
 		ms.hlsMu.Unlock()
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), progressiveStreamTimeout)
+	ctx, cancel := context.WithTimeout(root, progressiveStreamTimeout)
 	stream := &hlsStream{
 		key:          key,
 		dir:          dir,
@@ -180,7 +201,11 @@ func (ms *MediaServer) StartHLSStream(seriesID, episodeID string, number int, qu
 	ms.hlsMu.Unlock()
 	ms.hlsStarts.Add(1)
 
-	go ms.runHLSStream(ctx, stream, seriesID, episodeID, number, quality)
+	async = true
+	go func() {
+		defer taskDone()
+		ms.runHLSStream(ctx, stream, seriesID, episodeID, number, quality)
+	}()
 	return stream, nil
 }
 
@@ -212,29 +237,34 @@ func (ms *MediaServer) retainHLSStreams(desired map[string]PrefetchTask, preserv
 		if stream.rendererOwned && (key == preservedRendererKey || stream.hasRecentMediaRequest(now)) {
 			continue
 		}
-		if stream.retired != nil {
-			continue
-		}
-		stream.cancel()
-		select {
-		case <-stream.done:
-			// Completed renditions remain reusable on disk when swiping back.
-			delete(ms.hlsStreams, key)
-			continue
-		default:
-		}
-		stream.retired = make(chan struct{})
-		go func(stream *hlsStream) {
-			<-stream.done
-			ms.hlsMu.Lock()
-			defer ms.hlsMu.Unlock()
-			_ = os.RemoveAll(stream.dir)
-			if ms.hlsStreams[stream.key] == stream {
-				delete(ms.hlsStreams, stream.key)
-			}
-			close(stream.retired)
-		}(stream)
+		ms.retireHLSStreamLocked(key, stream)
 	}
+}
+
+// Caller holds hlsMu. Keep completed renditions, and serialize interrupted
+// writer cleanup with a later request that revisits the same episode.
+func (ms *MediaServer) retireHLSStreamLocked(key string, stream *hlsStream) {
+	if stream.retired != nil {
+		return
+	}
+	stream.cancel()
+	select {
+	case <-stream.done:
+		delete(ms.hlsStreams, key)
+		return
+	default:
+	}
+	stream.retired = make(chan struct{})
+	go func() {
+		<-stream.done
+		ms.hlsMu.Lock()
+		defer ms.hlsMu.Unlock()
+		_ = os.RemoveAll(stream.dir)
+		if ms.hlsStreams[stream.key] == stream {
+			delete(ms.hlsStreams, stream.key)
+		}
+		close(stream.retired)
+	}()
 }
 
 func (ms *MediaServer) hlsCacheDir(episodeID, quality string) string {
@@ -328,10 +358,15 @@ func (ms *MediaServer) runHLSStream(ctx context.Context, stream *hlsStream, seri
 	}
 
 	monitorDone := make(chan struct{})
-	go ms.monitorHLSOutput(ctx, stream, monitorDone)
+	monitorExited := make(chan struct{})
+	go func() {
+		defer close(monitorExited)
+		ms.monitorHLSOutput(ctx, stream, monitorDone)
+	}()
 	command := exec.CommandContext(ctx, ffmpegPath, ffmpegHLSArgs(source.URL, pb.AudioURL, keyHex, stream.dir)...)
 	runErr := command.Run()
 	close(monitorDone)
+	<-monitorExited
 	if ctx.Err() != nil {
 		return
 	}
@@ -610,11 +645,38 @@ func hlsCodecAttribute(codec string, hasSeparateAudio bool) string {
 	return ""
 }
 
-func removeHLSCache(root string) {
-	_ = os.RemoveAll(root)
+func pruneIncompleteHLSCache(root string) error {
+	entries, err := os.ReadDir(root)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		if entry.IsDir() && hlsPlaylistComplete(filepath.Join(path, "index.m3u8")) {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (ms *MediaServer) HasCachedEpisode(episodeID, quality string) bool {
+	return validContentID(episodeID) && (fileExists(episodeCachePath(ms.cacheDir, episodeID, normalizeVideoQuality(quality))) ||
+		ms.HasCachedHLS(episodeID, quality))
+}
+
+func (ms *MediaServer) HasCachedHLS(episodeID, quality string) bool {
+	return validContentID(episodeID) && hlsPlaylistComplete(filepath.Join(ms.hlsCacheDir(episodeID, quality), "index.m3u8"))
 }
 
 func (ms *MediaServer) serveHLSPlaylist(w http.ResponseWriter, r *http.Request, seriesID, episodeID string, number int, quality string) bool {
+	release := ms.pinCacheFile(ms.hlsCacheDir(episodeID, quality))
+	defer release()
 	ms.hlsHits.Add(1)
 	stream, err := ms.StartHLSStream(seriesID, episodeID, number, quality)
 	if err != nil {
@@ -661,6 +723,8 @@ func (ms *MediaServer) serveHLSSegment(w http.ResponseWriter, r *http.Request, e
 		http.Error(w, "invalid HLS segment", http.StatusBadRequest)
 		return
 	}
+	release := ms.pinCacheFile(ms.hlsCacheDir(episodeID, quality))
+	defer release()
 	path := filepath.Join(ms.hlsCacheDir(episodeID, quality), name)
 	if !strings.HasPrefix(path, filepath.Clean(ms.hlsCacheDir(episodeID, quality))+string(os.PathSeparator)) {
 		http.Error(w, "invalid HLS segment", http.StatusBadRequest)

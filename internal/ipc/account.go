@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"myguo/internal/native"
+	"myguo/internal/store"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -40,7 +41,9 @@ func (s *HongguoService) resetDeviceWithContext(ctx context.Context) error {
 func (s *HongguoService) ClearCache(ctx context.Context) (int64, error) {
 	s.invalidateUserDataCaches()
 	cleared, err := s.media.ClearCache()
-	if clearErr := s.store.ClearCachedEpisodes(); err == nil {
+	if clearErr := s.store.PruneCachedEpisodes(func(item store.CachedEpisode) bool {
+		return s.media.HasCachedEpisode(item.EpisodeID, item.Quality)
+	}); err == nil {
 		err = clearErr
 	}
 	return cleared, err

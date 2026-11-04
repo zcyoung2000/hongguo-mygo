@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -141,6 +142,18 @@ func (stream *progressiveStream) notifyWaitersLocked() {
 }
 
 func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number int, quality, finalPath string) (*progressiveStream, error) {
+	root, taskDone, err := ms.tasks.Acquire()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(root, progressiveStreamTimeout)
+	async := false
+	defer func() {
+		if !async {
+			cancel()
+			taskDone()
+		}
+	}()
 	key := PrefetchTaskKey(PrefetchTask{EpisodeID: episodeID, Quality: quality})
 
 	ms.progressiveMu.Lock()
@@ -153,7 +166,7 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 	}
 	ms.progressiveMu.Unlock()
 
-	pb, err := ms.resolvePlayback(context.Background(), episodeID)
+	pb, err := ms.resolvePlayback(ctx, episodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +192,11 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 		return nil, fmt.Errorf("insufficient disk space for progressive media")
 	}
 
-	downloadSem <- struct{}{}
+	select {
+	case downloadSem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	ms.progressiveMu.Lock()
 	if stream, active := ms.progressiveStreams[key]; active {
 		ms.progressiveMu.Unlock()
@@ -200,7 +217,6 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), progressiveStreamTimeout)
 	command := exec.CommandContext(ctx, ffmpegPath, ffmpegProgressiveArgs(source.URL, pb.AudioURL, keyHex)...)
 	var stderrBuf bytes.Buffer
 	command.Stderr = &stderrBuf
@@ -243,18 +259,17 @@ func (ms *MediaServer) startProgressiveStream(seriesID, episodeID string, number
 	ms.progressiveMu.Unlock()
 	ms.progressiveStarts.Add(1)
 
-	go ms.runProgressiveStream(ctx, stream, stdout, &stderrBuf)
+	async = true
+	go func() {
+		defer taskDone()
+		ms.runProgressiveStream(ctx, stream, stdout, &stderrBuf)
+	}()
 	return stream, nil
 }
 
 func (ms *MediaServer) runProgressiveStream(ctx context.Context, stream *progressiveStream, stdout io.ReadCloser, stderrBuf *bytes.Buffer) {
 	defer stream.cancel()
 	defer func() { <-downloadSem }()
-
-	go func() {
-		<-ctx.Done()
-		_ = stream.command.Process.Kill()
-	}()
 
 	buffer := make([]byte, 64*1024)
 	for {
@@ -390,8 +405,11 @@ func parseHTTPByteRange(header string, fileSize int64, growing bool) (httpByteRa
 
 	if strings.TrimSpace(parts[0]) == "" {
 		length, err := strconv.ParseInt(parts[1], 10, 64)
-		if err != nil || length <= 0 || length > fileSize {
+		if err != nil || length <= 0 || fileSize <= 0 || growing {
 			return httpByteRange{}, false
+		}
+		if length > fileSize {
+			length = fileSize
 		}
 		return httpByteRange{start: fileSize - length, end: fileSize - 1, hasEnd: true}, true
 	}
@@ -401,11 +419,17 @@ func parseHTTPByteRange(header string, fileSize int64, growing bool) (httpByteRa
 		return httpByteRange{}, false
 	}
 	if strings.TrimSpace(parts[1]) == "" {
+		if !growing {
+			return httpByteRange{start: start, end: fileSize - 1, hasEnd: true}, true
+		}
 		return httpByteRange{start: start, fullSize: true}, true
 	}
 	end, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil || end < start {
 		return httpByteRange{}, false
+	}
+	if !growing && end >= fileSize {
+		end = fileSize - 1
 	}
 	return httpByteRange{start: start, end: end, hasEnd: true}, true
 }
@@ -430,9 +454,36 @@ func (ms *MediaServer) serveProgressiveVideo(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	fileSize, done, _ := stream.snapshot()
+	stream.retainReader()
+	defer stream.releaseReader()
+
+	// A suffix is relative to the final representation, not the current write
+	// offset. It must wait for EOF; ordinary forward requests still stream.
+	if strings.HasPrefix(strings.TrimSpace(r.Header.Get("Range")), "bytes=-") {
+		if err := stream.waitUntilContext(math.MaxInt64, r.Context()); err != nil {
+			return
+		}
+	}
+	fileSize, done, streamErr := stream.snapshot()
 	if done && fileSize <= 1024 {
 		http.Error(w, "progressive media ended early", http.StatusServiceUnavailable)
+		return
+	}
+	if done {
+		if streamErr != nil {
+			http.Error(w, "progressive media ended early", http.StatusServiceUnavailable)
+			return
+		}
+		file, err := openProgressiveFile(stream)
+		if err != nil {
+			http.Error(w, "progressive media is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		defer file.Close()
+		w.Header().Set("Content-Type", "video/mp4")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Feed-Stream", "progressive")
+		http.ServeContent(w, r, "video.mp4", time.Time{}, file)
 		return
 	}
 
@@ -442,48 +493,55 @@ func (ms *MediaServer) serveProgressiveVideo(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "invalid range", http.StatusRequestedRangeNotSatisfiable)
 		return
 	}
-	if done && byteRange.start >= fileSize {
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
-		http.Error(w, "requested range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
-		return
-	}
-
 	w.Header().Set("Content-Type", "video/mp4")
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Feed-Stream", "progressive")
 
-	status := http.StatusOK
-	if byteRange.hasEnd {
-		status = http.StatusPartialContent
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", byteRange.start, byteRange.end, streamSizeLabel(stream)))
-	}
-
-	if byteRange.hasEnd {
+	if byteRange.hasEnd || byteRange.start > 0 {
+		// Only promise published bytes. A future range waits for its first byte
+		// and a range extending beyond the current prefix is shortened, avoiding
+		// a Content-Length that cannot be fulfilled if conversion ends earlier.
+		if err := stream.waitUntilContext(byteRange.start, r.Context()); err != nil {
+			return
+		}
+		fileSize, done, _ = stream.snapshot()
+		if byteRange.start >= fileSize {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", fileSize))
+			http.Error(w, "requested range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if !byteRange.hasEnd || byteRange.end >= fileSize {
+			byteRange.end = fileSize - 1
+		}
+		total := "*"
+		if done {
+			total = strconv.FormatInt(fileSize, 10)
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%s", byteRange.start, byteRange.end, total))
 		length := byteRange.end - byteRange.start + 1
 		w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
-		w.WriteHeader(status)
-		stream.retainReader()
-		defer stream.releaseReader()
-		_ = copyProgressiveRange(w, r, stream, byteRange.start, byteRange.end)
+		w.WriteHeader(http.StatusPartialContent)
+		if r.Method != http.MethodHead {
+			_ = copyProgressiveRange(w, r, stream, byteRange.start, byteRange.end)
+		}
 		return
 	}
 
-	if done {
-		w.Header().Set("Content-Length", strconv.FormatInt(fileSize-byteRange.start, 10))
+	// An open request from zero may ignore Range and return the entire growing
+	// representation with 200 and chunked transfer; a nonzero offset never does.
+	w.WriteHeader(http.StatusOK)
+	if r.Method != http.MethodHead {
+		_ = copyProgressiveRange(w, r, stream, 0, -1)
 	}
-	w.WriteHeader(status)
-	stream.retainReader()
-	defer stream.releaseReader()
-	_ = copyProgressiveRange(w, r, stream, byteRange.start, -1)
 }
 
-func streamSizeLabel(stream *progressiveStream) string {
-	written, done, _ := stream.snapshot()
-	if done {
-		return strconv.FormatInt(written, 10)
+func openProgressiveFile(stream *progressiveStream) (*os.File, error) {
+	file, err := os.Open(stream.tempPath)
+	if os.IsNotExist(err) && stream.finalPath != "" {
+		return os.Open(stream.finalPath)
 	}
-	return "*"
+	return file, err
 }
 
 func copyProgressiveRange(w io.Writer, request *http.Request, stream *progressiveStream, start, end int64) error {
@@ -504,7 +562,7 @@ func copyProgressiveRange(w io.Writer, request *http.Request, stream *progressiv
 			if end >= 0 && available > end-offset+1 {
 				available = end - offset + 1
 			}
-			file, err := os.Open(stream.tempPath)
+			file, err := openProgressiveFile(stream)
 			if err != nil {
 				return err
 			}

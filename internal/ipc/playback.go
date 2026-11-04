@@ -5,14 +5,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/beilunyang/openhongguo/sdk/model"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/media"
 )
+
+func (s *HongguoService) UpdateFeedPreloadWindow(ctx context.Context, version int64, currentEpisodeID, currentQuality string, items []media.FeedPreloadItem) ([]media.FeedPreloadStatus, error) {
+	return s.media.SetFeedPreloadWindow(version, currentEpisodeID, currentQuality, items), nil
+}
 
 func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID string, episodeNum int, quality string, preferHLS bool) (*PlaybackDTO, error) {
 	if episodeNum <= 0 {
@@ -32,7 +38,7 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		// in the background on the frontend.
 		if cached, ok := s.store.GetCachedEpisodeAt(seriesID, quality, episodeNum); ok &&
 			cached.EpisodeNum == episodeNum &&
-			fileExists(episodeCachePath(s.media.CacheDir(), cached.EpisodeID, cached.Quality)) {
+			s.media.HasCachedEpisode(cached.EpisodeID, cached.Quality) {
 			episodeID = cached.EpisodeID
 			episodeNum = cached.EpisodeNum
 			quality = cached.Quality
@@ -70,6 +76,7 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 	if episodeID == "" {
 		return nil, fmt.Errorf("failed to resolve episode ID for %s", seriesID)
 	}
+	cachedStart = cachedStart || s.media.HasCachedEpisode(episodeID, quality)
 
 	var qualityInfo QualitySelection
 	if cachedStart {
@@ -101,14 +108,12 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		progressiveStreamURL = streamURL
 	}
 	hlsStreamURL := ""
-	if preferHLS && !isFullCached {
-		if _, err := s.media.StartHLSStream(seriesID, episodeID, episodeNum, qualityInfo.Selected); err == nil {
-			// Return the selected media playlist. A full master would let the
-			// WebView choose a higher rendition based on fast local HTTP and
-			// bypass the feed's upstream-network scheduler.
-			hlsStreamURL = s.media.HLSPlaylistURL(episodeID, seriesID, episodeNum, qualityInfo.Selected)
-			streamURL = hlsStreamURL
-		}
+	if (preferHLS || s.media.HasCachedHLS(episodeID, qualityInfo.Selected)) && !isFullCached {
+		// Negotiation must not start a media job: a late IPC response could
+		// otherwise restart a preload after the scheduler withdrew admission.
+		// The admitted window or the actual media request starts/reuses HLS.
+		hlsStreamURL = s.media.HLSPlaylistURL(episodeID, seriesID, episodeNum, qualityInfo.Selected)
+		streamURL = hlsStreamURL
 	}
 
 	hist, err := s.store.GetHistory()
