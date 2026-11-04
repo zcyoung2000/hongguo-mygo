@@ -260,7 +260,8 @@ let feedSlotPrev = 2;
 let feedActiveVideo = null;
 let feedPlayToken = 0;
 let feedPlayPromise = null;
-let nativeScrollGestureSeen = false;
+let nativeFeedScrollReady = false;
+let feedLastFallbackScrollAt = -Infinity;
 let feedScrollCaptureSync = null;
 let feedWarmupToken = 0;
 let feedWarmupSession = null;
@@ -418,6 +419,8 @@ function initFeedVideoPool() {
       requestedQuality: '',
       streamUrl: '',
       durationSec: 0,
+      metadataDurationSec: 0,
+      completeCached: false,
       fullStreamUrl: '',
       progressiveStreamUrl: '',
       hlsStreamUrl: '',
@@ -539,24 +542,30 @@ async function primeFeedSlotFirstFrame(slot) {
   slot.metricRebufferStartedAt = 0;
   video.muted = true;
 
+  let finish;
+  let frameTimer;
   const firstFrame = new Promise(resolve => {
-    const finish = () => {
+    finish = () => {
+      clearTimeout(frameTimer);
       video.removeEventListener('loadeddata', finish);
       video.removeEventListener('playing', finish);
       resolve();
     };
     video.addEventListener('loadeddata', finish);
     video.addEventListener('playing', finish);
-    setTimeout(finish, 1800);
+    frameTimer = setTimeout(finish, 900);
   });
 
   try {
-    await video.play();
+    // WebKit may leave play() pending for an offscreen element. Bound frame
+    // priming independently so promotion can always retry playback.
+    Promise.resolve(video.play()).catch(finish);
     await firstFrame;
   } catch (_) {
     // Some WebKit versions defer loading offscreen videos until play is called;
     // failing here is safe because the cover remains the fallback.
   } finally {
+    finish();
     const isCurrent = feedSlots[feedSlotCurr] === slot;
     if (loadToken === slot.loadToken && (!isCurrent || state.feed.userPaused || state.currentView !== 'recommend')) {
       video.pause();
@@ -609,6 +618,37 @@ function feedMediaDuration(video) {
   // A growing HLS playlist can report only the duration published so far.
   // Keep the real episode duration as the buffer/progress denominator.
   return Math.max(metadataDuration, mediaDuration);
+}
+
+function feedSlotIsFullyBuffered(slot) {
+  if (!slot?.video?.src) return false;
+  if (slot.completeCached) return true;
+  // A growing HLS playlist's finite duration is not the episode duration.
+  const duration = Number(slot.metadataDurationSec) ||
+    (slot.hlsStreamUrl ? 0 : feedMediaDuration(slot.video));
+  const ranges = slot.video.buffered;
+  if (!(duration > 0) || !ranges?.length || ranges.start(0) > 0.25) return false;
+  let end = ranges.end(0);
+  for (let i = 1; i < ranges.length; i++) {
+    if (ranges.start(i) > end + 0.25) return false;
+    end = ranges.end(i);
+  }
+  return end >= duration - 0.25;
+}
+
+function feedQualityForItem(itemIndex) {
+  const desired = feedDesiredQuality();
+  if (state.feed.userQuality) return desired;
+  const retained = state.feed.retainedQualities?.get(state.feed.items[itemIndex]?.id);
+  return retained && !state.feed.blockedQualities?.includes(retained) ? retained : desired;
+}
+
+function rememberFeedQuality(seriesId, quality) {
+  if (!state.feed.retainedQualities) state.feed.retainedQualities = new Map();
+  const qualities = state.feed.retainedQualities;
+  qualities.delete(seriesId);
+  qualities.set(seriesId, quality);
+  if (qualities.size > 128) qualities.delete(qualities.keys().next().value);
 }
 
 function updateFeedMediaTime(video) {
@@ -683,6 +723,8 @@ function clearFeedSlot(slot) {
   slot.quality = '';
   slot.requestedQuality = '';
   slot.durationSec = 0;
+  slot.metadataDurationSec = 0;
+  slot.completeCached = false;
   slot.streamUrl = '';
   slot.fullStreamUrl = '';
   slot.progressiveStreamUrl = '';
@@ -749,12 +791,13 @@ function feedSlotMatches(slot, itemIndex, seriesId, quality) {
   return Boolean(
     slot &&
     slot.ready &&
-    slot.expiresAt > Date.now() &&
+    (slot.expiresAt > Date.now() || feedVideoHasFirstFrame(slot.video)) &&
     slot.itemIndex === itemIndex &&
     slot.seriesId === seriesId &&
     (slot.quality === quality || slot.requestedQuality === quality) &&
     slot.streamUrl &&
     slot.video?.src &&
+    !slot.video.error &&
     normalizeFeedMediaURL(slot.streamUrl) === normalizeFeedMediaURL(slot.video.src)
   );
 }
@@ -850,7 +893,9 @@ function syncFeedScrollCapture() {
   const enabled = shouldCaptureFeedScroll();
   // Serialize updates so a slow "disable" cannot arrive after a later
   // "enable" and leave native scrolling permanently switched off.
-  feedScrollCaptureSync = apiCall('SetFeedScrollCapture', enabled).catch(() => {}).finally(() => {
+  feedScrollCaptureSync = apiCall('SetFeedScrollCapture', enabled).then(ready => {
+    nativeFeedScrollReady = ready === true;
+  }).catch(() => { nativeFeedScrollReady = false; }).finally(() => {
     feedScrollCaptureSync = null;
     if (enabled !== shouldCaptureFeedScroll()) return syncFeedScrollCapture();
   });
@@ -858,8 +903,12 @@ function syncFeedScrollCapture() {
 }
 
 function handleNativeFeedScroll(payload) {
-  nativeScrollGestureSeen = true;
+  const wasReady = nativeFeedScrollReady;
+  nativeFeedScrollReady = true;
   if (!shouldCaptureFeedScroll()) return;
+  // During native monitor startup the DOM fallback can receive the same
+  // gesture first. Hand ownership over without navigating twice.
+  if (!wasReady && Date.now() - feedLastFallbackScrollAt < 300) return;
   const direction = String(payload?.direction || '').toLowerCase();
   if (direction === 'down') switchFeedDrama(1);
   if (direction === 'up') switchFeedDrama(-1);
@@ -868,6 +917,8 @@ function handleNativeFeedScroll(payload) {
 function resetFeedVideoPool() {
   feedPlayToken++;
   cancelPendingFeedSwitch();
+  feedAnimationToken++;
+  isFeedAnimating = false;
   feedSlots.forEach((slot, index) => {
     clearFeedSlot(slot);
     if (slot.video) {
@@ -996,7 +1047,7 @@ async function assessFeedMediaCapabilities() {
   }
 }
 
-async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = null, primeFirstFrame = false) {
+async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = null, primeFirstFrame = false, quality = null) {
   if (!slot || !slot.video) return null;
   if (itemIndex < 0 || itemIndex >= state.feed.items.length) {
     clearFeedSlot(slot);
@@ -1005,10 +1056,11 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
 
   const drama = state.feed.items[itemIndex];
   if (!drama) return null;
-  const requestedQuality = feedDesiredQuality();
+  const requestedQuality = quality || feedQualityForItem(itemIndex);
   const requestedKey = feedAssetKey(drama.id, 1, requestedQuality);
 
-  if (slot.preparing && slot.itemIndex === itemIndex && slot.seriesId === drama.id && slot.quality === requestedQuality) {
+  if (slot.preparing && slot.itemIndex === itemIndex && slot.seriesId === drama.id &&
+      (slot.quality === requestedQuality || slot.requestedQuality === requestedQuality)) {
     const loadToken = slot.loadToken;
     await slot.preparing;
     if (loadToken !== slot.loadToken || !slot.ready) return null;
@@ -1046,7 +1098,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     // Metadata prefetch and the visible slot share one load. Prefer the same
     // native HLS rendition for cold starts and warm handoffs; changing formats
     // at activation discards the decoder buffer and starts another download.
-    const pb = await prefetchFeedPlaybackInfo(itemIndex);
+    const pb = await prefetchFeedPlaybackInfo(itemIndex, true, requestedQuality);
     if (loadToken !== slot.loadToken) return;
     if (!pb || !pb.streamUrl) {
       if (feedSlots[feedSlotCurr] === slot) reportFeedFailure(slot, '获取播放流失败');
@@ -1054,6 +1106,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     }
 
     const selectedQuality = pb.quality || requestedQuality;
+    rememberFeedQuality(drama.id, selectedQuality);
     rememberFeedPlayback(requestedKey, pb);
     rememberFeedPlayback(feedAssetKey(drama.id, 1, selectedQuality), pb);
 
@@ -1061,10 +1114,12 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     slot.episodeNum = pb.episodeNum || 1;
     slot.quality = selectedQuality;
     slot.durationSec = Number(pb.durationSec) || 0;
+    slot.metadataDurationSec = slot.durationSec;
+    slot.completeCached = Boolean(pb.isFullCached || pb.isHlsCached);
     slot.fullStreamUrl = pb.fullStreamUrl || pb.streamUrl;
     slot.progressiveStreamUrl = pb.progressiveStreamUrl || '';
     slot.hlsStreamUrl = pb.hlsStreamUrl || '';
-    slot.streamUrl = pb.streamUrl;
+    slot.streamUrl = pb.hlsStreamUrl || pb.streamUrl;
     if (pb.isFullCached) slot.streamUrl = slot.fullStreamUrl;
     slot.usedHLSFallback = normalizeFeedMediaURL(slot.streamUrl) === normalizeFeedMediaURL(slot.hlsStreamUrl);
     slot.usedProgressiveFallback = normalizeFeedMediaURL(slot.streamUrl) === normalizeFeedMediaURL(slot.progressiveStreamUrl);
@@ -1076,7 +1131,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     slot.video.playbackRate = state.feed.playbackSpeed || 1;
     slot.video.load();
     slot.ready = true;
-    slot.metricCacheHit = Boolean(pb.isFullCached);
+    slot.metricCacheHit = slot.completeCached;
     slot.metricStreamMode = pb.isFullCached
       ? 'full-cache'
       : (slot.usedHLSFallback ? 'hls' : 'progressive');
@@ -1273,10 +1328,9 @@ function cancelScheduledFeedWarmup({ releaseMedia = true } = {}) {
   }
 }
 
-function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true) {
+function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true, quality = feedQualityForItem(itemIndex)) {
   const drama = state.feed.items[itemIndex];
   if (!drama) return null;
-  const quality = feedDesiredQuality();
   const key = feedAssetKey(drama.id, 1, quality);
   const generation = feedPlaybackGeneration;
   const cached = state.feed.preloadMap.get(key);
@@ -1287,7 +1341,7 @@ function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true) {
     return existingLoad.then(playback => {
       if (generation !== feedPlaybackGeneration || state.feed.items[itemIndex]?.id !== drama.id) return null;
       if (preferHLS && playback && !playback.isFullCached && !playback.hlsStreamUrl) {
-        return prefetchFeedPlaybackInfo(itemIndex, true);
+        return prefetchFeedPlaybackInfo(itemIndex, true, quality);
       }
       return playback;
     });
@@ -1299,6 +1353,7 @@ function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true) {
       if (playback?.streamUrl) {
         playback.expiresAt = Date.now() + 10 * 60 * 1000;
         rememberFeedPlayback(key, playback);
+        rememberFeedPlayback(feedAssetKey(drama.id, 1, playback.quality || quality), playback);
       }
       return playback;
     })
@@ -1514,7 +1569,7 @@ function decideFeedPreload(sample, previous = {}) {
 function cachedFeedPlayback(itemIndex) {
   const drama = state.feed.items[itemIndex];
   if (!drama) return null;
-  const pb = state.feed.preloadMap.get(feedAssetKey(drama.id, 1, feedDesiredQuality()));
+  const pb = state.feed.preloadMap.get(feedAssetKey(drama.id, 1, feedQualityForItem(itemIndex)));
   return pb?.expiresAt > Date.now() ? pb : null;
 }
 
@@ -1580,15 +1635,14 @@ async function runFeedWarmup(session) {
     }
     const video = session.current.video;
     const ahead = feedVideoBufferAhead(video);
-    const remaining = Math.max(0, feedMediaDuration(video) - (video.currentTime || 0));
     const ready = offset => {
       const pb = cachedFeedPlayback(session.centerIndex + offset);
       const status = pb && session.statuses.get(`${pb.episodeId}:${pb.quality}`);
-      return Boolean(pb?.isFullCached || status?.complete || status?.cachedSeconds >= 6);
+      return Boolean(pb?.isFullCached || pb?.isHlsCached || status?.complete || status?.cachedSeconds >= 6);
     };
     session.policy = decideFeedPreload({
       now, bufferSec: ahead, rate: video.playbackRate, profile: effectiveFeedNetworkProfile(),
-      complete: remaining > 0 && ahead >= remaining - 0.25,
+      complete: feedSlotIsFullyBuffered(session.current),
       waiting: video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA &&
         !video.ended && (video.currentTime > 0 || session.policy.depth > 0),
       nextReady: ready(1), secondReady: ready(2),
@@ -1606,7 +1660,9 @@ async function runFeedWarmup(session) {
         episodeId: pb.episodeId, number: pb.episodeNum || 1, quality: pb.quality });
     }
     const nextSlot = feedSlots[feedSlotNext];
-    if (!depth && nextSlot?.itemIndex === session.centerIndex + 1) clearFeedSlot(nextSlot);
+    if (!depth && nextSlot?.itemIndex === session.centerIndex + 1 && !feedSlotIsFullyBuffered(nextSlot)) {
+      clearFeedSlot(nextSlot);
+    }
     const statuses = await updateFeedPreloadWindow(session.current, items);
     if (!valid()) return;
     session.statuses = new Map((statuses || []).map(status => [`${status.episodeId}:${status.quality}`, status]));
@@ -3281,6 +3337,7 @@ async function clearMediaCache() {
   cancelScheduledFeedWarmup({ releaseMedia: false });
   feedPlaybackGeneration++;
   state.feed.preloadMap.clear();
+  state.feed.retainedQualities?.clear();
   state.feed.playbackInfoLoads.clear();
   // Keep the visible decoder; discard adjacent sources that may reference a
   // cached file about to be removed. Late metadata loads have been invalidated.
@@ -3957,26 +4014,54 @@ let isFeedAnimating = false;
 let feedSwitchWaitTimer = null;
 let feedSwitchWaitDir = 0;
 let feedSwitchWaitStartedAt = 0;
+let feedSwitchWaitOrigin = -1;
+let feedSwitchIntentGeneration = 0;
+let feedQueuedSwitchDir = 0;
+let feedQueuedSwitchTimer = null;
 let feedAnimationToken = 0;
 
-function cancelPendingFeedSwitch() {
-  if (!feedSwitchWaitTimer) return;
-  clearTimeout(feedSwitchWaitTimer);
+function cancelPendingFeedSwitch({ keepQueue = false } = {}) {
+  if (feedSwitchWaitTimer) clearTimeout(feedSwitchWaitTimer);
   feedSwitchWaitTimer = null;
   feedSwitchWaitDir = 0;
   feedSwitchWaitStartedAt = 0;
+  feedSwitchWaitOrigin = -1;
+  feedSwitchIntentGeneration++;
+  if (!keepQueue) {
+    if (feedQueuedSwitchTimer) clearTimeout(feedQueuedSwitchTimer);
+    feedQueuedSwitchTimer = null;
+    feedQueuedSwitchDir = 0;
+  }
 }
 
-function schedulePendingFeedSwitch(dir) {
-  if (feedSwitchWaitTimer && feedSwitchWaitDir === dir) return;
-  cancelPendingFeedSwitch();
-  feedSwitchWaitDir = dir;
-  feedSwitchWaitStartedAt = Date.now();
+function queueFeedSwitch(dir) {
+  feedQueuedSwitchDir = dir;
+  if (feedQueuedSwitchTimer) clearTimeout(feedQueuedSwitchTimer);
+  const delay = Math.max(isFeedAnimating ? 16 : 0,
+    state.feed.lastSwitchTime + (isFeedAnimating ? 340 : 320) - Date.now());
+  feedQueuedSwitchTimer = setTimeout(() => {
+    feedQueuedSwitchTimer = null;
+    const queued = feedQueuedSwitchDir;
+    feedQueuedSwitchDir = 0;
+    if (queued && shouldCaptureFeedScroll()) switchFeedDrama(queued);
+  }, delay);
+}
+
+function schedulePendingFeedSwitch(dir, delay = 50) {
+  if (feedSwitchWaitDir !== dir || feedSwitchWaitOrigin !== state.feed.index) {
+    cancelPendingFeedSwitch({ keepQueue: true });
+    feedSwitchWaitDir = dir;
+    feedSwitchWaitOrigin = state.feed.index;
+    feedSwitchWaitStartedAt = Date.now();
+  }
+  if (feedSwitchWaitTimer) return;
+  const generation = feedSwitchIntentGeneration;
   feedSwitchWaitTimer = setTimeout(() => {
     feedSwitchWaitTimer = null;
-    feedSwitchWaitDir = 0;
-    if (state.currentView === 'recommend' && !isFeedAnimating) switchFeedDrama(dir);
-  }, 400);
+    if (generation !== feedSwitchIntentGeneration) return;
+    if (shouldCaptureFeedScroll() && state.feed.index === feedSwitchWaitOrigin) switchFeedDrama(dir);
+    else cancelPendingFeedSwitch();
+  }, delay);
 }
 
 function prepareFeedTargetForSwitch(slot, itemIndex, quality) {
@@ -3989,14 +4074,17 @@ function prepareFeedTargetForSwitch(slot, itemIndex, quality) {
     return;
   }
   if (slot.preparing) return;
-  prepareFeedSlot(slot, itemIndex, false, null, true).catch(err => {
+  prepareFeedSlot(slot, itemIndex, false, null, true, quality).catch(err => {
     console.warn('prepare feed target failed:', drama.id, err);
   });
 }
 
 function switchFeedDrama(dir) {
-  if (state.currentView !== 'recommend') return;
+  if (!shouldCaptureFeedScroll() || (dir !== 1 && dir !== -1)) return;
   const now = Date.now();
+  if (feedSwitchWaitDir && (feedSwitchWaitDir !== dir || feedSwitchWaitOrigin !== state.feed.index)) {
+    cancelPendingFeedSwitch({ keepQueue: true });
+  }
   if (isFeedAnimating && now - state.feed.lastSwitchTime > 1000) {
     // The normal completion callback and watchdog above are defensive, but a
     // synchronous setup exception can still escape both. Self-heal here so one
@@ -4004,8 +4092,10 @@ function switchFeedDrama(dir) {
     console.warn('feed switch self-healing released a stuck animation lock');
     isFeedAnimating = false;
   }
-  if (isFeedAnimating) return;
-  if (now - state.feed.lastSwitchTime < 380) return;
+  if (isFeedAnimating || now - state.feed.lastSwitchTime < 320) {
+    queueFeedSwitch(dir);
+    return;
+  }
 
   const targetIdx = state.feed.index + dir;
   if (targetIdx < 0) {
@@ -4016,20 +4106,28 @@ function switchFeedDrama(dir) {
   if (targetIdx >= state.feed.items.length) {
     if (state.feed.hasMore) {
       const switchOrigin = state.feed.index;
+      schedulePendingFeedSwitch(dir, 150);
+      const generation = feedSwitchIntentGeneration;
+      if (now - feedSwitchWaitStartedAt > 10000) {
+        cancelPendingFeedSwitch();
+        showFeedHint('加载较慢，请稍后重试', false, 1800);
+        return;
+      }
       const finishBoundaryLoad = () => {
-        if (state.feed.index === switchOrigin && state.feed.items[targetIdx]) {
-          state.feed.lastSwitchTime = Date.now();
+        if (generation !== feedSwitchIntentGeneration || state.feed.index !== switchOrigin || !shouldCaptureFeedScroll()) return;
+        if (state.feed.items[targetIdx]) {
           switchFeedDrama(dir);
+        } else {
+          cancelPendingFeedSwitch();
+          showFeedHint('暂时没有更多视频，请稍后重试', false, 1800);
         }
       };
       if (state.feed.loading) {
-        setTimeout(() => {
-          if (state.feed.index === switchOrigin && state.currentView === 'recommend') switchFeedDrama(dir);
-        }, 300);
         return;
       }
       loadFeed(false).then(finishBoundaryLoad).catch(finishBoundaryLoad);
     } else {
+      cancelPendingFeedSwitch();
       showFeedHint('已经到底了，没有更多了', false, 2200);
     }
     return;
@@ -4039,15 +4137,14 @@ function switchFeedDrama(dir) {
   const oldCurrentSlot = feedSlots[feedSlotCurr];
   const targetSlot = dir > 0 ? feedSlots[feedSlotNext] : feedSlots[feedSlotPrev];
   const offscreenSlot = dir > 0 ? feedSlots[feedSlotPrev] : feedSlots[feedSlotNext];
-  const desiredQuality = feedDesiredQuality();
-  const requestedTargetQuality = dir > 0 ? desiredQuality : (targetSlot.quality || desiredQuality);
+  const requestedTargetQuality = feedQualityForItem(targetIdx);
   const targetReadyBeforeMove = feedSlotMatches(targetSlot, targetIdx, targetDrama.id, requestedTargetQuality);
-  const targetWaitMs = feedSwitchWaitStartedAt ? now - feedSwitchWaitStartedAt : 0;
-  const targetStartupDeadline = targetSlot.progressiveStreamUrl ? 1200 : 2500;
+  const targetWaitMs = feedSwitchWaitDir === dir && feedSwitchWaitOrigin === state.feed.index
+    ? now - feedSwitchWaitStartedAt : 0;
+  const targetStartupDeadline = 350;
   if ((!targetReadyBeforeMove || !feedVideoHasFirstFrame(targetSlot.video)) && targetWaitMs < targetStartupDeadline) {
-    // Rapid swipes can outrun page pagination and HLS priming. Keep the active
-    // video playing while the target decodes a real frame, then complete the
-    // gesture without exposing a paused poster or a loading overlay.
+    // Give an imminent first frame a short head start while current playback
+    // continues. A stalled offscreen decoder must not block navigation.
     prepareFeedTargetForSwitch(targetSlot, targetIdx, requestedTargetQuality);
     schedulePendingFeedSwitch(dir);
     return;
@@ -4067,7 +4164,7 @@ function switchFeedDrama(dir) {
   const fromIndex = state.feed.index;
 
   persistFeedProgress();
-  cancelPendingFeedSwitch();
+  cancelPendingFeedSwitch({ keepQueue: true });
 
   if (dir > 0) {
     feedSlotPrev = oldCurrentSlot.id;
@@ -4077,8 +4174,7 @@ function switchFeedDrama(dir) {
     feedSlotPrev = offscreenSlot.id;
   }
 
-  const targetQuality = dir > 0 ? desiredQuality : (targetSlot.quality || desiredQuality);
-  const targetReady = feedSlotMatches(targetSlot, targetIdx, targetDrama.id, targetQuality);
+  const targetReady = feedSlotMatches(targetSlot, targetIdx, targetDrama.id, requestedTargetQuality);
   const targetBuffered = Boolean(targetReady && feedVideoHasPlaybackBuffer(targetSlot.video));
   activateFeedDrama(targetDrama, targetIdx, targetReady ? targetSlot : null);
   if (targetReady) prepareFeedStartPosition(targetSlot, dir);
@@ -4142,6 +4238,7 @@ function switchFeedDrama(dir) {
   oldCurrentSlot.layer.classList.remove('is-active');
 
   setTimeout(() => {
+    if (animationToken !== feedAnimationToken) return;
     try {
       if (feedSlots[feedSlotCurr] !== oldCurrentSlot) oldCurrentSlot.video.pause();
       oldCurrentSlot.layer.style.transition = 'none';
@@ -4166,6 +4263,7 @@ function switchFeedDrama(dir) {
       console.error('feed switch cleanup failed:', err);
     } finally {
       isFeedAnimating = false;
+      if (feedQueuedSwitchDir) queueFeedSwitch(feedQueuedSwitchDir);
     }
   }, duration);
 }
@@ -5465,11 +5563,11 @@ function initFeedControls() {
     recommendView.addEventListener('wheel', (e) => {
       if (!shouldCaptureFeedScroll() || e.target?.closest?.('.feed-playlist-drawer, .episodes-grid, .speed-menu, .drawer, #comment-sheet-overlay')) return;
       e.preventDefault();
-      if (nativeScrollGestureSeen) return;
+      if (nativeFeedScrollReady) return;
 
       const deltaUnit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1;
       const deltaY = e.deltaY * deltaUnit;
-      if (Math.abs(deltaY) < 12) return;
+      if (!Number.isFinite(deltaY) || deltaY === 0 || Math.abs(e.deltaX || 0) > Math.abs(e.deltaY) * 1.5) return;
       const direction = deltaY > 0 ? 1 : -1;
       const now = performance.now();
       const gap = now - wheelLastAt;
@@ -5516,6 +5614,7 @@ function initFeedControls() {
       wheelArmed = false;
       wheelLowCount = 0;
       wheelLowEnergy = 0;
+      feedLastFallbackScrollAt = Date.now();
       switchFeedDrama(dir);
     }, { passive: false });
 
@@ -5536,6 +5635,7 @@ function initFeedControls() {
       const diffY = e.clientY - pointerStart.y;
       const duration = Date.now() - pointerStartTime;
       pointerStart = null;
+      if (!shouldCaptureFeedScroll()) return;
 
       const minVerticalDistance = Math.max(60, feedStage.clientHeight * 0.08);
       const isVertical = Math.abs(diffY) > Math.abs(diffX) * 1.5;
@@ -5549,9 +5649,7 @@ function initFeedControls() {
   }
 
   document.addEventListener('keydown', (e) => {
-    if (state.currentView !== 'recommend') return;
-    const modal = document.getElementById('player-modal');
-    if (modal && modal.style.display !== 'none') return;
+    if (!shouldCaptureFeedScroll()) return;
     const targetTag = e.target.tagName;
     if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || e.target.isContentEditable) return;
 

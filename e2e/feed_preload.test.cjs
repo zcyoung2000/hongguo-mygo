@@ -140,7 +140,7 @@ function scheduler() {
     clearFeedSlot: slot => { calls.push(['clear', slot]); slot.itemIndex = -1; },
     apiCall: (...args) => { calls.push(args); return Promise.resolve([]); }
   });
-  load(c, ['decideFeedPreload', 'updateFeedPreloadWindow', 'cancelScheduledFeedWarmup', 'wakeFeedWarmup', 'runFeedWarmup']);
+  load(c, ['decideFeedPreload', 'feedSlotIsFullyBuffered', 'updateFeedPreloadWindow', 'cancelScheduledFeedWarmup', 'wakeFeedWarmup', 'runFeedWarmup']);
   const session = { token: 1, centerIndex: 0, current, running: false, timer: null,
     lastDiagnostics: Infinity, policy: {}, statuses: new Map(), metadataTries: new Map() };
   c.feedWarmupSession = session;
@@ -182,6 +182,17 @@ test('an explicit pending swipe keeps its target decoder despite pressure on the
   await c.runFeedWarmup(session);
   assert.equal(calls.filter(call => call[0] === 'clear').length, 0);
   assert.equal(calls.find(call => call[0] === 'UpdateFeedPreloadWindow').at(-1).length, 1);
+});
+
+test('backpressure preserves an already cached adjacent decoder for reverse navigation', async () => {
+  const { c, session, calls } = scheduler();
+  Object.assign(c.feedSlots[1], { itemIndex: 1, completeCached: true, video: { src: 'local-cached' } });
+  c.feedVideoBufferAhead = () => 2;
+  await c.runFeedWarmup(session);
+  assert.equal(session.policy.depth, 0);
+  assert.equal(calls.filter(call => call[0] === 'clear').length, 0);
+  assert.equal(calls.find(call => call[0] === 'UpdateFeedPreloadWindow').at(-1).length, 0,
+    'keeping resident cached media must not admit speculative downloads');
 });
 
 test('a slow old reply cannot prepare a decoder or rearm a timer after cancellation', async () => {

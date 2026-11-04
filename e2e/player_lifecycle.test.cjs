@@ -35,6 +35,7 @@ function harness() {
   };
   const c = vm.createContext({
     console, clearTimeout, video, window: {}, playerRequestToken: 0, playerPlaybackIdentity: null,
+    nativeFeedScrollReady: false, feedLastFallbackScrollAt: -Infinity,
     document: { getElementById: element, querySelectorAll: () => [], documentElement: {}, body: element('body') },
     state: {
       currentView: 'detail', detail: { data: null },

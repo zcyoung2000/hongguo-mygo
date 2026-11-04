@@ -40,6 +40,8 @@ function harness() {
   for (const name of [
     'feedAssetKey', 'feedPlaybackKey', 'rememberFeedPlayback', 'normalizeFeedMediaURL',
     'feedSlotMatches', 'feedVideoHasFirstFrame', 'feedSlotForVideo', 'feedMediaDuration',
+    'feedQualityForItem', 'rememberFeedQuality', 'feedSlotIsFullyBuffered',
+    'primeFeedSlotFirstFrame',
     'prefetchFeedPlaybackInfo', 'prepareFeedSlot', 'beginFeedPlayback',
     'ensureFeedSource',
     'playbackBufferedRange', 'updatePlaybackBufferIndicator'
@@ -150,6 +152,22 @@ test('metadata-only lookahead upgrades to HLS when admitted for media warmup', a
   assert.equal(result.hlsStreamUrl, 'http://localhost/hls/index.m3u8');
 });
 
+test('lookahead with an HLS alternative promotes the same rendition without another IPC negotiation', async () => {
+  const c = harness();
+  let calls = 0;
+  c.apiCall = () => {
+    calls++;
+    return Promise.resolve({ ...playback(), streamUrl: 'http://localhost/video?mode=progressive' });
+  };
+  await c.prefetchFeedPlaybackInfo(0, false);
+  const slot = videoSlot();
+  c.feedSlots = [slot];
+  await c.prepareFeedSlot(slot, 0, true);
+  assert.equal(calls, 1);
+  assert.equal(slot.video.src, 'http://localhost/hls/index.m3u8',
+    'the decoder must open the rendition already being warmed by the media window');
+});
+
 test('an unavailable HLS startup does not cause coalesced callers to retry forever', async () => {
   const c = harness();
   let calls = 0;
@@ -205,6 +223,106 @@ test('expired playback metadata reloads and a reset rejects stale cache writes',
   resolvePlayback(playback());
   await load;
   assert.equal(c.state.feed.preloadMap.size, 0);
+});
+
+test('revisiting a resident frame after metadata expiry preserves its decoder', async () => {
+  const c = harness();
+  const slot = videoSlot();
+  Object.assign(slot, { itemIndex: 0, seriesId: 'series-a', quality: '720p',
+    ready: true, streamUrl: 'http://localhost/cached.m3u8', expiresAt: Date.now() - 1 });
+  Object.assign(slot.video, { src: slot.streamUrl, readyState: 4, videoWidth: 320 });
+  c.feedSlots = [slot];
+  c.apiCall = () => { throw new Error('resident playback must not renegotiate'); };
+  await c.prepareFeedSlot(slot, 0, true);
+  assert.equal(slot.video.loadCount, 0);
+  assert.equal(slot.video.playCount, 1);
+});
+
+test('a recycled slot reuses its remembered rendition after adaptive quality changes', async () => {
+  const c = harness();
+  const calls = [];
+  c.apiCall = (...args) => { calls.push(args); return Promise.resolve(playback()); };
+  const first = videoSlot();
+  c.feedSlots = [first];
+  await c.prepareFeedSlot(first, 0, true);
+  c.feedDesiredQuality = () => '540p';
+  const recycled = videoSlot();
+  c.feedSlots = [recycled];
+  await c.prepareFeedSlot(recycled, 0, true);
+  assert.equal(calls.length, 1, 'returning to a warm rendition must not request another quality');
+  assert.equal(recycled.quality, '720p');
+  c.state.feed.userQuality = '540p';
+  c.apiCall = (...args) => { calls.push(args); return Promise.resolve({ ...playback(), quality: '540p' }); };
+  await c.prepareFeedSlot(recycled, 0, true);
+  assert.equal(calls.length, 2, 'an explicit quality selection still takes effect');
+  assert.equal(calls[1][4], '540p');
+});
+
+test('a growing HLS prefix is never mistaken for a completely buffered episode', () => {
+  const c = harness();
+  const slot = videoSlot();
+  Object.assign(slot, { hlsStreamUrl: 'http://localhost/live.m3u8', durationSec: 6 });
+  Object.assign(slot.video, { src: slot.hlsStreamUrl, duration: 6,
+    buffered: { length: 1, start: () => 0, end: () => 6 } });
+  c.feedSlots = [slot];
+  assert.equal(c.feedSlotIsFullyBuffered(slot), false, 'unknown episode duration must not trust a prefix');
+  slot.metadataDurationSec = 60;
+  assert.equal(c.feedSlotIsFullyBuffered(slot), false);
+  slot.video.buffered.end = () => 60;
+  assert.equal(c.feedSlotIsFullyBuffered(slot), true);
+  slot.video.buffered = { length: 2, start: i => i ? 10 : 0, end: i => i ? 60 : 6 };
+  assert.equal(c.feedSlotIsFullyBuffered(slot), false, 'a gap is not a complete buffer');
+});
+
+test('offscreen play remaining pending cannot keep first-frame priming locked', async () => {
+  const c = harness();
+  const timers = new Map();
+  let id = 0;
+  c.setTimeout = (fn, delay) => { timers.set(++id, { fn, delay }); return id; };
+  c.clearTimeout = id => timers.delete(id);
+  c.syncFeedPosterVisibility = () => {};
+  const slot = videoSlot();
+  slot.video.src = 'http://localhost/pending.m3u8';
+  const listeners = new Map();
+  slot.video.addEventListener = (event, callback) => listeners.set(event, callback);
+  slot.video.removeEventListener = event => listeners.delete(event);
+  slot.video.play = () => new Promise(() => {});
+  slot.video.pause = () => { slot.video.paused = true; };
+  c.feedSlots = [videoSlot(), slot];
+  const priming = c.primeFeedSlotFirstFrame(slot);
+  let settled = false;
+  priming.then(() => { settled = true; });
+  const [timerId, timer] = [...timers][0];
+  assert.equal(timer.delay, 900);
+  timers.delete(timerId);
+  timer.fn();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, true, 'frame timeout must also bound the unresolved play promise');
+  for (const { fn } of [...timers.values()]) fn();
+  assert.equal(slot.isPriming, false);
+  assert.equal(slot.video.paused, true);
+  assert.equal(listeners.size, 0);
+});
+
+test('promotion during first-frame priming keeps foreground playback running', async () => {
+  const c = harness();
+  c.syncFeedPosterVisibility = () => {};
+  const slot = videoSlot();
+  const listeners = new Map();
+  slot.video.src = 'http://localhost/priming.m3u8';
+  slot.video.addEventListener = (event, callback) => listeners.set(event, callback);
+  slot.video.removeEventListener = event => listeners.delete(event);
+  let pauses = 0;
+  slot.video.pause = () => { pauses++; };
+  c.feedSlots = [videoSlot(), slot];
+  const priming = c.primeFeedSlotFirstFrame(slot);
+  c.feedSlotCurr = 1;
+  slot.video.readyState = 3;
+  slot.video.videoWidth = 320;
+  listeners.get('loadeddata')();
+  await priming;
+  assert.equal(pauses, 0);
+  assert.equal(slot.isPriming, false);
 });
 
 test('buffer bar grows against episode duration while the HLS playlist grows', () => {
