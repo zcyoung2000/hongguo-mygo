@@ -22,9 +22,10 @@ fi
 cd "$ROOT_DIR"
 
 echo "==> Building $APP_NAME (CGO_ENABLED=0)"
-CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -skip-dmg
+BUILD_ARCH="$(go env GOARCH)"
+CGO_ENABLED=0 go run github.com/egoist/mygo/cmd/mygo build -platform "darwin/$BUILD_ARCH" -skip-dmg
 
-BUILT_APP="$ROOT_DIR/$OUTPUT_DIR/darwin-arm64/$APP_NAME.app"
+BUILT_APP="$ROOT_DIR/$OUTPUT_DIR/darwin-$BUILD_ARCH/$APP_NAME.app"
 INSTALL_APP="/Applications/$APP_NAME.app"
 
 if [[ ! -d "$BUILT_APP" ]]; then

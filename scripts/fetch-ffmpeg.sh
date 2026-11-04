@@ -3,10 +3,12 @@ set -euo pipefail
 
 case "$(uname -m)" in
   arm64)
+    arch="arm64"
     url="https://www.osxexperts.net/ffmpeg9arm.zip"
     expected="591260c945d0eef150e3bf82b0ef988bd36a9cecc18ff05d6679617159f0a95e"
     ;;
   x86_64)
+    arch="amd64"
     url="https://www.osxexperts.net/ffmpeg80intel.zip"
     expected="df3f1e3facdc1ae0ad0bd898cdfb072fbc9641bf47b11f172844525a05db8d11"
     ;;
@@ -17,7 +19,19 @@ case "$(uname -m)" in
 esac
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-output="$root/resources/darwin-$(uname -m)/ffmpeg"
+output="$root/resources/darwin-$arch/ffmpeg"
+
+# Older Intel downloads used uname's spelling, which MyGo rejects as a
+# platform directory. Keep their contents when correcting the directory name.
+if [[ -d "$root/resources/darwin-x86_64" ]]; then
+  if [[ ! -e "$root/resources/darwin-amd64" ]]; then
+    mv "$root/resources/darwin-x86_64" "$root/resources/darwin-amd64"
+  else
+    # Preserve an obsolete duplicate outside the packaged resources tree.
+    legacy_backup="$(mktemp -d "$root/tmp_ffmpeg_x86_64.XXXXXX")"
+    mv "$root/resources/darwin-x86_64" "$legacy_backup/darwin-x86_64"
+  fi
+fi
 
 if [[ -x "$output" ]]; then
   actual="$(shasum -a 256 "$output" | awk '{print $1}')"

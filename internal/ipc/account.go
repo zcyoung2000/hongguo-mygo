@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -57,7 +58,7 @@ func (s *HongguoService) GetDeviceInfo(ctx context.Context) (map[string]string, 
 		"openudid":    openudid,
 		"storeRegion": s.storeRegion,
 		"version":     "2.0.0",
-		"arch":        "darwin-arm64",
+		"arch":        runtime.GOOS + "-" + runtime.GOARCH,
 	}, nil
 }
 
