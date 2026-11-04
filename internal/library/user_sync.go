@@ -16,6 +16,7 @@ import (
 
 	"myguo/internal/mediautil"
 	"myguo/internal/sign"
+	userstore "myguo/internal/store"
 	"myguo/internal/upstream"
 )
 
@@ -34,6 +35,10 @@ func contentInt(value string) (int64, error) {
 }
 
 func (s *Service) postSignedMutation(ctx context.Context, operation, path string, payload any) error {
+	session, err := s.sessionForRequest(ctx)
+	if err != nil {
+		return err
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("%s 编码失败: %w", operation, err)
@@ -47,7 +52,7 @@ func (s *Service) postSignedMutation(ctx context.Context, operation, path string
 		return fmt.Errorf("%s 压缩失败: %w", operation, err)
 	}
 
-	userCookies, userToken := s.credentials()
+	userCookies, userToken := session.cookies, session.token
 	deviceID, installID, cdid, openudid := s.deviceIdentity()
 	pairs := upstream.DefaultDeviceQueryPairs(deviceID, installID, cdid, openudid)
 	ticket := time.Now().UnixMilli()
@@ -90,18 +95,21 @@ func (s *Service) postSignedMutation(ctx context.Context, operation, path string
 		return fmt.Errorf("%s接口返回 HTTP %d", operation, resp.StatusCode)
 	}
 	var result struct {
-		Code    int    `json:"code"`
+		Code    *int   `json:"code"`
 		Message string `json:"message"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return fmt.Errorf("%s接口返回无效 JSON: %w", operation, err)
 	}
-	if result.Code != 0 {
+	if result.Code == nil {
+		return fmt.Errorf("%s接口缺少业务状态", operation)
+	}
+	if *result.Code != 0 {
 		message := result.Message
 		if message == "" {
 			message = "unknown error"
 		}
-		return fmt.Errorf("%s接口返回 code %d: %s", operation, result.Code, message)
+		return fmt.Errorf("%s接口返回 code %d: %s", operation, *result.Code, message)
 	}
 	return nil
 }
@@ -295,7 +303,7 @@ func (s *Service) resolveHistoryEpisodeID(item HistoryItem) string {
 	if cached, ok := s.store.GetCachedEpisodeAt(item.SeriesID, "", item.EpisodeNum); ok {
 		return cached.EpisodeID
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(s.background.Context(), 8*time.Second)
 	defer cancel()
 	episodes, err := s.episodes(ctx, item.SeriesID)
 	if err != nil {
@@ -309,9 +317,8 @@ func (s *Service) resolveHistoryEpisodeID(item HistoryItem) string {
 	return ""
 }
 
-func (s *Service) requestHistoryDelete(items []HistoryItem, episodeIDs []string) error {
-	userCookies, _ := s.credentials()
-	if userCookies == "" || len(items) == 0 || len(items) != len(episodeIDs) {
+func (s *Service) requestHistoryDelete(ctx context.Context, items []HistoryItem, episodeIDs []string) error {
+	if len(items) == 0 || len(items) != len(episodeIDs) {
 		return nil
 	}
 	payload := historyDeletePayload(items, episodeIDs)
@@ -319,17 +326,16 @@ func (s *Service) requestHistoryDelete(items []HistoryItem, episodeIDs []string)
 	if !ok || len(updates) == 0 {
 		return fmt.Errorf("历史删除缺少有效分集引用")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	return s.postSignedMutation(ctx, "历史删除", "/reading/bookapi/read_history/update/v", payload)
 }
 
-func (s *Service) reportPlaybackProgress(items []HistoryItem, episodeIDs []string) error {
-	userCookies, _ := s.credentials()
-	if userCookies == "" || len(items) == 0 || len(items) != len(episodeIDs) {
+func (s *Service) reportPlaybackProgress(ctx context.Context, items []HistoryItem, episodeIDs []string) error {
+	if len(items) == 0 || len(items) != len(episodeIDs) {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	historyPayload := historyUpdateBatchPayload(items, episodeIDs)
 	if historyPayload == nil {
@@ -346,11 +352,9 @@ func (s *Service) reportPlaybackProgress(items []HistoryItem, episodeIDs []strin
 }
 
 func (s *Service) triggerPendingHistorySync() {
-	s.backgroundWG.Add(1)
-	go func() {
-		defer s.backgroundWG.Done()
+	s.background.Go(func(context.Context) {
 		s.syncPendingHistoryMutations()
-	}()
+	})
 }
 
 func (s *Service) syncPendingHistoryMutations() {
@@ -386,28 +390,27 @@ func (s *Service) syncPendingHistoryMutations() {
 }
 
 func (s *Service) processPendingHistoryUploads() error {
-	userCookies, _ := s.credentials()
-	if userCookies == "" {
+	ctx := s.bindSyncSession(s.background.Context())
+	session, err := s.sessionForRequest(ctx)
+	if err != nil {
 		return nil
 	}
-	items, err := s.store.PendingHistoryUploads(userSyncPageSize)
+	items, err := s.store.PendingHistoryUploads(userSyncPageSize, session.scope)
 	if err != nil || len(items) == 0 {
 		return err
 	}
 
-	episodeIDs := make([]string, len(items))
 	valid := make([]HistoryItem, 0, len(items))
-	validIDs := make([]string, 0, len(items))
+	ack := make([]userstore.PendingHistoryUpload, 0, len(items))
 	validEpisodeIDs := make([]string, 0, len(items))
-	for i, pending := range items {
+	for _, pending := range items {
 		if s.store.HistoryDeleted(pending.SeriesID) {
-			_ = s.store.DeletePendingHistoryUploads([]string{pending.SeriesID})
+			if err := s.store.AckHistoryUploads([]userstore.PendingHistoryUpload{pending}); err != nil {
+				return err
+			}
 			continue
 		}
 		item := pending.HistoryItem
-		if current, ok := s.store.GetHistoryItem(pending.SeriesID); ok && current.UpdatedAt >= pending.UpdatedAt {
-			item = current
-		}
 		episodeID := pending.EpisodeID
 		if episodeID == "" {
 			episodeID = s.resolveHistoryEpisodeID(item)
@@ -418,26 +421,26 @@ func (s *Service) processPendingHistoryUploads() error {
 		if _, err := contentInt(episodeID); err != nil {
 			return fmt.Errorf("历史 %s 缺少有效分集 ID", item.SeriesID)
 		}
-		episodeIDs[i] = episodeID
 		valid = append(valid, item)
-		validIDs = append(validIDs, pending.SeriesID)
+		ack = append(ack, pending)
 		validEpisodeIDs = append(validEpisodeIDs, episodeID)
 	}
 	if len(valid) == 0 {
 		return nil
 	}
-	if err := s.reportPlaybackProgress(valid, validEpisodeIDs); err != nil {
+	if err := s.reportPlaybackProgress(ctx, valid, validEpisodeIDs); err != nil {
 		return err
 	}
-	return s.store.DeletePendingHistoryUploads(validIDs)
+	return s.store.AckHistoryUploads(ack)
 }
 
 func (s *Service) processPendingHistoryDeletes() error {
-	userCookies, _ := s.credentials()
-	if userCookies == "" {
+	ctx := s.bindSyncSession(s.background.Context())
+	session, err := s.sessionForRequest(ctx)
+	if err != nil {
 		return nil
 	}
-	pending, err := s.store.PendingHistoryDeletes(50)
+	pending, err := s.store.PendingHistoryDeletes(50, session.scope)
 	if err != nil || len(pending) == 0 {
 		return err
 	}
@@ -448,7 +451,7 @@ func (s *Service) processPendingHistoryDeletes() error {
 		episodeIDs = append(episodeIDs, queued.EpisodeID)
 	}
 	send := make([]HistoryItem, 0, len(items))
-	sendIDs := make([]string, 0, len(items))
+	ack := make([]userstore.PendingHistoryDelete, 0, len(items))
 	sendEpisodeIDs := make([]string, 0, len(items))
 	for i, item := range items {
 		episodeID := pending[i].EpisodeID
@@ -459,57 +462,52 @@ func (s *Service) processPendingHistoryDeletes() error {
 			continue
 		}
 		send = append(send, item)
-		sendIDs = append(sendIDs, item.SeriesID)
+		ack = append(ack, pending[i])
 		sendEpisodeIDs = append(sendEpisodeIDs, episodeID)
 	}
 	if len(send) == 0 {
 		return fmt.Errorf("待删除历史缺少可解析分集")
 	}
-	if err := s.requestHistoryDelete(send, sendEpisodeIDs); err != nil {
+	if err := s.requestHistoryDelete(ctx, send, sendEpisodeIDs); err != nil {
 		return err
 	}
-	return s.store.DeletePendingHistoryDeletes(sendIDs)
+	return s.store.AckHistoryDeletes(ack)
 }
 func (s *Service) triggerPendingFavoriteSync() {
-	s.backgroundWG.Add(1)
-	go func() {
-		defer s.backgroundWG.Done()
+	s.background.Go(func(context.Context) {
 		if _, err := s.syncPendingFavoriteOps(); err != nil {
 			log.Printf("[favorites] pending sync failed: %v", err)
 		}
-	}()
+	})
 }
 
 func (s *Service) syncPendingFavoriteOps() (int, error) {
+	// Serialize upload workers, not local favorite changes. A slow network
+	// must not block the local toggle; acknowledgments use queue revisions.
+	s.favSyncMu.Lock()
+	defer s.favSyncMu.Unlock()
+	ctx := s.bindSyncSession(s.background.Context())
+	session, err := s.sessionForRequest(ctx)
+	if err != nil {
+		return 0, nil
+	}
 	processed := 0
 	for {
-		s.favMutationMu.Lock()
-		items, err := s.store.PendingFavoriteOps(userSyncPageSize)
-		if err == nil && len(items) > 0 {
-			userCookies, _ := s.credentials()
-			if userCookies == "" {
-				s.favMutationMu.Unlock()
-				return processed, nil
-			}
-			for _, item := range items {
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				err := s.postSignedMutation(ctx, "收藏同步", "/reading/bookapi/bookshelf/video/update/v", favoriteMutationPayload(item.SeriesID, item.Added))
-				cancel()
-				if err == nil {
-					err = s.store.DeletePendingFavoriteOps([]string{item.SeriesID})
-				}
-				if err != nil {
-					s.favMutationMu.Unlock()
-					return processed, err
-				}
-				processed++
-			}
+		items, err := s.store.PendingFavoriteOps(userSyncPageSize, session.scope)
+		if err != nil || len(items) == 0 {
+			return processed, err
 		}
-		s.favMutationMu.Unlock()
-		if err != nil {
-		}
-		if len(items) < userSyncPageSize {
-			return processed, nil
+		for _, item := range items {
+			requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err := s.postSignedMutation(requestCtx, "收藏同步", "/reading/bookapi/bookshelf/video/update/v", favoriteMutationPayload(item.SeriesID, item.Added))
+			cancel()
+			if err == nil {
+				err = s.store.AckFavoriteOps([]userstore.PendingFavoriteOp{item})
+			}
+			if err != nil {
+				return processed, err
+			}
+			processed++
 		}
 	}
 }

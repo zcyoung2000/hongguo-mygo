@@ -7,6 +7,7 @@ import (
 
 func TestIPCMethodContractDoesNotExposeRuntimeWiring(t *testing.T) {
 	disallowed := map[string]bool{
+		"Close":                  true,
 		"ResetDeviceWithContext": true,
 		"SetAuthTransport":       true,
 		"SetDeviceProfileStore":  true,

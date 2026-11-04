@@ -9,6 +9,7 @@ import (
 
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/lifecycle"
 	userstore "myguo/internal/store"
 )
 
@@ -30,6 +31,7 @@ type Dependencies struct {
 	Client           *sdk.Client
 	ImageURL         func(string) string
 	Credentials      func() (cookies, token string)
+	AuthSession      func() (userID, cookies, token string)
 	DeviceIdentity   func() (deviceID, installID, cdid, openudid string)
 	Runtime          func() (userAgent, storeRegion string)
 	HTTPClient       *http.Client
@@ -43,6 +45,7 @@ type Service struct {
 	client           *sdk.Client
 	imageURL         func(string) string
 	credentials      func() (cookies, token string)
+	authSession      func() (userID, cookies, token string)
 	deviceIdentity   func() (deviceID, installID, cdid, openudid string)
 	runtimeInfo      func() (userAgent, storeRegion string)
 	httpClient       *http.Client
@@ -65,13 +68,15 @@ type Service struct {
 	favSyncing      bool
 	favGeneration   uint64
 	favMutationMu   sync.Mutex
+	favSyncMu       sync.Mutex
 
 	likeMu         sync.Mutex
+	likeMutationMu sync.Mutex
 	cachedLikes    []LikeItem
 	likeCachedAt   time.Time
 	likeSyncing    bool
 	likeGeneration uint64
-	backgroundWG   sync.WaitGroup
+	background     lifecycle.Group
 
 	resMu              sync.Mutex
 	cachedReservations []ReservationItem
@@ -80,7 +85,9 @@ type Service struct {
 	resGeneration      uint64
 }
 
-func (s *Service) WaitForBackgroundSync() { s.backgroundWG.Wait() }
+func (s *Service) WaitForBackgroundSync() { s.background.Wait() }
+
+func (s *Service) Close() { s.background.Close() }
 
 func NewService(deps Dependencies) *Service {
 	if deps.ImageURL == nil {
@@ -109,11 +116,12 @@ func NewService(deps Dependencies) *Service {
 	if deps.Notify == nil {
 		deps.Notify = func(context.Context, Notification) {}
 	}
-	return &Service{
+	service := &Service{
 		store:            deps.Store,
 		client:           deps.Client,
 		imageURL:         deps.ImageURL,
 		credentials:      deps.Credentials,
+		authSession:      deps.AuthSession,
 		deviceIdentity:   deps.DeviceIdentity,
 		runtimeInfo:      deps.Runtime,
 		httpClient:       deps.HTTPClient,
@@ -121,9 +129,16 @@ func NewService(deps Dependencies) *Service {
 		invalidateCaches: deps.InvalidateCaches,
 		notify:           deps.Notify,
 	}
+	if service.store != nil {
+		service.store.SetSyncScope(service.currentSyncSession().scope)
+	}
+	return service
 }
 
 func (s *Service) InvalidateUserData() {
+	if s.store != nil {
+		s.store.SetSyncScope(s.currentSyncSession().scope)
+	}
 	s.historyMu.Lock()
 	s.cachedHistory = nil
 	s.historyCachedAt = time.Time{}

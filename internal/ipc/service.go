@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -166,7 +167,9 @@ type HongguoService struct {
 	deviceProfileStore   sdk.ProfileStore
 	authTransport        auth.CredentialTransport
 	deviceMu             sync.RWMutex
+	accountMu            sync.Mutex
 	authMu               sync.RWMutex
+	authUserID           string
 	userCookies          string
 	userToken            string
 	deviceID             string
@@ -198,6 +201,11 @@ func WithDeviceProfileStore(store sdk.ProfileStore) ServiceOption {
 }
 
 func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string, opts ...ServiceOption) *HongguoService {
+	home, _ := os.UserHomeDir()
+	return newHongguoService(client, store, media, appDir, home, opts...)
+}
+
+func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir, home string, opts ...ServiceOption) *HongguoService {
 	tr := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -230,37 +238,10 @@ func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 	for _, opt := range opts {
 		opt(svc)
 	}
-	home, _ := os.UserHomeDir()
-	// 1. Try loading account.json from appDir or fallback to hgplayer
-	accPaths := []string{
-		filepath.Join(appDir, "account.json"),
-		filepath.Join(home, "Library", "Application Support", "hgplayer", "account.json"),
-	}
-	for _, p := range accPaths {
-		if data, err := os.ReadFile(p); err == nil {
-			var acc struct {
-				Cookies string `json:"cookies"`
-				Token   string `json:"token"`
-				Profile struct {
-					UserID   string `json:"userId"`
-					Nickname string `json:"nickname"`
-					Avatar   string `json:"avatar"`
-					LoggedIn bool   `json:"loggedIn"`
-				} `json:"profile"`
-			}
-			if err := json.Unmarshal(data, &acc); err == nil && acc.Cookies != "" {
-				svc.setAuthCredentials(acc.Cookies, acc.Token)
-				if acc.Profile.Nickname != "" {
-					p := svc.store.GetProfile()
-					p.Nickname = acc.Profile.Nickname
-					p.UserID = acc.Profile.UserID
-					p.Avatar = acc.Profile.Avatar
-					p.LoggedIn = true
-					_ = svc.store.UpdateProfile(p)
-				}
-				break
-			}
-		}
+	// Restore only credentials explicitly saved by this app. Legacy import is
+	// offered separately and must never undo an explicit logout on restart.
+	if err := svc.restoreSavedAccount(); err != nil {
+		log.Printf("[account] restore failed: %v", err)
 	}
 
 	// 2. Try loading anonymous.json / device.json for matching device credentials
@@ -336,11 +317,15 @@ func (s *HongguoService) authCredentials() (cookies, token string) {
 	return s.userCookies, s.userToken
 }
 
-func (s *HongguoService) setAuthCredentials(cookies, token string) {
+func (s *HongguoService) setAuthCredentials(cookies, token string, userIDs ...string) {
 	previousCookies, _ := s.authCredentials()
 	s.authMu.Lock()
 	s.userCookies = cookies
 	s.userToken = token
+	s.authUserID = ""
+	if len(userIDs) > 0 {
+		s.authUserID = userIDs[0]
+	}
 	s.authMu.Unlock()
 	if previousCookies != cookies && s.media != nil {
 		// Playback entitlements can change with the account; never reuse a
@@ -348,6 +333,12 @@ func (s *HongguoService) setAuthCredentials(cookies, token string) {
 		s.media.ClearPlaybackCache()
 	}
 	s.syncAuthTransport()
+}
+
+func (s *HongguoService) authSession() (userID, cookies, token string) {
+	s.authMu.RLock()
+	defer s.authMu.RUnlock()
+	return s.authUserID, s.userCookies, s.userToken
 }
 
 func (s *HongguoService) syncAuthTransport() {

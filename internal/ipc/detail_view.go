@@ -86,7 +86,7 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 	s.cacheMu.RLock()
 	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
 		s.cacheMu.RUnlock()
-		return entry.val.(*SeriesDetailPageDTO), nil
+		return s.withSeriesUserState(entry.val.(*SeriesDetailPageDTO)), nil
 	}
 	s.cacheMu.RUnlock()
 
@@ -142,7 +142,16 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 	s.cache[cacheKey] = cacheItem{val: page, expiresAt: time.Now().Add(5 * time.Minute)}
 	s.cacheMu.Unlock()
 
-	return page, nil
+	return s.withSeriesUserState(page), nil
+}
+
+// Only catalog metadata may be reused. User flags are read from the local
+// library for every response, without mutating the shared cached DTO.
+func (s *HongguoService) withSeriesUserState(page *SeriesDetailPageDTO) *SeriesDetailPageDTO {
+	result := *page
+	result.IsFavorite = s.store.IsFavorite(result.ID)
+	result.Reserved = s.store.HasReservation(result.ID)
+	return &result
 }
 
 func (s *HongguoService) GetSeriesSeasons(ctx context.Context, seriesID string) (*SeriesCollectionDTO, error) {

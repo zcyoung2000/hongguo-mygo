@@ -86,6 +86,7 @@ func main() {
 		ipc.WithAuthTransport(authenticatedTransport),
 		ipc.WithDeviceProfileStore(filestore.New(profilePath)),
 	)
+	defer ipc.CloseService(service)
 	mediaServer.SetDeviceResetter(service.ResetDevice)
 	mygo.Bind(service)
 

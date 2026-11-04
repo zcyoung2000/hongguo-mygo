@@ -7,6 +7,8 @@ import (
 	"myguo/internal/native"
 )
 
+func CloseService(s *HongguoService) { s.libraryService().Close() }
+
 func (s *HongguoService) libraryService() *library.Service {
 	s.libraryOnce.Do(func() {
 		s.library = library.NewService(library.Dependencies{
@@ -14,6 +16,7 @@ func (s *HongguoService) libraryService() *library.Service {
 			Client:      s.client,
 			ImageURL:    s.imageURL,
 			Credentials: s.authCredentials,
+			AuthSession: s.authSession,
 			HTTPClient:  s.httpClient,
 			Episodes:    s.listEpisodes,
 			DeviceIdentity: func() (string, string, string, string) {

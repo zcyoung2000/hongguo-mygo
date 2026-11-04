@@ -50,7 +50,7 @@ func (s *Store) importOldRecords(dbPath string) {
 		seriesStr, _ := row["series"].(string)
 		title := "短剧 " + seriesID
 		cover := ""
-		epCount := 80
+		epCount := 0
 		if seriesStr != "" {
 			var parsed OldSeriesJSON
 			if err := json.Unmarshal([]byte(seriesStr), &parsed); err == nil {
@@ -75,7 +75,7 @@ func (s *Store) importOldRecords(dbPath string) {
 			EpisodeNum:    epIdx + 1,
 			EpisodeTitle:  "第" + strconv.Itoa(epIdx+1) + "集",
 			PositionSec:   posSec,
-			DurationSec:   120.0,
+			DurationSec:   0,
 			TotalEpisodes: epCount,
 			UpdatedAt:     updatedAt,
 			ContentType:   1004,

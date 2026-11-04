@@ -3,6 +3,7 @@ package ipc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"myguo/internal/native"
@@ -63,6 +64,8 @@ func (s *HongguoService) GetDeviceInfo(ctx context.Context) (map[string]string, 
 }
 
 func (s *HongguoService) LoginWithCookies(ctx context.Context, cookies, token string) (*UserProfile, error) {
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
 	cookies = strings.TrimSpace(cookies)
 	token = strings.TrimSpace(token)
 
@@ -150,31 +153,27 @@ func (s *HongguoService) LoginWithCookies(ctx context.Context, cookies, token st
 	}
 	avatar := strings.TrimSpace(res.Data.AvatarURL)
 
-	// Save to account.json
-	accPath := filepath.Join(s.appDir, "account.json")
-	accData := map[string]any{
-		"cookies": cookies,
-		"token":   token,
-		"profile": map[string]any{
-			"loggedIn": true,
-			"userId":   uid,
-			"nickname": nickname,
-			"avatar":   avatar,
-		},
-	}
-	accBytes, _ := json.MarshalIndent(accData, "", "  ")
-	_ = os.WriteFile(accPath, accBytes, 0644)
-
-	// Update service state
-	s.setAuthCredentials(cookies, token)
-
 	profile := UserProfile{
-		UserID:   uid,
-		Nickname: nickname,
-		Avatar:   avatar,
-		LoggedIn: true,
+		UserID: uid, Nickname: nickname, Avatar: avatar, LoggedIn: true,
+		DeviceID: s.store.GetProfile().DeviceID,
 	}
-	_ = s.store.UpdateProfile(profile)
+	// Publish the new session only after both durable representations succeed.
+	accPath := filepath.Join(s.appDir, "account.json")
+	previous, err := readAccountFile(accPath)
+	if err != nil {
+		return nil, fmt.Errorf("读取原登录信息失败: %w", err)
+	}
+	accBytes, err := json.MarshalIndent(savedAccount{Cookies: cookies, Token: token, Profile: profile}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	if err := writeAccountFile(accPath, accBytes); err != nil {
+		return nil, fmt.Errorf("保存登录信息失败: %w", err)
+	}
+	if err := s.store.UpdateProfile(profile); err != nil {
+		return nil, errors.Join(fmt.Errorf("保存用户资料失败: %w", err), restoreAccountFile(accPath, previous))
+	}
+	s.setAuthCredentials(cookies, token, uid)
 
 	// Invalidate user data caches
 	s.invalidateUserDataCaches()
@@ -202,18 +201,21 @@ func (s *HongguoService) RefreshUserProfile(ctx context.Context) (*UserProfile, 
 }
 
 func (s *HongguoService) Logout(ctx context.Context) error {
-	s.setAuthCredentials("", "")
-
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
 	accPath := filepath.Join(s.appDir, "account.json")
-	_ = os.Remove(accPath)
-
-	anonProfile := UserProfile{
-		UserID:   "anonymous",
-		Nickname: "myguo用户",
-		Avatar:   "",
-		LoggedIn: false,
+	previous, err := readAccountFile(accPath)
+	if err != nil {
+		return fmt.Errorf("读取登录信息失败: %w", err)
 	}
-	_ = s.store.UpdateProfile(anonProfile)
+	if err := os.Remove(accPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("清除登录信息失败: %w", err)
+	}
+
+	if err := s.store.UpdateProfile(anonymousProfile(s.store.GetProfile().DeviceID)); err != nil {
+		return errors.Join(fmt.Errorf("保存退出状态失败: %w", err), restoreAccountFile(accPath, previous))
+	}
+	s.setAuthCredentials("", "")
 
 	s.cacheMu.Lock()
 	s.cache = make(map[string]cacheItem)
