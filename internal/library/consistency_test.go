@@ -75,14 +75,14 @@ func TestOlderUploadAckKeepsNewEpisodeProgress(t *testing.T) {
 	if err := store.QueueHistoryUpload(item, firstEpisode); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.processPendingHistoryUploads(); err != nil {
+	if _, err := service.processPendingHistoryUploads(); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := store.PendingHistoryUploads(10)
 	if err != nil || len(pending) != 1 || pending[0].EpisodeID != nextEpisode || pending[0].PositionSec != 20 {
 		t.Fatalf("new intent lost: %v, %v", pending, err)
 	}
-	if err := service.processPendingHistoryUploads(); err != nil {
+	if _, err := service.processPendingHistoryUploads(); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(positions, []float64{10000, 20000}) {
@@ -127,10 +127,10 @@ func TestPendingOperationsDoNotCrossCredentialChanges(t *testing.T) {
 	if _, err := service.syncPendingFavoriteOps(); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.processPendingHistoryUploads(); err != nil {
+	if _, err := service.processPendingHistoryUploads(); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.processPendingHistoryDeletes(); err != nil {
+	if _, err := service.processPendingHistoryDeletes(); err != nil {
 		t.Fatal(err)
 	}
 	if len(sentCookies) != 0 {
@@ -144,10 +144,10 @@ func TestPendingOperationsDoNotCrossCredentialChanges(t *testing.T) {
 	if _, err := service.syncPendingFavoriteOps(); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.processPendingHistoryUploads(); err != nil {
+	if _, err := service.processPendingHistoryUploads(); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.processPendingHistoryDeletes(); err != nil {
+	if _, err := service.processPendingHistoryDeletes(); err != nil {
 		t.Fatal(err)
 	}
 	if len(sentCookies) != 4 {
@@ -174,7 +174,7 @@ func TestIdentityChangeBetweenHistoryAndProgressUploadStopsOldTransaction(t *tes
 	if err := store.QueueHistoryUpload(item, "710000000000101"); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.processPendingHistoryUploads(); !errors.Is(err, errSyncSessionChanged) {
+	if _, err := service.processPendingHistoryUploads(); !errors.Is(err, errSyncSessionChanged) {
 		t.Fatalf("identity change = %v", err)
 	}
 	if len(cookies) != 1 || cookies[0] != "sessionid=account" {

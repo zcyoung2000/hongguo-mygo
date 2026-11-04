@@ -55,6 +55,7 @@ func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, 
 	if err := s.store.QueueHistoryUpload(stored, episodeID, session.scope); err != nil {
 		return err
 	}
+	s.touchHistoryMutation()
 	s.triggerPendingHistorySync()
 	return nil
 }
@@ -95,7 +96,9 @@ func (s *Service) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 					s.historySyncing = false
 					s.historyMu.Unlock()
 				}()
-				s.syncRemoteHistory(ctx, generation)
+				if err := s.syncRemoteHistory(ctx, generation); err != nil {
+					log.Printf("[history] background sync failed: %v", err)
+				}
 			})
 		}
 		s.historyMu.Unlock()
@@ -119,6 +122,19 @@ func (s *Service) GetHistory(ctx context.Context) ([]HistoryItem, error) {
 	s.cachedHistory = list
 	s.historyCachedAt = time.Now()
 	return sanitize.Sanitize(list), nil
+}
+
+// RefreshHistory flushes local mutations, then reads the complete upstream
+// list and returns the resulting authoritative snapshot to the caller.
+func (s *Service) RefreshHistory(ctx context.Context) ([]HistoryItem, error) {
+	if cookies, _ := s.credentials(); cookies == "" {
+		return s.GetHistory(ctx)
+	}
+	generation := s.currentHistoryGeneration()
+	if err := s.syncRemoteHistory(ctx, generation); err != nil {
+		return nil, err
+	}
+	return s.GetHistory(ctx)
 }
 
 type remoteHistoryRow struct {
@@ -201,35 +217,51 @@ func (s *Service) fetchRemoteHistoryPage(ctx context.Context, offset int64) (*re
 	return page, nil
 }
 
-func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) {
+func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) error {
+	s.historyRemoteMu.Lock()
+	defer s.historyRemoteMu.Unlock()
+
 	ctx = s.bindSyncSession(ctx)
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {
-		return
+		return err
+	}
+	// Remote reads must not race a local intent. Flush first; if any intent was
+	// uploaded in this run, the next list read is a merge only and may still be
+	// slightly behind the just-acknowledged mutation.
+	processed, err := s.syncPendingHistoryMutations()
+	if err != nil {
+		return err
+	}
+	// Another pending-sync worker may already be uploading intents. Do not
+	// fetch an authoritative snapshot until that worker has finished; the next
+	// revalidation will flush anything it left behind.
+	if s.historyMutationSyncBusy() {
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	var remoteRows []remoteHistoryRow
+	snapshotComplete := false
 	offset := int64(0)
 	for page := 0; page < 10; page++ {
 		result, err := s.fetchRemoteHistoryPage(ctx, offset)
 		if err != nil {
-			log.Printf("[history] remote history page %d failed: %v", page, err)
-			return
+			return fmt.Errorf("历史远端第%d页读取失败: %w", page+1, err)
 		}
 		if result == nil {
-			return
+			return nil
 		}
 		remoteRows = append(remoteRows, result.Items...)
-		if !result.HasMore || len(result.Items) == 0 || result.NextOffset <= offset {
+		if !result.HasMore {
+			snapshotComplete = true
+			break
+		}
+		if len(result.Items) == 0 || result.NextOffset <= offset {
 			break
 		}
 		offset = result.NextOffset
-	}
-	if len(remoteRows) == 0 {
-		s.triggerPendingHistorySync()
-		return
 	}
 
 	// The local history model stores one row per series, while the remote
@@ -243,6 +275,9 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) {
 		if !ok || row.LastWatchTime >= current.LastWatchTime {
 			latestByID[row.SeriesID] = row
 		}
+	}
+	if len(latestByID) == 0 && !snapshotComplete {
+		return nil
 	}
 
 	var missingIDs []string
@@ -277,6 +312,9 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) {
 	}
 
 	var histBatch []HistoryItem
+	remoteSnapshot := make([]HistoryItem, 0, len(latestByID))
+	resolvedRemote := 0
+	queuedNovelDeletes := 0
 	for _, it := range latestByID {
 		id := it.SeriesID
 		title := ""
@@ -288,7 +326,10 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) {
 
 		if detail, ok := detailsMap[id]; ok {
 			if detail.Series.ContentType == 1 {
-				_ = s.store.DeleteHistory(id)
+				if err := s.store.DeleteHistory(id); err == nil {
+					queuedNovelDeletes++
+				}
+				resolvedRemote++
 				continue
 			}
 			contentType = int(detail.Series.ContentType)
@@ -300,7 +341,10 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) {
 			intro = detail.Series.Description
 		} else if exist, ok := s.store.GetHistoryItem(id); ok {
 			if exist.ContentType == 1 {
-				_ = s.store.DeleteHistory(id)
+				if err := s.store.DeleteHistory(id); err == nil {
+					queuedNovelDeletes++
+				}
+				resolvedRemote++
 				continue
 			}
 			contentType = exist.ContentType
@@ -323,11 +367,8 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) {
 		if updatedAt <= 0 {
 			updatedAt = time.Now().Unix()
 		}
-		if exist, ok := s.store.GetHistoryItem(id); ok && exist.UpdatedAt >= updatedAt {
-			continue
-		}
-
-		histBatch = append(histBatch, HistoryItem{
+		exist, hasLocal := s.store.GetHistoryItem(id)
+		current := HistoryItem{
 			SeriesID:      id,
 			Title:         title,
 			CoverURL:      mediautil.NormalizeImageURL(cover),
@@ -339,26 +380,47 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) {
 			UpdatedAt:     updatedAt,
 			Intro:         intro,
 			ContentType:   contentType,
-		})
-	}
+		}
+		if hasLocal && exist.UpdatedAt >= updatedAt {
+			current = exist
+		}
+		remoteSnapshot = append(remoteSnapshot, current)
+		if hasLocal && exist.UpdatedAt >= updatedAt {
+			continue
+		}
 
+		histBatch = append(histBatch, current)
+	}
+	// Every non-novel remote row is represented in remoteSnapshot: either as a
+	// newly merged row or as the newer local row retained above.
+	resolvedRemote += len(remoteSnapshot)
+
+	historySettled := s.historySnapshotSettled()
 	s.historyMu.Lock()
 	if s.historyGeneration != generation || !s.syncSessionCurrent(session) {
 		s.historyMu.Unlock()
-		return
+		return nil
 	}
-	if len(histBatch) > 0 {
-		if err := s.store.SaveHistoryBatch(histBatch, session.scope); err != nil {
-			s.historyMu.Unlock()
-			log.Printf("[history] failed to persist synced history: %v", err)
-			return
-		}
+	// A complete remote response is authoritative only when no recent mutation
+	// is waiting for upstream visibility and every remote row can be
+	// represented without synthetic metadata. Otherwise merge now and let the
+	// next revalidation converge.
+	authoritative := processed == 0 && snapshotComplete && resolvedRemote == len(latestByID) && historySettled
+	var storeErr error
+	if authoritative {
+		storeErr = s.store.ReplaceHistoryBatch(remoteSnapshot, session.scope)
+	} else if len(histBatch) > 0 {
+		storeErr = s.store.SaveHistoryBatch(histBatch, session.scope)
+	}
+	if storeErr != nil {
+		s.historyMu.Unlock()
+		return storeErr
 	}
 
 	list, err := s.store.GetHistory()
 	if err != nil {
 		s.historyMu.Unlock()
-		return
+		return err
 	}
 	for i := range list {
 		list[i].CoverURL = s.imageURL(list[i].CoverURL)
@@ -366,7 +428,11 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) {
 	s.cachedHistory = list
 	s.historyCachedAt = time.Now()
 	s.historyMu.Unlock()
-	s.triggerPendingHistorySync()
+	if queuedNovelDeletes > 0 {
+		s.touchHistoryMutation()
+		s.triggerPendingHistorySync()
+	}
+	return nil
 }
 func (s *Service) DeleteHistory(ctx context.Context, seriesID string) error {
 	session := s.currentSyncSession()
@@ -378,6 +444,7 @@ func (s *Service) DeleteHistory(ctx context.Context, seriesID string) error {
 	if err := s.store.DeleteHistory(seriesID, session.scope); err != nil {
 		return err
 	}
+	s.touchHistoryMutation()
 	s.triggerPendingHistorySync()
 	return nil
 }
@@ -392,6 +459,7 @@ func (s *Service) ClearHistory(ctx context.Context) error {
 	if err := s.store.ClearHistory(session.scope); err != nil {
 		return err
 	}
+	s.touchHistoryMutation()
 	s.triggerPendingHistorySync()
 	return nil
 }
@@ -422,6 +490,7 @@ func (s *Service) ToggleFavorite(ctx context.Context, seriesID, title, coverURL,
 	if err := s.store.QueueFavoriteOp(seriesID, wasAdded, session.scope); err != nil {
 		return wasAdded, err
 	}
+	s.touchFavoriteMutation()
 	s.triggerPendingFavoriteSync()
 	return wasAdded, nil
 }
@@ -468,7 +537,9 @@ func (s *Service) GetFavorites(ctx context.Context) ([]FavoriteItem, error) {
 					s.favSyncing = false
 					s.favMu.Unlock()
 				}()
-				s.syncRemoteFavorites(ctx, generation)
+				if err := s.syncRemoteFavorites(ctx, generation); err != nil {
+					log.Printf("[favorites] background sync failed: %v", err)
+				}
 			})
 		}
 		s.favMu.Unlock()
@@ -485,7 +556,9 @@ func (s *Service) GetFavorites(ctx context.Context) ([]FavoriteItem, error) {
 	}
 
 	// 3. Local store empty -> synchronous fetch
-	s.syncRemoteFavorites(ctx, s.currentFavoriteGeneration())
+	if err := s.syncRemoteFavorites(ctx, s.currentFavoriteGeneration()); err != nil {
+		return nil, err
+	}
 
 	s.favMu.Lock()
 	defer s.favMu.Unlock()
@@ -502,28 +575,42 @@ func (s *Service) GetFavorites(ctx context.Context) ([]FavoriteItem, error) {
 	return sanitize.Sanitize(list), nil
 }
 
-func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) {
+// RefreshFavorites bypasses the stale-while-revalidate window after applying
+// queued local mutations, so collection views can converge immediately.
+func (s *Service) RefreshFavorites(ctx context.Context) ([]FavoriteItem, error) {
+	if cookies, _ := s.credentials(); cookies == "" {
+		return s.GetFavorites(ctx)
+	}
+	if err := s.syncRemoteFavorites(ctx, s.currentFavoriteGeneration()); err != nil {
+		return nil, err
+	}
+	return s.GetFavorites(ctx)
+}
+
+func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) error {
+	s.favRemoteMu.Lock()
+	defer s.favRemoteMu.Unlock()
+
 	ctx = s.bindSyncSession(ctx)
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {
-		return
+		return err
 	}
 	processed, err := s.syncPendingFavoriteOps()
 	if err != nil {
-		log.Printf("[favorites] pending ops blocked remote sync: %v", err)
-		return
+		return fmt.Errorf("收藏待同步操作未完成: %w", err)
 	}
 	if processed > 0 {
 		// The shelf list can briefly lag a successful mutation. Avoid replacing
 		// local state with a stale snapshot; the next periodic sync will refresh.
-		return
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	if !s.syncSessionCurrent(session) {
-		return
+		return nil
 	}
 	userCookies, userToken := session.cookies, session.token
 	deviceID, iid, _, _ := s.deviceIdentity()
@@ -538,7 +625,7 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) {
 	reqURL := "https://api5-normal-sinfonlinea.fqnovel.com/reading/bookapi/bookshelf/video/list/v?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("User-Agent", s.userAgentValue())
 	if userCookies != "" {
@@ -552,15 +639,15 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return
+		return err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return
+		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return
+		return fmt.Errorf("收藏书架接口返回 HTTP %d", resp.StatusCode)
 	}
 
 	var shelfResp struct {
@@ -575,11 +662,11 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) {
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &shelfResp); err != nil {
-		return
+		return fmt.Errorf("收藏书架响应解析失败: %w", err)
 	}
 	if shelfResp.Code == nil || *shelfResp.Code != 0 || shelfResp.Data == nil ||
 		shelfResp.Data.VideoShelfInfo == nil || shelfResp.HasMore || shelfResp.Data.HasMore {
-		return
+		return fmt.Errorf("收藏书架返回不完整")
 	}
 	shelf := *shelfResp.Data.VideoShelfInfo
 
@@ -590,7 +677,7 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) {
 	seen := make(map[string]bool)
 	for _, it := range shelf {
 		if !mediautil.ValidContentID(it.SeriesID) {
-			return
+			return fmt.Errorf("收藏书架包含无效内容 ID")
 		}
 		if it.SeriesID != "" && !seen[it.SeriesID] {
 			seen[it.SeriesID] = true
@@ -600,13 +687,13 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) {
 	if len(remoteIDs) == 0 {
 		s.favMutationMu.Lock()
 		defer s.favMutationMu.Unlock()
-		if s.currentFavoriteGeneration() == generation && s.syncSessionCurrent(session) {
+		if s.currentFavoriteGeneration() == generation && s.syncSessionCurrent(session) && s.favoriteSnapshotSettled() {
 			if err := s.store.ReplaceFavoriteBatch(nil); err != nil {
-				return
+				return err
 			}
 		}
 		s.refreshFavoriteCache(generation)
-		return
+		return nil
 	}
 
 	var missingIDs []string
@@ -674,20 +761,21 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) {
 	s.favMutationMu.Lock()
 	defer s.favMutationMu.Unlock()
 	if s.currentFavoriteGeneration() != generation || !s.syncSessionCurrent(session) {
-		return
+		return nil
 	}
 	if len(favBatch) > 0 {
 		if err := s.store.SaveFavoriteBatch(favBatch); err != nil {
-			return
+			return err
 		}
 	}
-	if len(resolvedIDs) != len(remoteIDs) || s.currentFavoriteGeneration() != generation {
-		return
+	if len(resolvedIDs) != len(remoteIDs) || s.currentFavoriteGeneration() != generation || !s.favoriteSnapshotSettled() {
+		return nil
 	}
 	if err := s.store.ReplaceFavoriteBatch(favBatch); err != nil {
-		return
+		return err
 	}
 	s.refreshFavoriteCache(generation)
+	return nil
 }
 
 func (s *Service) refreshFavoriteCache(generation uint64) {
@@ -782,7 +870,9 @@ func (s *Service) GetLikes(ctx context.Context) ([]LikeItem, error) {
 					s.likeSyncing = false
 					s.likeMu.Unlock()
 				}()
-				_ = s.syncRemoteLikes(ctx, generation)
+				if err := s.syncRemoteLikes(ctx, generation); err != nil {
+					log.Printf("[likes] background sync failed: %v", err)
+				}
 			})
 		}
 		s.likeMu.Unlock()
@@ -812,7 +902,20 @@ func (s *Service) GetLikes(ctx context.Context) ([]LikeItem, error) {
 	return sanitize.Sanitize(list), nil
 }
 
+func (s *Service) RefreshLikes(ctx context.Context) ([]LikeItem, error) {
+	if cookies, _ := s.credentials(); cookies == "" {
+		return s.GetLikes(ctx)
+	}
+	if err := s.syncRemoteLikes(ctx, s.currentLikeGeneration()); err != nil {
+		return nil, err
+	}
+	return s.GetLikes(ctx)
+}
+
 func (s *Service) syncRemoteLikes(ctx context.Context, generation uint64) error {
+	s.likeRemoteMu.Lock()
+	defer s.likeRemoteMu.Unlock()
+
 	ctx = s.bindSyncSession(ctx)
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {
@@ -849,106 +952,128 @@ func (s *Service) fetchAccountLikes(ctx context.Context) ([]LikeItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	userCookies, userToken := session.cookies, session.token
-	deviceID, iid, cdid, openudid := s.deviceIdentity()
-	pairs := append(upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
-		[2]string{"action_type", "3"},
-		[2]string{"count", "100"},
-		[2]string{"offset", "0"},
-		[2]string{"object_type_list", "6,15,10"},
-	)
-	ticket := time.Now().UnixMilli()
-	rawQuery, sigHeaders := sign.SignGET(pairs, ticket, deviceID, "7.3.9.32", nil)
-	reqURL := "https://api5-normal-sinfonlinea.fqnovel.com/reading/ugc/action/mget/v1/?" + rawQuery
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	for key, value := range sigHeaders {
-		req.Header.Set(key, value)
-	}
-	req.Header.Set("Cookie", userCookies)
-	if userToken != "" {
-		req.Header.Set("x-tt-token", userToken)
-	}
-	req.Header.Set("User-Agent", s.userAgentValue())
-	req.Header.Set("x-ss-req-ticket", strconv.FormatInt(ticket, 10))
 
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("点赞接口返回 HTTP %d", resp.StatusCode)
-	}
-
-	var res struct {
-		Code int `json:"code"`
-		Data struct {
-			MixedDataList []struct {
-				SeriesID       string `json:"series_id"`
-				BookID         string `json:"book_id"`
-				SeriesTitle    string `json:"series_title"`
-				SeriesCoverURL string `json:"series_cover_url"`
-				SeriesIntro    string `json:"series_intro"`
-				VideoData      struct {
-					SeriesID    string `json:"series_id"`
-					Vid         string `json:"vid"`
-					Title       string `json:"title"`
-					Cover       string `json:"cover"`
-					CoverURL    string `json:"cover_url"`
-					ThumbURL    string `json:"thumb_url"`
-					Description string `json:"video_desc"`
-					EpisodeCnt  int    `json:"episode_cnt"`
-					DiggTime    int64  `json:"user_digg_timestamp_ms"`
-					CreateTime  int64  `json:"create_time"`
-					Detail      struct {
-						SeriesTitle string `json:"series_title"`
-					} `json:"video_detail"`
-				} `json:"video_data"`
-			} `json:"mixed_data_list"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &res); err != nil {
-		return nil, err
-	}
-	if res.Code != 0 {
-		return nil, fmt.Errorf("点赞接口返回 code %d", res.Code)
-	}
-
-	items := make([]LikeItem, 0, len(res.Data.MixedDataList))
+	var results []LikeItem
 	seen := make(map[string]bool)
-	for _, row := range res.Data.MixedDataList {
-		video := row.VideoData
-		seriesID := firstNonEmpty(row.SeriesID, video.SeriesID, row.BookID)
-		episodeID := firstNonEmpty(video.Vid, row.SeriesID, row.BookID)
-		title := firstNonEmpty(row.SeriesTitle, video.Detail.SeriesTitle, video.Title)
-		cover := firstNonEmpty(row.SeriesCoverURL, video.CoverURL, video.Cover, video.ThumbURL)
-		addedAt := video.DiggTime / 1000
-		if addedAt <= 0 {
-			addedAt = video.CreateTime / 1000
+	offset := 0
+	for page := 0; page < 10; page++ {
+		if !s.syncSessionCurrent(session) {
+			return nil, errSyncSessionChanged
 		}
-		if seriesID == "" || episodeID == "" || title == "" || seen[seriesID+"\x1f"+episodeID] {
-			continue
+		deviceID, iid, cdid, openudid := s.deviceIdentity()
+		pairs := append(upstream.DefaultDeviceQueryPairs(deviceID, iid, cdid, openudid),
+			[2]string{"action_type", "3"},
+			[2]string{"count", "100"},
+			[2]string{"offset", strconv.Itoa(offset)},
+			[2]string{"object_type_list", "6,15,10"},
+		)
+		ticket := time.Now().UnixMilli()
+		rawQuery, sigHeaders := sign.SignGET(pairs, ticket, deviceID, "7.3.9.32", nil)
+		reqURL := "https://api5-normal-sinfonlinea.fqnovel.com/reading/ugc/action/mget/v1/?" + rawQuery
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, err
 		}
-		seen[seriesID+"\x1f"+episodeID] = true
-		items = append(items, LikeItem{
-			SeriesID:      seriesID,
-			EpisodeID:     episodeID,
-			Title:         title,
-			CoverURL:      mediautil.NormalizeImageURL(cover),
-			EpisodeNum:    0,
-			TotalEpisodes: video.EpisodeCnt,
-			Description:   firstNonEmpty(row.SeriesIntro, video.Description),
-			AddedAt:       addedAt,
-		})
+		for key, value := range sigHeaders {
+			req.Header.Set(key, value)
+		}
+		req.Header.Set("Cookie", session.cookies)
+		if session.token != "" {
+			req.Header.Set("x-tt-token", session.token)
+		}
+		req.Header.Set("User-Agent", s.userAgentValue())
+		req.Header.Set("x-ss-req-ticket", strconv.FormatInt(ticket, 10))
+
+		resp, err := s.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("点赞接口返回 HTTP %d", resp.StatusCode)
+		}
+
+		var res struct {
+			Code    int  `json:"code"`
+			HasMore bool `json:"has_more"`
+			Data    struct {
+				HasMore       bool `json:"has_more"`
+				NextOffset    int  `json:"next_offset"`
+				MixedDataList []struct {
+					SeriesID       string `json:"series_id"`
+					BookID         string `json:"book_id"`
+					SeriesTitle    string `json:"series_title"`
+					SeriesCoverURL string `json:"series_cover_url"`
+					SeriesIntro    string `json:"series_intro"`
+					VideoData      struct {
+						SeriesID    string `json:"series_id"`
+						Vid         string `json:"vid"`
+						Title       string `json:"title"`
+						Cover       string `json:"cover"`
+						CoverURL    string `json:"cover_url"`
+						ThumbURL    string `json:"thumb_url"`
+						Description string `json:"video_desc"`
+						EpisodeCnt  int    `json:"episode_cnt"`
+						DiggTime    int64  `json:"user_digg_timestamp_ms"`
+						CreateTime  int64  `json:"create_time"`
+						Detail      struct {
+							SeriesTitle string `json:"series_title"`
+						} `json:"video_detail"`
+					} `json:"video_data"`
+				} `json:"mixed_data_list"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(body, &res); err != nil {
+			return nil, err
+		}
+		if res.Code != 0 {
+			return nil, fmt.Errorf("点赞接口返回 code %d", res.Code)
+		}
+
+		for _, row := range res.Data.MixedDataList {
+			video := row.VideoData
+			seriesID := firstNonEmpty(row.SeriesID, video.SeriesID, row.BookID)
+			episodeID := firstNonEmpty(video.Vid, row.SeriesID, row.BookID)
+			title := firstNonEmpty(row.SeriesTitle, video.Detail.SeriesTitle, video.Title)
+			cover := firstNonEmpty(row.SeriesCoverURL, video.CoverURL, video.Cover, video.ThumbURL)
+			addedAt := video.DiggTime / 1000
+			if addedAt <= 0 {
+				addedAt = video.CreateTime / 1000
+			}
+			key := seriesID + "\x1f" + episodeID
+			if seriesID == "" || episodeID == "" || title == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			results = append(results, LikeItem{
+				SeriesID:      seriesID,
+				EpisodeID:     episodeID,
+				Title:         title,
+				CoverURL:      mediautil.NormalizeImageURL(cover),
+				EpisodeNum:    0,
+				TotalEpisodes: video.EpisodeCnt,
+				Description:   firstNonEmpty(row.SeriesIntro, video.Description),
+				AddedAt:       addedAt,
+			})
+		}
+
+		nextOffset := res.Data.NextOffset
+		if nextOffset <= offset {
+			nextOffset = offset + len(res.Data.MixedDataList)
+		}
+		if !(res.HasMore || res.Data.HasMore) {
+			return results, nil
+		}
+		if len(res.Data.MixedDataList) == 0 || nextOffset <= offset {
+			return nil, fmt.Errorf("点赞接口分页不完整")
+		}
+		offset = nextOffset
 	}
-	return items, nil
+	return nil, fmt.Errorf("点赞接口分页超过上限")
 }
 
 func (s *Service) requestEpisodeLikeMutation(ctx context.Context, seriesID, episodeID string, liked bool) error {
@@ -1244,7 +1369,9 @@ func (s *Service) GetReservations(ctx context.Context) ([]ReservationItem, error
 					s.resSyncing = false
 					s.resMu.Unlock()
 				}()
-				_, _ = s.syncRemoteReservations(ctx, generation)
+				if _, err := s.syncRemoteReservations(ctx, generation); err != nil {
+					log.Printf("[reservations] background sync failed: %v", err)
+				}
 			})
 		}
 		s.resMu.Unlock()
@@ -1257,7 +1384,24 @@ func (s *Service) GetReservations(ctx context.Context) ([]ReservationItem, error
 	return sanitize.Sanitize(results), err
 }
 
+func (s *Service) RefreshReservations(ctx context.Context) ([]ReservationItem, error) {
+	if cookies, _ := s.credentials(); cookies == "" {
+		return s.GetReservations(ctx)
+	}
+	list, err := s.syncRemoteReservations(ctx, s.currentReservationGeneration())
+	if err != nil {
+		return nil, err
+	}
+	if list == nil {
+		return s.GetReservations(ctx)
+	}
+	return list, nil
+}
+
 func (s *Service) syncRemoteReservations(ctx context.Context, generation uint64) ([]ReservationItem, error) {
+	s.resRemoteMu.Lock()
+	defer s.resRemoteMu.Unlock()
+
 	ctx = s.bindSyncSession(ctx)
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {

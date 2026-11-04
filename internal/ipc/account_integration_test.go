@@ -53,15 +53,20 @@ func TestLoginAndLogoutPersistAndClearProfile(t *testing.T) {
 	if cookies, _ := service.authCredentials(); cookies != "sessionid=account" {
 		t.Fatalf("cached cookies = %q", cookies)
 	}
-	accountPath := filepath.Join(appDir, "account.json")
-	if _, err := os.Stat(accountPath); err != nil {
-		t.Fatalf("account.json was not persisted: %v", err)
+	if _, ok := store.GetAccountAuth(); !ok {
+		t.Fatal("account credentials were not persisted in SQLite")
+	}
+	if _, err := os.Stat(filepath.Join(appDir, "account.json")); !os.IsNotExist(err) {
+		t.Fatalf("account.json exists, err = %v", err)
 	}
 
 	if err := service.Logout(context.Background()); err != nil {
 		t.Fatalf("Logout() error = %v", err)
 	}
-	if _, err := os.Stat(accountPath); !os.IsNotExist(err) {
+	if _, ok := store.GetAccountAuth(); ok {
+		t.Fatal("account credentials still exist in SQLite after logout")
+	}
+	if _, err := os.Stat(filepath.Join(appDir, "account.json")); !os.IsNotExist(err) {
 		t.Fatalf("account.json still exists, err = %v", err)
 	}
 	if cookies, _ := service.authCredentials(); cookies != "" {

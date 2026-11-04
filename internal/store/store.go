@@ -106,6 +106,11 @@ type Store struct {
 	syncScope string
 }
 
+type AccountAuth struct {
+	Cookies string
+	Token   string
+}
+
 func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
@@ -126,6 +131,12 @@ func NewStore(dir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	// Credentials and device identity live beside user data in SQLite. The
+	// database (including WAL/SHM while present) must not be world-readable.
+	if err := os.Chmod(dbPath, 0600); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	s := &Store{
 		db:     db,
@@ -133,6 +144,10 @@ func NewStore(dir string) (*Store, error) {
 	}
 
 	if err := s.initSchema(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.lockDatabaseFiles(); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -144,15 +159,27 @@ func NewStore(dir string) (*Store, error) {
 	// resolve to an episode and make the followed feed stall on its first card.
 	_, _ = s.db.Exec(`DELETE FROM favorites WHERE series_id GLOB '[0-9]*' AND length(trim(series_id)) < 6`)
 
-	// Check if migration from userdata.json is needed
-	jsonPath := filepath.Join(dir, "userdata.json")
-	if _, err := os.Stat(jsonPath); err == nil {
-		if migrationNeeded, err := s.jsonMigrationNeeded(); err != nil {
-			log.Printf("[Store] Warning: could not inspect userdata.json migration state: %v", err)
-		} else if migrationNeeded {
-			if err := s.migrateFromJSON(jsonPath); err != nil {
-				log.Printf("[Store] Warning: failed to migrate from userdata.json: %v", err)
+	// Check whether a legacy JSON snapshot (or its old backup) still needs to
+	// be imported. Successful migrations remove the JSON files immediately.
+	jsonSource := findLegacyUserDataJSON(dir)
+	if jsonSource != "" {
+		migrationNeeded, err := s.jsonMigrationNeeded()
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		if migrationNeeded {
+			if err := s.migrateFromJSON(jsonSource); err != nil {
+				db.Close()
+				return nil, err
 			}
+			if err := removeLegacyUserDataJSON(dir); err != nil {
+				db.Close()
+				return nil, err
+			}
+		} else if err := removeLegacyUserDataJSON(dir); err != nil {
+			db.Close()
+			return nil, err
 		}
 	} else {
 		// If neither db nor json has data, check old legacy app data
@@ -167,8 +194,57 @@ func NewStore(dir string) (*Store, error) {
 	// synthesized placeholders.
 	_, _ = s.db.Exec(`DELETE FROM likes WHERE episode_id LIKE 'ep\_%' ESCAPE '\'`)
 	_, _ = s.db.Exec(`DELETE FROM favorites WHERE series_id GLOB '[0-9]*' AND length(trim(series_id)) < 6`)
+	if err := s.migrateOwnJSONFiles(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.migrateFeedMetricsJSONL(); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return s, nil
+}
+
+func legacyUserDataJSONPaths(dir string) []string {
+	return []string{
+		filepath.Join(dir, "userdata.json"),
+		filepath.Join(dir, "userdata.json.bak"),
+	}
+}
+
+func findLegacyUserDataJSON(dir string) string {
+	for _, path := range legacyUserDataJSONPaths(dir) {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+func removeLegacyUserDataJSON(dir string) error {
+	for _, path := range legacyUserDataJSONPaths(dir) {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) lockDatabaseFiles() error {
+	if err := os.Chmod(s.dbPath, 0600); err != nil {
+		return err
+	}
+	sidecars, err := filepath.Glob(s.dbPath + "-*")
+	if err != nil {
+		return err
+	}
+	for _, path := range sidecars {
+		if err := os.Chmod(path, 0600); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) jsonMigrationNeeded() (bool, error) {
@@ -202,6 +278,45 @@ func (s *Store) initSchema() error {
 		avatar TEXT NOT NULL DEFAULT '',
 		device_id TEXT NOT NULL DEFAULT '',
 		logged_in INTEGER NOT NULL DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS account_auth (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		cookies TEXT NOT NULL DEFAULT '',
+		token TEXT NOT NULL DEFAULT '',
+		updated_at INTEGER NOT NULL DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS device_profiles (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		cdid TEXT NOT NULL DEFAULT '',
+		openudid TEXT NOT NULL DEFAULT '',
+		clientudid TEXT NOT NULL DEFAULT '',
+		oaid TEXT NOT NULL DEFAULT '',
+		reqid TEXT NOT NULL DEFAULT '',
+		device_id TEXT NOT NULL DEFAULT '',
+		install_id TEXT NOT NULL DEFAULT '',
+		device_token TEXT NOT NULL DEFAULT '',
+		ttreq TEXT NOT NULL DEFAULT '',
+		store_region TEXT NOT NULL DEFAULT '',
+		store_region_src TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL DEFAULT 0,
+		device_brand TEXT NOT NULL DEFAULT '',
+		device_model TEXT NOT NULL DEFAULT '',
+		device_os_version TEXT NOT NULL DEFAULT '',
+		device_os_api INTEGER NOT NULL DEFAULT 0,
+		device_build TEXT NOT NULL DEFAULT '',
+		device_resolution TEXT NOT NULL DEFAULT '',
+		device_dpi INTEGER NOT NULL DEFAULT 0,
+		device_pad INTEGER NOT NULL DEFAULT 0,
+		device_channel TEXT NOT NULL DEFAULT ''
+	);
+
+	CREATE TABLE IF NOT EXISTS device_runtime (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		user_agent TEXT NOT NULL DEFAULT '',
+		store_region TEXT NOT NULL DEFAULT '',
+		updated_at INTEGER NOT NULL DEFAULT 0
 	);
 
 	CREATE TABLE IF NOT EXISTS history (
@@ -322,8 +437,42 @@ func (s *Store) initSchema() error {
 		PRIMARY KEY (series_id, episode_id, quality)
 	);
 	CREATE INDEX IF NOT EXISTS idx_media_cache_series ON media_cache(series_id, episode_num, updated_at DESC);
+
+	CREATE TABLE IF NOT EXISTS feed_metrics (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		type TEXT NOT NULL DEFAULT '',
+		from_index INTEGER NOT NULL DEFAULT 0,
+		to_index INTEGER NOT NULL DEFAULT 0,
+		buffered_at_switch INTEGER NOT NULL DEFAULT 0,
+		duration_ms INTEGER NOT NULL DEFAULT 0,
+		time_to_first_frame_ms INTEGER NOT NULL DEFAULT 0,
+		playback_info_ms INTEGER NOT NULL DEFAULT 0,
+		media_startup_ms INTEGER NOT NULL DEFAULT 0,
+		handoff_first_frame_ms INTEGER NOT NULL DEFAULT 0,
+		first_frame_source TEXT NOT NULL DEFAULT '',
+		switch_ready_ms INTEGER NOT NULL DEFAULT 0,
+		rebuffer_count INTEGER NOT NULL DEFAULT 0,
+		rebuffer_ms INTEGER NOT NULL DEFAULT 0,
+		network_profile TEXT NOT NULL DEFAULT '',
+		network_bytes_per_sec INTEGER NOT NULL DEFAULT 0,
+		network_failures INTEGER NOT NULL DEFAULT 0,
+		prefetch_completed INTEGER NOT NULL DEFAULT 0,
+		prefetch_failed INTEGER NOT NULL DEFAULT 0,
+		prefetch_canceled INTEGER NOT NULL DEFAULT 0,
+		prefetch_dropped INTEGER NOT NULL DEFAULT 0,
+		hls_starts INTEGER NOT NULL DEFAULT 0,
+		hls_hits INTEGER NOT NULL DEFAULT 0,
+		stream_mode TEXT NOT NULL DEFAULT '',
+		cache_hit INTEGER NOT NULL DEFAULT 0,
+		full_fallback INTEGER NOT NULL DEFAULT 0,
+		quality TEXT NOT NULL DEFAULT '',
+		at TEXT NOT NULL DEFAULT ''
+	);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	if err := s.migrateFeedMetricColumns(); err != nil {
 		return err
 	}
 	return s.initSyncQueues()
@@ -617,12 +766,10 @@ func (s *Store) migrateFromJSON(jsonPath string) error {
 		return err
 	}
 
-	// Backup original userdata.json
-	bakPath := jsonPath + ".bak"
-	if err := os.Rename(jsonPath, bakPath); err != nil {
-		return fmt.Errorf("数据已迁移，但归档旧 JSON 失败: %w", err)
+	if err := os.Remove(jsonPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("数据已迁移，但移除旧 JSON 失败: %w", err)
 	}
-	log.Printf("[Store] Migrated and archived %s -> %s", jsonPath, bakPath)
+	log.Printf("[Store] Migrated and removed %s", jsonPath)
 	return nil
 }
 
@@ -717,6 +864,54 @@ func (s *Store) SaveHistoryBatch(items []HistoryItem, scopes ...string) error {
 	}
 	defer tx.Rollback()
 
+	return s.saveHistoryBatchTx(tx, items, s.syncScopeLocked(scopes))
+}
+
+// ReplaceHistoryBatch applies a complete remote snapshot. Rows absent from the
+// snapshot were deleted on another device and must not survive locally.
+func (s *Store) ReplaceHistoryBatch(items []HistoryItem, scopes ...string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	keep := make(map[string]bool, len(items))
+	for _, item := range items {
+		keep[item.SeriesID] = true
+	}
+	rows, err := tx.Query(`SELECT series_id FROM history`)
+	if err != nil {
+		return err
+	}
+	var staleIDs []string
+	for rows.Next() {
+		var seriesID string
+		if err := rows.Scan(&seriesID); err != nil {
+			rows.Close()
+			return err
+		}
+		if !keep[seriesID] {
+			staleIDs = append(staleIDs, seriesID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, seriesID := range staleIDs {
+		if _, err := tx.Exec(`DELETE FROM history WHERE series_id = ?`, seriesID); err != nil {
+			return err
+		}
+	}
+	return s.saveHistoryBatchTx(tx, items, s.syncScopeLocked(scopes))
+}
+
+func (s *Store) saveHistoryBatchTx(tx *sql.Tx, items []HistoryItem, scope string) error {
 	stmt, err := tx.Prepare(`
 		INSERT INTO history (
 			series_id, title, cover_url, episode_num, episode_title,
@@ -760,7 +955,7 @@ func (s *Store) SaveHistoryBatch(items []HistoryItem, scopes ...string) error {
 		if tombstones[item.SeriesID] {
 			continue
 		}
-		if _, err := tx.Exec(`DELETE FROM pending_history_deletes WHERE series_id = ? AND scope = ?`, item.SeriesID, s.syncScopeLocked(scopes)); err != nil {
+		if _, err := tx.Exec(`DELETE FROM pending_history_deletes WHERE series_id = ? AND scope = ?`, item.SeriesID, scope); err != nil {
 			return err
 		}
 		if _, err := stmt.Exec(
@@ -970,6 +1165,23 @@ func (s *Store) ClearHistory(scopes ...string) error {
 		INSERT INTO history_clear_state (id, cleared_at) VALUES (1, ?)
 		ON CONFLICT(id) DO UPDATE SET cleared_at = excluded.cleared_at
 	`, time.Now().Unix()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ClearUserData removes account-scoped rows when an identity changes or a
+// stale logged-out profile is detected. Scoped sync queues are intentionally
+// retained so intents survive logout/login and cannot leak to another account.
+func (s *Store) ClearUserData() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := clearUserDataTx(tx); err != nil {
 		return err
 	}
 	return tx.Commit()

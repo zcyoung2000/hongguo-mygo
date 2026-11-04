@@ -60,6 +60,10 @@ func (s *HongguoService) GetHistory(ctx context.Context) ([]HistoryItem, error) 
 	return s.libraryService().GetHistory(ctx)
 }
 
+func (s *HongguoService) RefreshHistory(ctx context.Context) ([]HistoryItem, error) {
+	return s.libraryService().RefreshHistory(ctx)
+}
+
 func (s *HongguoService) DeleteHistory(ctx context.Context, seriesID string) error {
 	return s.libraryService().DeleteHistory(ctx, seriesID)
 }
@@ -80,6 +84,10 @@ func (s *HongguoService) GetFavorites(ctx context.Context) ([]FavoriteItem, erro
 	return s.libraryService().GetFavorites(ctx)
 }
 
+func (s *HongguoService) RefreshFavorites(ctx context.Context) ([]FavoriteItem, error) {
+	return s.libraryService().RefreshFavorites(ctx)
+}
+
 func (s *HongguoService) ToggleLike(ctx context.Context, seriesID, episodeID, title, coverURL string, episodeNum int) (bool, error) {
 	return s.libraryService().ToggleLike(ctx, seriesID, episodeID, title, coverURL, episodeNum)
 }
@@ -88,10 +96,18 @@ func (s *HongguoService) GetLikes(ctx context.Context) ([]LikeItem, error) {
 	return s.libraryService().GetLikes(ctx)
 }
 
+func (s *HongguoService) RefreshLikes(ctx context.Context) ([]LikeItem, error) {
+	return s.libraryService().RefreshLikes(ctx)
+}
+
 func (s *HongguoService) ToggleReservation(ctx context.Context, seriesID, title, coverURL, note, publishAt string) (bool, error) {
 	return s.libraryService().ToggleReservation(ctx, seriesID, title, coverURL, note, publishAt)
 }
 
 func (s *HongguoService) GetReservations(ctx context.Context) ([]ReservationItem, error) {
 	return s.libraryService().GetReservations(ctx)
+}
+
+func (s *HongguoService) RefreshReservations(ctx context.Context) ([]ReservationItem, error) {
+	return s.libraryService().RefreshReservations(ctx)
 }

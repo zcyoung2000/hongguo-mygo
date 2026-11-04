@@ -26,6 +26,8 @@ type Notification struct {
 	SeriesID string
 }
 
+const remoteSnapshotSettleDelay = 5 * time.Second
+
 type Dependencies struct {
 	Store            *userstore.Store
 	Client           *sdk.Client
@@ -54,23 +56,28 @@ type Service struct {
 	notify           func(ctx context.Context, notification Notification)
 
 	historyMu              sync.Mutex
+	historyRemoteMu        sync.Mutex
 	cachedHistory          []HistoryItem
 	historyCachedAt        time.Time
 	historySyncing         bool
 	historyGeneration      uint64
+	historyMutationAt      time.Time
 	historyMutationMu      sync.Mutex
 	historyMutationSyncing bool
 	historyMutationWake    bool
 
 	favMu           sync.Mutex
+	favRemoteMu     sync.Mutex
 	cachedFavorites []FavoriteItem
 	favCachedAt     time.Time
 	favSyncing      bool
 	favGeneration   uint64
+	favMutationAt   time.Time
 	favMutationMu   sync.Mutex
 	favSyncMu       sync.Mutex
 
 	likeMu         sync.Mutex
+	likeRemoteMu   sync.Mutex
 	likeMutationMu sync.Mutex
 	cachedLikes    []LikeItem
 	likeCachedAt   time.Time
@@ -79,6 +86,7 @@ type Service struct {
 	background     lifecycle.Group
 
 	resMu              sync.Mutex
+	resRemoteMu        sync.Mutex
 	cachedReservations []ReservationItem
 	resCachedAt        time.Time
 	resSyncing         bool
@@ -186,6 +194,36 @@ func (s *Service) currentReservationGeneration() uint64 {
 	s.resMu.Lock()
 	defer s.resMu.Unlock()
 	return s.resGeneration
+}
+
+func (s *Service) touchHistoryMutation() {
+	s.historyMu.Lock()
+	s.historyMutationAt = time.Now()
+	s.historyMu.Unlock()
+}
+
+func (s *Service) historyMutationSyncBusy() bool {
+	s.historyMutationMu.Lock()
+	defer s.historyMutationMu.Unlock()
+	return s.historyMutationSyncing
+}
+
+func (s *Service) historySnapshotSettled() bool {
+	s.historyMu.Lock()
+	defer s.historyMu.Unlock()
+	return time.Since(s.historyMutationAt) >= remoteSnapshotSettleDelay
+}
+
+func (s *Service) touchFavoriteMutation() {
+	s.favMu.Lock()
+	s.favMutationAt = time.Now()
+	s.favMu.Unlock()
+}
+
+func (s *Service) favoriteSnapshotSettled() bool {
+	s.favMu.Lock()
+	defer s.favMu.Unlock()
+	return time.Since(s.favMutationAt) >= remoteSnapshotSettleDelay
 }
 
 func (s *Service) userAgentValue() string {

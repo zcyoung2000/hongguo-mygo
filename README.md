@@ -20,7 +20,7 @@ The project is intended for personal technical study and local use. It is not af
 | Comments and danmaku | Episode comments, replies, timed danmaku playback, sending, and likes. |
 | Playback | Episode lists, quality selection, progress saving, continuous playback, and keyboard controls. |
 | Media pipeline | A local server proxies video, decrypts protected streams through FFmpeg, and supports HTTP range requests. |
-| Local persistence | SQLite stores profile and user library data with WAL mode and automatic legacy-data import. |
+| Local persistence | SQLite stores account credentials, device identity, profile, and user library data with WAL mode and automatic legacy-data import. |
 | CGO-free build | The Go runtime and SQLite driver build with `CGO_ENABLED=0`. |
 
 ## Requirements
@@ -61,7 +61,7 @@ The app can also detect credentials from a compatible local installation and off
 
 ## Data and Storage
 
-Application data is stored under `~/Library/Application Support/myguo/`. SQLite stores the profile, history, favorites, likes, and reservations. Cached media and converted images are stored separately and can be cleared from Settings.
+Application data is stored under `~/Library/Application Support/myguo/`. SQLite stores account credentials, device identity, the profile, history, favorites, likes, and reservations; there is no app-owned `account.json`. Cached media and converted images are stored separately and can be cleared from Settings.
 
 ## Architecture
 

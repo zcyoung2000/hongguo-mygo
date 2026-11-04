@@ -37,7 +37,7 @@ func (s *Store) importJSONTransaction(data UserData) error {
 	}
 	now := time.Now().Unix()
 	for _, item := range data.History {
-		if item.SeriesID == "" || item.ContentType == 1 || tombstones[item.SeriesID] {
+		if item.SeriesID == "" || item.ContentType == 1 {
 			continue
 		}
 		if item.UpdatedAt <= 0 {
@@ -47,6 +47,9 @@ func (s *Store) importJSONTransaction(data UserData) error {
 			item.UpdatedAt = now
 		}
 		if item.UpdatedAt <= clearAt {
+			continue
+		}
+		if tombstones[item.SeriesID] {
 			continue
 		}
 		if item.ContentType == 0 {
