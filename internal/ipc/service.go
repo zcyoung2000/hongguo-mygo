@@ -392,9 +392,9 @@ func (s *HongguoService) GetProfile(ctx context.Context) (UserProfile, error) {
 	return sanitizeIPC(p), nil
 }
 
-func (s *HongguoService) SetFeedScrollCapture(ctx context.Context, enabled bool) error {
+func (s *HongguoService) SetFeedScrollCapture(ctx context.Context, enabled bool) (bool, error) {
 	native.SetFeedScrollCapture(enabled)
-	return nil
+	return native.ScrollGestureMonitorRunning(), nil
 }
 
 type RecommendFeedResult struct {

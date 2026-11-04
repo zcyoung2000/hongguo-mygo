@@ -10,21 +10,12 @@ import (
 	"github.com/egoist/mygo"
 )
 
-type nativeScrollState struct {
-	active    bool
-	fired     bool
-	sum       float64
-	lastMouse time.Time
-}
-
 var (
 	scrollGestureMutex sync.Mutex
 	scrollState        nativeScrollState
 	scrollMonitor      objc.ID
 	scrollMonitorBlock objc.Block
 )
-
-const nativeScrollThreshold = 65.0
 
 func StartScrollGestureMonitor() {
 	mygo.RunOnMain(func() {
@@ -62,6 +53,7 @@ func StartScrollGestureMonitor() {
 
 		scrollMonitorBlock = blk
 		scrollMonitor = monitor.Send(selRetain)
+		scrollMonitorReady.Store(true)
 	})
 }
 
@@ -74,71 +66,8 @@ func handleNativeScrollEvent(phase, momentumPhase int, rawDeltaY float64, precis
 		return
 	}
 
-	const (
-		phaseBegan    = 1
-		phaseChanged  = 2
-		phaseEnded    = 4
-		phaseCanceled = 8
-		phaseMayBegin = 16
-	)
-
-	if phase&(phaseEnded|phaseCanceled) != 0 {
-		scrollState = nativeScrollState{}
-		return
-	}
-
-	// Momentum belongs to the gesture that already emitted its action.
-	if momentumPhase != 0 {
-		return
-	}
-
-	if phase&phaseBegan != 0 {
-		scrollState = nativeScrollState{active: true}
-	} else if phase&(phaseChanged|phaseMayBegin) != 0 {
-		scrollState.active = true
-	}
-
-	// Browser deltaY is positive downward; AppKit has the opposite sign.
-	deltaY := -rawDeltaY
-	if !precise {
-		deltaY *= 40
-	}
-
-	now := time.Now()
-	if phase == 0 {
-		// A conventional mouse wheel has no gesture phase. Separate notches by
-		// their cadence so each notch is one action.
-		if now.Sub(scrollState.lastMouse) > 120*time.Millisecond {
-			scrollState.active = false
-			scrollState.fired = false
-			scrollState.sum = 0
-		}
-		scrollState.lastMouse = now
-		scrollState.active = true
-	}
-
-	if !scrollState.active {
-		return
-	}
-
-	scrollState.sum += deltaY
-	if scrollState.fired || absFloat(scrollState.sum) < nativeScrollThreshold {
-		return
-	}
-
-	scrollState.fired = true
-	if window != nil {
-		direction := "up"
-		if scrollState.sum > 0 {
-			direction = "down"
-		}
+	direction := scrollState.consume(phase, momentumPhase, rawDeltaY, precise, time.Now())
+	if direction != "" && window != nil {
 		_ = scrollGestureEvent.Emit(window, ScrollGesturePayload{Direction: direction})
 	}
-}
-
-func absFloat(value float64) float64 {
-	if value < 0 {
-		return -value
-	}
-	return value
 }

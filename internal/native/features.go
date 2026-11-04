@@ -54,6 +54,7 @@ type NotificationArgs struct {
 var (
 	window             *mygo.Window
 	feedScrollCapture  atomic.Bool
+	scrollMonitorReady atomic.Bool
 	mediaCommandEvent  = mygo.NewEvent[MediaCommandPayload]("mediaCommand")
 	navigateEvent      = mygo.NewEvent[NavigatePayload]("navigate")
 	scrollGestureEvent = mygo.NewEvent[ScrollGesturePayload]("scrollGesture")
@@ -393,3 +394,5 @@ func SetWindow(win *mygo.Window) {
 func SetFeedScrollCapture(enabled bool) {
 	feedScrollCapture.Store(enabled)
 }
+
+func ScrollGestureMonitorRunning() bool { return scrollMonitorReady.Load() }
