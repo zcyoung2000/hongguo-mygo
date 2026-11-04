@@ -261,10 +261,14 @@ let feedActiveVideo = null;
 let feedPlayToken = 0;
 let feedPlayPromise = null;
 let nativeScrollGestureSeen = false;
+let feedScrollCaptureSync = null;
 let feedWarmupToken = 0;
-let feedWarmupTimers = [];
+let feedWarmupSession = null;
 let feedWarmupCenterKey = '';
+let feedPreloadRevision = Date.now();
 let feedPlaybackGeneration = 0;
+let playerRequestToken = 0;
+let playerPlaybackIdentity = null;
 const feedSwitchMetrics = [];
 const feedMetricQueue = [];
 let feedMetricFlushTimer = null;
@@ -838,11 +842,27 @@ function shouldCaptureFeedScroll() {
   const modal = document.getElementById('player-modal');
   const drawerOpen = Boolean(drawer?.classList.contains('open'));
   const modalOpen = Boolean(modal && modal.style.display !== 'none');
-  return state.currentView === 'recommend' && !drawerOpen && !modalOpen;
+  return state.currentView === 'recommend' && !drawerOpen && !modalOpen && !commentState.open;
 }
 
 function syncFeedScrollCapture() {
-  apiCall('SetFeedScrollCapture', shouldCaptureFeedScroll()).catch(() => {});
+  if (feedScrollCaptureSync) return feedScrollCaptureSync;
+  const enabled = shouldCaptureFeedScroll();
+  // Serialize updates so a slow "disable" cannot arrive after a later
+  // "enable" and leave native scrolling permanently switched off.
+  feedScrollCaptureSync = apiCall('SetFeedScrollCapture', enabled).catch(() => {}).finally(() => {
+    feedScrollCaptureSync = null;
+    if (enabled !== shouldCaptureFeedScroll()) return syncFeedScrollCapture();
+  });
+  return feedScrollCaptureSync;
+}
+
+function handleNativeFeedScroll(payload) {
+  nativeScrollGestureSeen = true;
+  if (!shouldCaptureFeedScroll()) return;
+  const direction = String(payload?.direction || '').toLowerCase();
+  if (direction === 'down') switchFeedDrama(1);
+  if (direction === 'up') switchFeedDrama(-1);
 }
 
 function resetFeedVideoPool() {
@@ -885,12 +905,6 @@ function effectiveFeedNetworkProfile() {
     }
   }
   return profile;
-}
-
-function feedWarmupLimits(profile = effectiveFeedNetworkProfile()) {
-  if (profile === 'weak') return { next: 1, previous: 0 };
-  if (profile === 'strong') return { next: 3, previous: 2 };
-  return { next: 2, previous: 1 };
 }
 
 function definitionNumber(quality) {
@@ -1243,23 +1257,20 @@ function syncActiveFeedSlot(slot, playback = null) {
   syncFeedMediaChrome();
 }
 
-function cancelScheduledFeedWarmup() {
-  feedWarmupToken++;
-  feedWarmupCenterKey = '';
-  feedWarmupTimers.forEach(timer => clearTimeout(timer));
-  feedWarmupTimers = [];
+function updateFeedPreloadWindow(slot, items) {
+  feedPreloadRevision = Math.max(feedPreloadRevision + 1, Date.now());
+  return apiCall('UpdateFeedPreloadWindow', feedPreloadRevision, slot?.episodeId || '', slot?.quality || state.feed.quality, items);
 }
 
-function feedSeriesIDs(items, centerIndex, nextCount, previousCount) {
-  const nextIDs = [];
-  const previousIDs = [];
-  for (let i = 1; i <= nextCount; i++) {
-    if (items[centerIndex + i]) nextIDs.push(items[centerIndex + i].id);
+function cancelScheduledFeedWarmup({ releaseMedia = true } = {}) {
+  feedWarmupToken++;
+  feedWarmupCenterKey = '';
+  if (feedWarmupSession?.timer) clearTimeout(feedWarmupSession.timer);
+  feedWarmupSession = null;
+  if (releaseMedia) {
+    const slot = state.currentView === 'recommend' ? feedSlots[feedSlotCurr] : null;
+    updateFeedPreloadWindow(slot, []).catch(err => console.debug('release feed preloads failed:', err));
   }
-  for (let i = 1; i <= previousCount; i++) {
-    if (items[centerIndex - i]) previousIDs.push(items[centerIndex - i].id);
-  }
-  return { nextIDs, previousIDs };
 }
 
 function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true) {
@@ -1460,121 +1471,159 @@ function feedVideoBufferAhead(video) {
   return 0;
 }
 
+// All buffer thresholds use seconds of WALL time, including 1.5x/2x playback.
+// Grow only after sustained headroom; shrink at lower watermarks to avoid
+// repeatedly canceling/restarting downloads around a single threshold.
+function decideFeedPreload(sample, previous = {}) {
+  const rate = Math.max(0.25, Number(sample.rate) || 1);
+  const reserve = Math.max(0, sample.bufferSec) / rate;
+  const elapsed = (sample.now - (previous.at ?? sample.now)) / 1000;
+  const slope = elapsed >= 0.25 && elapsed <= 3
+    ? Math.max(-2, Math.min(4, (reserve - (previous.reserve ?? reserve)) / elapsed))
+    : 0;
+  const trend = elapsed > 3 ? 0 : (previous.trend || 0) * 0.7 + slope * 0.3;
+  let depth = previous.depth || 0;
+  let stableSince = previous.stableSince ?? null;
+  let cooldownUntil = previous.cooldownUntil || 0;
+  const limit = sample.profile === 'weak' ? 1 : (sample.profile === 'strong' ? 3 : 2);
+
+  if (sample.waiting || (!sample.complete && reserve < 4)) {
+    if (depth > 0 || sample.waiting) cooldownUntil = sample.now + 4000;
+    return { depth: 0, at: sample.now, reserve, trend: 0, stableSince: null, cooldownUntil };
+  }
+  if (!sample.complete) {
+    if (reserve < 10 || (trend < -0.35 && reserve < 14)) depth = Math.min(depth, 1);
+    else if (reserve < 18) depth = Math.min(depth, 2);
+  }
+  const healthy = sample.complete || (reserve >= 6 && trend >= -0.2);
+  stableSince = healthy ? (stableSince ?? sample.now) : null;
+  const stableMS = stableSince === null ? 0 : sample.now - stableSince;
+  if (sample.now >= cooldownUntil && healthy) {
+    // Do not delay the immediate next once current has a safe prefix. Only
+    // widening beyond it needs a sustained surplus across several samples.
+    depth = Math.max(depth, 1);
+    if (stableMS >= 2500 && (sample.complete || reserve >= 14) && sample.nextReady) depth = Math.max(depth, 2);
+    if (stableMS >= 5000 && (sample.complete || reserve >= 24) && sample.nextReady && sample.secondReady) depth = 3;
+  }
+  depth = Math.min(depth, limit);
+  if (depth < (previous.depth || 0)) cooldownUntil = Math.max(cooldownUntil, sample.now + 3000);
+  depth = Math.min(depth, Math.max(0, sample.available));
+  return { depth, at: sample.now, reserve, trend, stableSince, cooldownUntil };
+}
+
+function cachedFeedPlayback(itemIndex) {
+  const drama = state.feed.items[itemIndex];
+  if (!drama) return null;
+  const pb = state.feed.preloadMap.get(feedAssetKey(drama.id, 1, feedDesiredQuality()));
+  return pb?.expiresAt > Date.now() ? pb : null;
+}
+
+function wakeFeedWarmup(urgent = false) {
+  const session = feedWarmupSession;
+  if (!session || session.token !== feedWarmupToken) return;
+  if (session.running) {
+    session.pending = true;
+    return;
+  }
+  if (session.timer) clearTimeout(session.timer);
+  const delay = urgent ? 0 : Math.max(0, 750 - (performance.now() - session.lastRun));
+  session.timer = setTimeout(() => runFeedWarmup(session), delay);
+}
+
 async function scheduleFeedWarmup(centerIndex) {
-  if (state.currentView !== 'recommend') return;
-  const items = state.feed.items;
-  const centerDrama = items?.[centerIndex];
-  if (!items?.length || !centerDrama) return;
-  const centerKey = `${centerIndex}:${centerDrama.id}:${feedSlots[feedSlotCurr]?.episodeId}:${feedDesiredQuality()}`;
+  if (state.currentView !== 'recommend' || state.feed.userPaused) return;
+  const drama = state.feed.items[centerIndex];
+  const current = feedSlots[feedSlotCurr];
+  if (!drama || current?.itemIndex !== centerIndex || !current.episodeId) return;
+  const centerKey = `${centerIndex}:${drama.id}:${current.episodeId}:${current.quality}`;
   if (feedWarmupCenterKey === centerKey) return;
-  cancelScheduledFeedWarmup();
+  const old = feedWarmupSession;
+  cancelScheduledFeedWarmup({ releaseMedia: false });
   feedWarmupCenterKey = centerKey;
-  const token = feedWarmupToken;
-  ensureFeedItemsAhead();
-
-  if (!items[centerIndex + 1]) {
-    feedWarmupTimers.push(setTimeout(() => {
-      if (token !== feedWarmupToken || state.currentView !== 'recommend') return;
-      feedWarmupCenterKey = '';
-      scheduleFeedWarmup(centerIndex);
-    }, 1500));
-    return;
-  }
-
-  // Diagnostics are advisory and must not sit on the immediate-next path.
-  refreshFeedNetworkDiagnostics();
-
-  const profile = effectiveFeedNetworkProfile();
-  const limits = feedWarmupLimits(profile);
-  const activeQuality = feedSlots[feedSlotCurr]?.quality || feedDesiredQuality();
-  const requestWindow = (nextCount, previousCount) => {
-    if (token !== feedWarmupToken) return;
-    const { nextIDs, previousIDs } = feedSeriesIDs(items, centerIndex, nextCount, previousCount);
-    apiCall('WarmupFeed', centerDrama.id, feedSlots[feedSlotCurr]?.episodeId || '', previousIDs, nextIDs, activeQuality, profile)
-      .catch(err => console.warn('feed warmup failed:', err));
+  const inheritedDepth = old && centerIndex > old.centerIndex
+    ? Math.max(0, old.policy.depth - (centerIndex - old.centerIndex)) : 0;
+  const session = {
+    token: feedWarmupToken, centerIndex, current, timer: null, running: false,
+    pending: false, lastRun: -Infinity, lastDiagnostics: -Infinity,
+    policy: { depth: inheritedDepth }, statuses: new Map(), metadataTries: new Map()
   };
-
-  requestWindow(1, 0);
-  const prepareImmediateNext = async () => {
-    const nextSlot = feedSlots[feedSlotNext];
-    await Promise.resolve(nextSlot?.preparing || prepareFeedSlot(nextSlot, centerIndex + 1, false, null, true));
-    if (token !== feedWarmupToken || state.currentView !== 'recommend') return;
-    // Resolve farther metadata now; start its media only once both current
-    // and immediate-next playback have real buffered data.
-    if (limits.next >= 2) prefetchFeedPlaybackInfo(centerIndex + 2, false);
-  };
-  prepareImmediateNext().catch(err => console.warn('feed next warmup failed:', err));
-  preloadFeedCovers(items, centerIndex, profile === 'weak' ? 1 : (profile === 'medium' ? 2 : 3));
-  finishFeedWarmup(centerIndex, token, profile, limits, requestWindow);
+  feedWarmupSession = session;
+  preloadFeedCovers(state.feed.items, centerIndex, 3);
+  await runFeedWarmup(session);
 }
 
-async function finishFeedWarmup(centerIndex, token, profile, limits, requestWindow) {
-  const items = state.feed.items;
-  const centerDrama = items?.[centerIndex];
-  const nextDrama = items?.[centerIndex + 1];
-  if (!centerDrama || !nextDrama) return;
+async function runFeedWarmup(session) {
+  const valid = () => session === feedWarmupSession && session.token === feedWarmupToken &&
+    state.currentView === 'recommend' && !state.feed.userPaused && state.feed.index === session.centerIndex;
+  if (!valid() || session.running) return;
+  session.running = true;
+  session.pending = false;
+  session.lastRun = performance.now();
+  try {
+    ensureFeedItemsAhead();
+    const now = performance.now();
+    if (now - session.lastDiagnostics >= 3000) {
+      session.lastDiagnostics = now;
+      refreshFeedNetworkDiagnostics();
+    }
+    // Negotiation is cheap and does not start a media download. Keep a small,
+    // bounded metadata window ready even while current playback needs recovery.
+    for (let offset = 1; offset <= 3; offset++) {
+      const index = session.centerIndex + offset;
+      if (!state.feed.items[index] || cachedFeedPlayback(index)) continue;
+      const lastTry = session.metadataTries.get(index) ?? -Infinity;
+      if (now - lastTry < 5000) continue;
+      session.metadataTries.set(index, now);
+      Promise.resolve(prefetchFeedPlaybackInfo(index, false)).then(() => {
+        if (valid()) wakeFeedWarmup();
+      });
+    }
+    const video = session.current.video;
+    const ahead = feedVideoBufferAhead(video);
+    const remaining = Math.max(0, feedMediaDuration(video) - (video.currentTime || 0));
+    const ready = offset => {
+      const pb = cachedFeedPlayback(session.centerIndex + offset);
+      const status = pb && session.statuses.get(`${pb.episodeId}:${pb.quality}`);
+      return Boolean(pb?.isFullCached || status?.complete || status?.cachedSeconds >= 6);
+    };
+    session.policy = decideFeedPreload({
+      now, bufferSec: ahead, rate: video.playbackRate, profile: effectiveFeedNetworkProfile(),
+      complete: remaining > 0 && ahead >= remaining - 0.25,
+      waiting: video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA &&
+        !video.ended && (video.currentTime > 0 || session.policy.depth > 0),
+      nextReady: ready(1), secondReady: ready(2),
+      available: state.feed.items.length - session.centerIndex - 1
+    }, session.policy);
 
-  let nextReady = false;
-  while (token === feedWarmupToken && state.currentView === 'recommend') {
+    // An explicit swipe is foreground demand, even before the animation has
+    // promoted its target. Do not clear that decoder as speculative work.
+    const depth = feedSwitchWaitDir > 0 ? Math.max(1, session.policy.depth) : session.policy.depth;
+    const items = [];
+    for (let offset = 1; offset <= depth; offset++) {
+      const pb = cachedFeedPlayback(session.centerIndex + offset);
+      if (!pb?.episodeId) break;
+      items.push({ seriesId: state.feed.items[session.centerIndex + offset].id,
+        episodeId: pb.episodeId, number: pb.episodeNum || 1, quality: pb.quality });
+    }
     const nextSlot = feedSlots[feedSlotNext];
-    const sourceMatches = Boolean(
-      nextSlot &&
-      nextSlot.itemIndex === centerIndex + 1 &&
-      nextSlot.seriesId === nextDrama.id &&
-      nextSlot.streamUrl &&
-      nextSlot.video?.src
-    );
-    if (!sourceMatches) {
-      await (nextSlot?.preparing || prepareFeedSlot(nextSlot, centerIndex + 1, false, null, true));
+    if (!depth && nextSlot?.itemIndex === session.centerIndex + 1) clearFeedSlot(nextSlot);
+    const statuses = await updateFeedPreloadWindow(session.current, items);
+    if (!valid()) return;
+    session.statuses = new Map((statuses || []).map(status => [`${status.episodeId}:${status.quality}`, status]));
+    if (items.length && nextSlot && !nextSlot.preparing) {
+      // Only i+1 needs a decoder. i+2/i+3 warm the SAME local HLS cache and
+      // acquire a decoder when the three-element carousel rotates to them.
+      prepareFeedSlot(nextSlot, session.centerIndex + 1, false, null, true)
+        .catch(err => console.warn('feed next warmup failed:', err));
     }
-    if (token !== feedWarmupToken) return;
-    nextReady = await waitForFeedPlaybackBuffer(nextSlot.video, 5000);
-    if (token !== feedWarmupToken) return;
-    if (nextReady) break;
-
-    // A failed source must be reloaded rather than waiting forever on a dead
-    // decoder. prepareFeedSlot will clear and reuse the same slot on retry.
-    if (nextSlot?.video?.error) {
-      await prepareFeedSlot(nextSlot, centerIndex + 1, false, null, true);
+  } catch (err) {
+    console.warn('feed preload scheduling failed:', err);
+  } finally {
+    session.running = false;
+    if (valid()) {
+      session.timer = setTimeout(() => runFeedWarmup(session), session.pending ? 250 : 1000);
     }
   }
-  if (!nextReady || token !== feedWarmupToken) return;
-
-  // Do not let i+2 or backward media downloads start until both the current
-  // video and the unique highest-priority i+1 stream have a safe buffer.
-  if (feedVideoBufferAhead(feedSlots[feedSlotCurr]?.video) < 4) {
-    feedWarmupTimers.push(setTimeout(async () => {
-      if (token !== feedWarmupToken) return;
-      const activeVideo = feedSlots[feedSlotCurr]?.video;
-      if (feedVideoBufferAhead(activeVideo) >= 4) {
-        await finishFeedWarmupAfterNext(centerIndex, token, profile, limits, requestWindow);
-      } else {
-        await finishFeedWarmup(centerIndex, token, profile, limits, requestWindow);
-      }
-    }, 2000));
-    return;
-  }
-
-  finishFeedWarmupAfterNext(centerIndex, token, profile, limits, requestWindow);
-}
-
-function finishFeedWarmupAfterNext(centerIndex, token, profile, limits, requestWindow) {
-  const secondNextCount = Math.min(limits.next, 2);
-  requestWindow(secondNextCount, Math.min(limits.previous, 1));
-  if (secondNextCount >= 2) prefetchFeedPlaybackInfo(centerIndex + 2);
-  // Keep i+3 metadata warm without starting another upstream HLS job.
-  if (limits.next >= 3) prefetchFeedPlaybackInfo(centerIndex + 3, false);
-  if (limits.previous > 0) {
-    // Keep a previous decoder when it still matches. Do not start a new
-    // backward download that could occupy the next video's media slot.
-    prefetchFeedPlaybackInfo(centerIndex - 1, false);
-  }
-
-  feedWarmupTimers.push(setTimeout(() => {
-    if (token !== feedWarmupToken) return;
-    if (profile !== 'strong' || feedVideoBufferAhead(feedSlots[feedSlotCurr]?.video) < 8) return;
-    requestWindow(limits.next, limits.previous);
-  }, 8000));
 }
 
 const state = {
@@ -1587,7 +1636,8 @@ const state = {
     tab: 'favorites',
     favoritesList: [],
     likesList: [],
-    loading: false
+    loading: false,
+    errors: {}
   },
 
   // Recommend vertical feed state (TikTok/Douyin full-bleed vertical player)
@@ -1702,6 +1752,7 @@ const state = {
     playbackSpeed: 1.0,
     saveTimer: null,
     loading: false,
+    detailReady: false,
     seasonSwitching: false,
     userPaused: false
   }
@@ -2095,6 +2146,71 @@ function updateNavButtons() {
   }
 }
 
+function beginViewRequest(view) {
+  const tokens = state.viewRequestTokens || (state.viewRequestTokens = {});
+  return tokens[view] = (tokens[view] || 0) + 1;
+}
+
+function isViewRequestCurrent(view, token) {
+  return state.currentView === view && state.viewRequestTokens?.[view] === token;
+}
+
+function invalidateViewRequests(view) {
+  beginViewRequest(view);
+  if (view === 'discover') {
+    discoverRequestToken++;
+    discoverPanelToken++;
+    state.discover.loading = false;
+    disconnectDiscoverObserver();
+  } else if (view === 'detail') {
+    state.detail.requestToken++;
+    state.detail.loading = false;
+  } else if (view === 'actor') {
+    state.actor.loading = false;
+  } else if (view === 'search-results') {
+    state.searchLoading = false;
+  } else if (view === 'favorites') {
+    state.favoritesView.loading = false;
+  }
+}
+
+function applyFavoriteState(seriesId, favorite) {
+  const changes = state.favoriteChanges || (state.favoriteChanges = {});
+  changes[seriesId] = { revision: (changes[seriesId]?.revision || 0) + 1, value: favorite };
+  if (state.detail.id === seriesId && state.detail.data?.id === seriesId) {
+    state.detail.data = { ...state.detail.data, isFavorite: favorite };
+    const button = document.getElementById('btn-detail-favorite');
+    if (button) {
+      button.classList.toggle('active', favorite);
+      const label = button.querySelector('span');
+      if (label) label.textContent = favorite ? '已收藏' : '收藏';
+    }
+  }
+  for (const [scene, buttonId] of [['feed', 'feed-fav'], ['player', 'player-fav']]) {
+    if (state[scene]?.seriesId !== seriesId) continue;
+    state[scene].isFavorite = favorite;
+    document.getElementById(buttonId)?.classList.toggle('active', favorite);
+  }
+  if (!favorite) {
+    state.favoritesView.favoritesList = state.favoritesView.favoritesList.filter(item => item.seriesId !== seriesId);
+  }
+  beginViewRequest('favorites');
+  if (state.currentView === 'favorites') loadFavoritesAndLikes();
+}
+
+function applyLikeState(seriesId, episodeId, liked) {
+  for (const [scene, buttonId] of [['feed', 'feed-like'], ['player', 'player-like']]) {
+    if (state[scene]?.seriesId !== seriesId || state[scene]?.episodeId !== episodeId) continue;
+    state[scene].isLiked = liked;
+    document.getElementById(buttonId)?.classList.toggle('active', liked);
+  }
+  if (!liked) {
+    state.favoritesView.likesList = state.favoritesView.likesList.filter(item => item.seriesId !== seriesId || item.episodeId !== episodeId);
+  }
+  beginViewRequest('favorites');
+  if (state.currentView === 'favorites') loadFavoritesAndLikes();
+}
+
 function navigateTo(view) {
   if (view === state.currentView) return;
   state.historyStack = state.historyStack.slice(0, state.historyIndex + 1);
@@ -2217,6 +2333,8 @@ function switchView(viewName, pushHistory = true) {
     viewName = 'favorites';
   }
 
+  if (state.currentView !== viewName) invalidateViewRequests(state.currentView);
+
   if (viewName !== 'recommend') {
     if (window.ambientGlow) window.ambientGlow.stop();
     cancelScheduledFeedWarmup();
@@ -2279,6 +2397,7 @@ function switchView(viewName, pushHistory = true) {
     case 'settings': loadSettings(); break;
     case 'detail': if (state.detail.id) loadSeriesDetail(state.detail.id); break;
     case 'actor': if (state.actor.userId) loadActorDetail(state.actor.userId); break;
+    case 'search-results': if (state.searchQuery && !state.searchLoading) executeSearch(state.searchQuery); break;
   }
 }
 
@@ -2315,7 +2434,8 @@ function initDetailEvents() {
   if (favoriteBtn) {
     favoriteBtn.addEventListener('click', async () => {
       const detail = state.detail.data;
-      if (!detail) return;
+      if (!detail || favoriteBtn.disabled) return;
+      favoriteBtn.disabled = true;
       try {
         const isNowFav = await apiCall('ToggleFavorite',
           detail.id,
@@ -2324,14 +2444,12 @@ function initDetailEvents() {
           detail.description,
           detail.episodeCount
         );
-        const updatedDetail = { ...detail, isFavorite: Boolean(isNowFav) };
-        state.detail.data = updatedDetail;
-        favoriteBtn.classList.toggle('active', updatedDetail.isFavorite);
-        favoriteBtn.querySelector('span').textContent = updatedDetail.isFavorite ? '已收藏' : '收藏';
-        showToast(updatedDetail.isFavorite ? '已加入收藏' : '已取消收藏');
-        state.favoritesView.favoritesList = [];
+        applyFavoriteState(detail.id, Boolean(isNowFav));
+        showToast(isNowFav ? '已加入收藏' : '已取消收藏');
       } catch (err) {
         showToast('收藏失败: ' + err);
+      } finally {
+        favoriteBtn.disabled = false;
       }
     });
   }
@@ -2339,26 +2457,34 @@ function initDetailEvents() {
 
 async function loadSeriesDetail(seriesId, force = false) {
   if (!seriesId) return;
-  if (!force && state.detail.data && state.detail.data.id === seriesId) return;
+  const cached = !force && state.detail.data?.id === seriesId;
 
   const token = ++state.detail.requestToken;
+  const favoriteRevision = state.favoriteChanges?.[seriesId]?.revision || 0;
   state.detail.id = seriesId;
   state.detail.loading = true;
-  state.detail.data = null;
-  state.detail.episodesExpanded = false;
-  clearDetailSupplements();
+  if (!cached) {
+    state.detail.data = null;
+    state.detail.episodesExpanded = false;
+    clearDetailSupplements();
+  }
 
   const loader = document.getElementById('detail-loader');
   const content = document.getElementById('detail-content');
   const errorBox = document.getElementById('detail-error');
-  if (loader) loader.style.display = 'grid';
-  if (content) content.style.display = 'none';
+  if (loader) loader.style.display = cached ? 'none' : 'grid';
+  if (content) content.style.display = cached ? 'block' : 'none';
   if (errorBox) errorBox.style.display = 'none';
 
   try {
     const detail = await apiCall('GetSeriesPage', seriesId);
     if (token !== state.detail.requestToken || !detail || !detail.id) {
       return;
+    }
+
+    const favoriteChange = state.favoriteChanges?.[seriesId];
+    if (favoriteChange && favoriteChange.revision !== favoriteRevision) {
+      detail.isFavorite = favoriteChange.value;
     }
 
     state.detail.data = detail;
@@ -3150,16 +3276,42 @@ async function loadSettings() {
   }
 }
 
+async function clearMediaCache() {
+  cancelScheduledFeedWarmup({ releaseMedia: false });
+  feedPlaybackGeneration++;
+  state.feed.preloadMap.clear();
+  state.feed.playbackInfoLoads.clear();
+  // Keep the visible decoder; discard adjacent sources that may reference a
+  // cached file about to be removed. Late metadata loads have been invalidated.
+  for (const slot of feedSlots) {
+    if (state.currentView !== 'recommend' || slot !== feedSlots[feedSlotCurr] || !slot.ready) clearFeedSlot(slot);
+  }
+  try {
+    const current = state.currentView === 'recommend' ? feedSlots[feedSlotCurr] : null;
+    await updateFeedPreloadWindow(current, []);
+    return await apiCall('ClearCache');
+  } finally {
+    if (state.currentView === 'recommend') {
+      if (!feedSlots[feedSlotCurr]?.streamUrl) {
+        playFeedIndex(state.feed.index).catch(err => console.warn('resume after cache clear failed:', err));
+      } else {
+        scheduleFeedWarmup(state.feed.index);
+      }
+    }
+  }
+}
+
 function initSettingsEvents() {
   // Clear cache in settings
   const btnClear = document.getElementById('btn-settings-clear-cache');
   if (btnClear) {
     btnClear.addEventListener('click', async () => {
       try {
-        const bytes = await apiCall('ClearCache');
+        const bytes = await clearMediaCache();
         const mb = (bytes / (1024 * 1024)).toFixed(1);
         const cacheEl = document.getElementById('settings-cache-size');
-        if (cacheEl) cacheEl.textContent = '0.0 MB';
+        const remaining = await apiCall('GetCacheSize');
+        if (cacheEl) cacheEl.textContent = `${(remaining / (1024 * 1024)).toFixed(1)} MB`;
         showToast(`已清理 ${mb} MB 本地媒体缓存`);
       } catch (err) {
         showToast('清理失败: ' + err);
@@ -3689,34 +3841,6 @@ function updatePlaybackBufferIndicator(video, indicator, duration) {
   const width = ((range.end - range.start) / duration) * 100;
   indicator.style.left = `${Math.max(0, Math.min(100, left))}%`;
   indicator.style.width = `${Math.max(0, Math.min(100 - left, width))}%`;
-}
-
-function waitForFeedPlaybackBuffer(video, timeoutMs = 2500) {
-  return new Promise(resolve => {
-    if (feedVideoHasPlaybackBuffer(video)) {
-      resolve(true);
-      return;
-    }
-
-    let settled = false;
-    const finish = ready => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      ['canplay', 'canplaythrough', 'loadeddata', 'progress'].forEach(event => {
-        video?.removeEventListener(event, checkReady);
-      });
-      resolve(ready);
-    };
-    const checkReady = () => {
-      if (feedVideoHasPlaybackBuffer(video)) finish(true);
-    };
-    const timer = setTimeout(() => finish(false), timeoutMs);
-
-    ['canplay', 'canplaythrough', 'loadeddata', 'progress'].forEach(event => {
-      video?.addEventListener(event, checkReady);
-    });
-  });
 }
 
 function beginFeedPlayback(feedVideo, token) {
@@ -4516,6 +4640,7 @@ function openCommentSheet(options) {
     replyErrors: {},
     replyOpen: {}
   });
+  syncFeedScrollCapture();
 
   const overlay = document.getElementById('comment-sheet-overlay');
   const shouldAnimateVideo = !commentState.open;
@@ -4841,6 +4966,7 @@ function closeCommentSheet() {
   const closeToken = commentState.requestToken + 1;
   commentState.open = false;
   commentState.requestToken++;
+  syncFeedScrollCapture();
   const overlay = document.getElementById('comment-sheet-overlay');
   restoreCommentOverlay();
   document.body.classList.remove('comments-open');
@@ -5055,6 +5181,7 @@ function initFeedControls() {
 
     video.addEventListener('waiting', () => {
       if (video !== getFeedVideo()) return;
+      wakeFeedWarmup(true);
       if (window.ambientGlow) {
         window.ambientGlow.pause();
       }
@@ -5063,6 +5190,7 @@ function initFeedControls() {
 
     video.addEventListener('playing', () => {
       if (video !== getFeedVideo()) return;
+      wakeFeedWarmup();
       if (window.ambientGlow && state.currentView === 'recommend') {
         window.ambientGlow.attach(video).start();
       }
@@ -5269,21 +5397,19 @@ function initFeedControls() {
   if (likeBtn) {
     likeBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!state.feed.seriesId) return;
+      if (!state.feed.seriesId || likeBtn.disabled) return;
+      const { seriesId, episodeId, seriesTitle, seriesCover, episodeNum } = state.feed;
+      likeBtn.disabled = true;
       try {
         const isNowLiked = await apiCall('ToggleLike',
-          state.feed.seriesId,
-          state.feed.episodeId,
-          state.feed.seriesTitle,
-          state.feed.seriesCover,
-          state.feed.episodeNum
+          seriesId, episodeId, seriesTitle, seriesCover, episodeNum
         );
-        state.feed.isLiked = isNowLiked;
-        likeBtn.classList.toggle('active', isNowLiked);
+        applyLikeState(seriesId, episodeId, Boolean(isNowLiked));
         showToast(isNowLiked ? '已点赞' : '已取消点赞');
-        state.favoritesView.likesList = [];
       } catch (err) {
         showToast('点赞失败: ' + err);
+      } finally {
+        likeBtn.disabled = false;
       }
     });
   }
@@ -5291,21 +5417,19 @@ function initFeedControls() {
   if (favBtn) {
     favBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!state.feed.seriesId) return;
+      if (!state.feed.seriesId || favBtn.disabled) return;
+      const { seriesId, seriesTitle, seriesCover, totalEpisodes } = state.feed;
+      favBtn.disabled = true;
       try {
         const isNowFav = await apiCall('ToggleFavorite',
-          state.feed.seriesId,
-          state.feed.seriesTitle,
-          state.feed.seriesCover,
-          '',
-          state.feed.totalEpisodes
+          seriesId, seriesTitle, seriesCover, '', totalEpisodes
         );
-        state.feed.isFavorite = isNowFav;
-        favBtn.classList.toggle('active', isNowFav);
+        applyFavoriteState(seriesId, Boolean(isNowFav));
         showToast(isNowFav ? '已加入收藏' : '已取消收藏');
-        state.favoritesView.favoritesList = [];
       } catch (err) {
         showToast('收藏失败: ' + err);
+      } finally {
+        favBtn.disabled = false;
       }
     });
   }
@@ -5324,12 +5448,7 @@ function initFeedControls() {
   const recommendView = document.getElementById('view-recommend');
   waitForMygoBridge().then(runtime => {
     if (!recommendView || !runtime?.on) return;
-    runtime.on('scrollGesture', (payload) => {
-      nativeScrollGestureSeen = true;
-      const direction = String(payload?.direction || '').toLowerCase();
-      if (direction === 'down') switchFeedDrama(1);
-      if (direction === 'up') switchFeedDrama(-1);
-    });
+    runtime.on('scrollGesture', handleNativeFeedScroll);
   }).catch(() => {});
 
   let wheelArmed = true;
@@ -5343,7 +5462,7 @@ function initFeedControls() {
     // NSEvent is preferred. This velocity gate is only a WebKit fallback
     // because JS wheel events do not expose the native gesture phase.
     recommendView.addEventListener('wheel', (e) => {
-      if (e.target?.closest?.('.feed-playlist-drawer, .episodes-grid, .speed-menu, .drawer')) return;
+      if (!shouldCaptureFeedScroll() || e.target?.closest?.('.feed-playlist-drawer, .episodes-grid, .speed-menu, .drawer, #comment-sheet-overlay')) return;
       e.preventDefault();
       if (nativeScrollGestureSeen) return;
 
@@ -5633,9 +5752,15 @@ function createDramaCard(item, fallbackCover = '') {
   if (item.onDelete) {
     const delBtn = card.querySelector('.card-badge-delete');
     if (delBtn) {
-      delBtn.onclick = (e) => {
+      delBtn.onclick = async (e) => {
         e.stopPropagation();
-        item.onDelete();
+        if (delBtn.disabled) return;
+        delBtn.disabled = true;
+        try {
+          await item.onDelete();
+        } finally {
+          delBtn.disabled = false;
+        }
       };
     }
   }
@@ -5679,19 +5804,24 @@ async function toggleCardReservation(item, button) {
 // ==========================================================================
 
 async function loadDiscoverFilters() {
+  if (state.currentView !== 'discover') return;
   const panel = document.getElementById('discover-filters');
   const alreadyRendered = state.discover.renderedGenre === state.discover.genre && panel && panel.children.length > 0;
 
   if (alreadyRendered) {
     // If filters for this genre are already mounted, only re-execute if grid is empty
     const grid = document.getElementById('discover-grid');
-    if (!grid || grid.children.length === 0) {
+    if (!grid || grid.children.length === 0 || state.discover.items.length === 0) {
       executeDiscover();
+    } else {
+      renderDiscoverLoadMore();
+      observeDiscoverLoadMore();
     }
     return;
   }
 
   const panelToken = ++discoverPanelToken;
+  state.discover.renderedGenre = '';
   panel.innerHTML = renderFilterPanelSkeleton();
   panel.classList.add('discover-section-enter');
 
@@ -5792,6 +5922,7 @@ function renderDiscoverLoadMore() {
 
 function observeDiscoverLoadMore() {
   disconnectDiscoverObserver();
+  if (state.currentView !== 'discover') return;
   const sentinel = document.getElementById('discover-load-more');
   const viewport = document.querySelector('.view-viewport');
   if (!sentinel || sentinel.hidden || typeof IntersectionObserver === 'undefined' || !viewport) return;
@@ -5803,7 +5934,7 @@ function observeDiscoverLoadMore() {
 }
 
 async function loadMoreDiscover() {
-  if (state.discover.loading || !state.discover.hasMore) return;
+  if (state.currentView !== 'discover' || state.discover.loading || !state.discover.hasMore) return;
   await executeDiscover(false);
 }
 
@@ -5830,33 +5961,48 @@ function discoverVisibleCapacity(grid) {
 
 async function executeDiscover(reset = true) {
   const grid = document.getElementById('discover-grid');
-  if (!reset && state.discover.loading) return;
+  if (!grid || state.currentView !== 'discover' || (!reset && state.discover.loading)) return;
 
   const requestToken = ++discoverRequestToken;
+  const isCurrent = () => requestToken === discoverRequestToken && state.currentView === 'discover';
+  const genre = state.discover.genre;
+  const selections = { ...state.discover.selections };
+  state.discover.loading = true;
   if (reset) {
     disconnectDiscoverObserver();
     state.discover.items = [];
     state.discover.cursor = '';
     state.discover.hasMore = false;
+    state.discover.visitedCursors = new Set();
     grid.innerHTML = renderDramaGridSkeleton(12);
     grid.classList.add('discover-section-enter');
   } else {
-    state.discover.loading = true;
     renderDiscoverLoadMore();
   }
 
   try {
     let visibleTarget = 0;
-    for (let page = 0; ; page += 1) {
-      const res = await apiCall('GetDiscover', state.discover.genre, state.discover.selections, state.discover.cursor);
-      if (requestToken !== discoverRequestToken) return;
-      if (!res) break;
+    const visitedCursors = state.discover.visitedCursors || (state.discover.visitedCursors = new Set());
+    for (let page = 0; page < (reset ? 3 : 1); page += 1) {
+      const cursor = state.discover.cursor;
+      visitedCursors.add(cursor);
+      const res = await apiCall('GetDiscover', genre, selections, cursor);
+      if (!isCurrent()) return;
+      if (!res) {
+        state.discover.hasMore = false;
+        break;
+      }
 
       const seen = new Set(state.discover.items.map(item => item.id));
-      const fresh = (res.items || []).filter(item => item?.id && !seen.has(item.id));
+      const fresh = (res.items || []).filter(item => {
+        if (!item?.id || seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
       state.discover.items.push(...fresh);
       state.discover.cursor = res.cursor || '';
-      state.discover.hasMore = Boolean(res.hasMore && state.discover.cursor);
+      state.discover.hasMore = Boolean(res.hasMore && state.discover.cursor &&
+        !visitedCursors.has(state.discover.cursor) && fresh.length > 0);
 
       if (reset && page === 0) grid.innerHTML = '';
       if (fresh.length > 0) {
@@ -5870,7 +6016,7 @@ async function executeDiscover(reset = true) {
       if (reset && state.discover.items.length >= visibleTarget) break;
     }
 
-    if (requestToken !== discoverRequestToken) return;
+    if (!isCurrent()) return;
     if (state.discover.items.length === 0) {
       grid.innerHTML = '';
       grid.appendChild(renderViewEmpty({
@@ -5884,7 +6030,7 @@ async function executeDiscover(reset = true) {
       }));
     }
   } catch (err) {
-    if (requestToken !== discoverRequestToken) return;
+    if (!isCurrent()) return;
     const errStr = String(err || '');
     if (errStr.includes('content unavailable')) {
       grid.innerHTML = '';
@@ -5905,7 +6051,7 @@ async function executeDiscover(reset = true) {
       }));
     }
   } finally {
-    if (requestToken === discoverRequestToken) {
+    if (isCurrent()) {
       state.discover.loading = false;
       renderDiscoverLoadMore();
       observeDiscoverLoadMore();
@@ -5934,7 +6080,8 @@ async function transitionDiscoverFilters() {
     return;
   }
 
-  const transitionToken = ++discoverPanelToken;
+  invalidateViewRequests('discover');
+  const transitionToken = discoverPanelToken;
   panel.classList.remove('discover-section-enter');
   grid.classList.remove('discover-section-enter');
   panel.classList.add('discover-transition-leaving');
@@ -6157,11 +6304,19 @@ function openActorDetail(userId, name, avatarUrl) {
   state.actor.hasMore = false;
   state.actor.loading = false;
 
+  const alreadyOpen = state.currentView === 'actor';
   navigateTo('actor');
-  loadActorDetail(userId);
+  if (alreadyOpen) loadActorDetail(userId);
 }
 
 async function loadActorDetail(userId) {
+  const token = beginViewRequest('actor');
+  const isCurrent = () => isViewRequestCurrent('actor', token) && state.actor.userId === userId;
+  state.actor.loading = true;
+  state.actor.cursor = '';
+  state.actor.hasMore = false;
+  const moreButton = document.getElementById('btn-actor-load-more');
+  if (moreButton) moreButton.textContent = '加载更多作品';
   const avatarElem = document.getElementById('actor-detail-avatar');
   const nameElem = document.getElementById('actor-detail-name');
   const tagsElem = document.getElementById('actor-detail-tags');
@@ -6191,6 +6346,7 @@ async function loadActorDetail(userId) {
 
   try {
     const profile = await apiCall('GetActorProfile', userId);
+    if (!isCurrent()) return;
     if (!profile) {
       grid.innerHTML = '';
       grid.appendChild(renderViewError({
@@ -6239,34 +6395,41 @@ async function loadActorDetail(userId) {
     }
 
     state.actor.cursor = profile.cursor || '';
-    state.actor.hasMore = !!profile.hasMore;
-    if (loadMoreWrap) loadMoreWrap.style.display = profile.hasMore ? 'flex' : 'none';
+    state.actor.hasMore = Boolean(profile.hasMore && state.actor.cursor);
+    if (loadMoreWrap) loadMoreWrap.style.display = state.actor.hasMore ? 'flex' : 'none';
   } catch (err) {
+    if (!isCurrent()) return;
     grid.innerHTML = '';
     grid.appendChild(renderViewError({
       title: '加载演员主页失败',
       message: err,
       onRetry: () => loadActorDetail(userId)
     }));
+  } finally {
+    if (isCurrent()) state.actor.loading = false;
   }
 }
 
 async function loadMoreActorWorks() {
-  if (!state.actor.hasMore || state.actor.loading || !state.actor.cursor) return;
+  if (state.currentView !== 'actor' || !state.actor.hasMore || state.actor.loading || !state.actor.cursor) return;
+  const { userId, cursor } = state.actor;
+  const token = beginViewRequest('actor');
+  const isCurrent = () => isViewRequestCurrent('actor', token) && state.actor.userId === userId;
   state.actor.loading = true;
   const btn = document.getElementById('btn-actor-load-more');
   const origText = btn.textContent;
   btn.textContent = '加载中...';
 
   try {
-    const res = await apiCall('GetActorWorks', state.actor.userId, state.actor.cursor);
+    const res = await apiCall('GetActorWorks', userId, cursor);
+    if (!isCurrent()) return;
     if (res && res.works && res.works.length > 0) {
       const grid = document.getElementById('actor-drama-grid');
       res.works.forEach(item => {
         grid.appendChild(createDramaCard(item));
       });
       state.actor.cursor = res.cursor || '';
-      state.actor.hasMore = !!res.hasMore;
+      state.actor.hasMore = Boolean(res.hasMore && state.actor.cursor && state.actor.cursor !== cursor);
       const countElem = document.getElementById('actor-stat-works-count');
       const curCount = grid.querySelectorAll('.drama-card').length;
       countElem.textContent = curCount;
@@ -6277,10 +6440,12 @@ async function loadMoreActorWorks() {
     const loadMoreWrap = document.getElementById('actor-load-more-wrap');
     if (loadMoreWrap) loadMoreWrap.style.display = state.actor.hasMore ? 'flex' : 'none';
   } catch (err) {
-    showToast(`加载更多作品失败: ${err}`);
+    if (isCurrent()) showToast(`加载更多作品失败: ${err}`);
   } finally {
-    btn.textContent = origText;
-    state.actor.loading = false;
+    if (isCurrent()) {
+      btn.textContent = origText;
+      state.actor.loading = false;
+    }
   }
 }
 
@@ -6437,6 +6602,19 @@ function createNewReleaseCard(item) {
 // 5. History View (观看历史) - Modern Horizontal Row Layout
 // ==========================================================================
 
+function historyProgress(item) {
+  const duration = Number(item.durationSec);
+  const position = Number(item.positionSec);
+  const ratio = Number.isFinite(duration) && duration > 0 && Number.isFinite(position)
+    ? Math.max(0, Math.min(1, position / duration)) : 0;
+  const episode = Number(item.episodeNum);
+  const total = Number(item.totalEpisodes);
+  return {
+    percent: Math.round(ratio * 100),
+    completed: Number.isInteger(total) && total > 0 && episode === total && ratio >= 0.95
+  };
+}
+
 async function loadHistory() {
   const grid = document.getElementById('history-grid');
   if (!state.historyView.list || state.historyView.list.length === 0) {
@@ -6465,15 +6643,9 @@ function renderHistoryRows() {
 
   // Filter by unwatched / completed
   if (state.historyView.filter === 'unwatched') {
-    items = items.filter(it => {
-      const pct = (it.positionSec / (it.durationSec || 120));
-      return pct < 0.95 && it.episodeNum < (it.totalEpisodes || 80);
-    });
+    items = items.filter(it => !historyProgress(it).completed);
   } else if (state.historyView.filter === 'completed') {
-    items = items.filter(it => {
-      const pct = (it.positionSec / (it.durationSec || 120));
-      return pct >= 0.95 || it.episodeNum >= (it.totalEpisodes || 80);
-    });
+    items = items.filter(it => historyProgress(it).completed);
   }
 
   // Filter by search keyword
@@ -6508,9 +6680,7 @@ function renderHistoryRows() {
       }
     });
 
-    const dur = it.durationSec || 120;
-    const pct = Math.min(100, Math.max(3, Math.round((it.positionSec / dur) * 100)));
-    const isCompleted = pct >= 95 || (it.episodeNum >= (it.totalEpisodes || 80) && pct > 80);
+    const { percent: pct, completed: isCompleted } = historyProgress(it);
 
     // Relative timestamp format
     let timeLabel = '';
@@ -6649,6 +6819,9 @@ async function loadFavoritesAndLikes() {
   const grid = document.getElementById('favorites-grid');
   if (!grid) return;
 
+  const token = beginViewRequest('favorites');
+  state.favoritesView.loading = true;
+
   const currentTab = state.favoritesView.tab || 'favorites';
   const hasCached = (currentTab === 'favorites' && state.favoritesView.favoritesList.length > 0) ||
                     (currentTab === 'likes' && state.favoritesView.likesList.length > 0);
@@ -6667,29 +6840,33 @@ async function loadFavoritesAndLikes() {
   }
 
   try {
-    const [favs, likes] = await Promise.all([
-      apiCall('GetFavorites').catch(err => {
-        console.error('Failed to get favorites:', err);
-        return [];
-      }),
-      apiCall('GetLikes').catch(err => {
-        console.error('Failed to get likes:', err);
-        return [];
-      })
+    const results = await Promise.allSettled([
+      apiCall('GetFavorites'), apiCall('GetLikes')
     ]);
-
-    state.favoritesView.favoritesList = favs || [];
-    state.favoritesView.likesList = likes || [];
+    if (!isViewRequestCurrent('favorites', token)) return;
+    const errors = state.favoritesView.errors || (state.favoritesView.errors = {});
+    ['favorites', 'likes'].forEach((tab, index) => {
+      const result = results[index];
+      if (result.status === 'fulfilled') {
+        state.favoritesView[tab === 'favorites' ? 'favoritesList' : 'likesList'] = result.value || [];
+        errors[tab] = null;
+      } else {
+        errors[tab] = result.reason || new Error('暂时无法读取，请重试');
+      }
+    });
 
     updateFavoritesTabsCount();
     renderFavoritesOrLikes();
   } catch (err) {
+    if (!isViewRequestCurrent('favorites', token)) return;
     grid.innerHTML = '';
     grid.appendChild(renderViewError({
       title: '加载收藏与点赞失败',
       message: err,
       onRetry: () => loadFavoritesAndLikes()
     }));
+  } finally {
+    if (isViewRequestCurrent('favorites', token)) state.favoritesView.loading = false;
   }
 }
 
@@ -6736,6 +6913,16 @@ function renderFavoritesOrLikes() {
 
   grid.innerHTML = '';
   const currentTab = state.favoritesView.tab || 'favorites';
+  const error = state.favoritesView.errors?.[currentTab];
+  if (error) {
+    const list = currentTab === 'favorites' ? state.favoritesView.favoritesList : state.favoritesView.likesList;
+    grid.appendChild(renderViewError({
+      title: currentTab === 'favorites' ? '读取收藏失败' : '读取点赞失败',
+      message: list.length > 0 ? '暂时无法更新，以下保留上次读取的记录。' : error,
+      onRetry: () => loadFavoritesAndLikes()
+    }));
+    if (list.length === 0) return;
+  }
 
   if (currentTab === 'favorites') {
     const list = state.favoritesView.favoritesList;
@@ -6762,8 +6949,8 @@ function renderFavoritesOrLikes() {
         deleteTitle: '取消收藏',
         onDelete: async () => {
           try {
-            await apiCall('ToggleFavorite', it.seriesId, it.title, it.coverUrl, it.description, it.totalEpisodes);
-            state.favoritesView.favoritesList = state.favoritesView.favoritesList.filter(x => x.seriesId !== it.seriesId);
+            const favorite = await apiCall('ToggleFavorite', it.seriesId, it.title, it.coverUrl, it.description, it.totalEpisodes);
+            applyFavoriteState(it.seriesId, Boolean(favorite));
             updateFavoritesTabsCount();
             renderFavoritesOrLikes();
             showToast('已取消收藏');
@@ -6800,8 +6987,8 @@ function renderFavoritesOrLikes() {
         deleteTitle: '取消点赞',
         onDelete: async () => {
           try {
-            await apiCall('ToggleLike', it.seriesId, it.episodeId, it.title, it.coverUrl, it.episodeNum);
-            state.favoritesView.likesList = state.favoritesView.likesList.filter(x => !(x.seriesId === it.seriesId && x.episodeNum === it.episodeNum));
+            const liked = await apiCall('ToggleLike', it.seriesId, it.episodeId, it.title, it.coverUrl, it.episodeNum);
+            applyLikeState(it.seriesId, it.episodeId, Boolean(liked));
             updateFavoritesTabsCount();
             renderFavoritesOrLikes();
             showToast('已取消点赞');
@@ -7069,6 +7256,9 @@ function initSearch() {
 
 async function executeSearch(query) {
   if (!query) return;
+  const token = beginViewRequest('search-results');
+  state.searchQuery = query;
+  state.searchLoading = true;
   navigateTo('search-results');
   document.getElementById('search-query-header').textContent = `搜索: "${query}"`;
   const grid = document.getElementById('search-grid');
@@ -7076,6 +7266,7 @@ async function executeSearch(query) {
 
   try {
     const results = await apiCall('Search', query);
+    if (!isViewRequestCurrent('search-results', token)) return;
     grid.innerHTML = '';
     if (!results || results.length === 0) {
       grid.appendChild(renderViewEmpty({
@@ -7091,12 +7282,15 @@ async function executeSearch(query) {
       grid.appendChild(createDramaCard(it));
     });
   } catch (err) {
+    if (!isViewRequestCurrent('search-results', token)) return;
     grid.innerHTML = '';
     grid.appendChild(renderViewError({
       title: '搜索短剧失败',
       message: err,
       onRetry: () => executeSearch(query)
     }));
+  } finally {
+    if (isViewRequestCurrent('search-results', token)) state.searchLoading = false;
   }
 }
 
@@ -7138,6 +7332,7 @@ function updatePlayerPlayBadge() {
 }
 
 function clearPlayerVideo() {
+  playerPlaybackIdentity = null;
   state.player.loading = true;
   video.pause();
   video.onloadedmetadata = null;
@@ -7565,28 +7760,34 @@ function initPlayerControls() {
   const favBtn = document.getElementById('player-fav');
   const commentBtn = document.getElementById('player-comment');
   favBtn.addEventListener('click', async () => {
+    if (!state.player.seriesId || state.player.detailLoading || favBtn.disabled) return;
+    const { seriesId, seriesTitle, seriesCover, totalEpisodes } = state.player;
+    favBtn.disabled = true;
     try {
-      const isNowFav = await apiCall('ToggleFavorite', state.player.seriesId, state.player.seriesTitle, state.player.seriesCover, '', state.player.totalEpisodes);
-      state.player.isFavorite = isNowFav;
-      favBtn.classList.toggle('active', isNowFav);
+      const isNowFav = await apiCall('ToggleFavorite', seriesId, seriesTitle, seriesCover, '', totalEpisodes);
+      applyFavoriteState(seriesId, Boolean(isNowFav));
       showToast(isNowFav ? '已加入收藏' : '已取消收藏');
-      state.favoritesView.favoritesList = [];
     } catch (err) {
       showToast('收藏失败: ' + err);
+    } finally {
+      favBtn.disabled = false;
     }
   });
 
   // Like toggle
   const likeBtn = document.getElementById('player-like');
   likeBtn.addEventListener('click', async () => {
+    if (!state.player.episodeId || state.player.detailLoading || likeBtn.disabled) return;
+    const { seriesId, episodeId, seriesTitle, seriesCover, episodeNum } = state.player;
+    likeBtn.disabled = true;
     try {
-      const isNowLiked = await apiCall('ToggleLike', state.player.seriesId, state.player.episodeId, state.player.seriesTitle, state.player.seriesCover, state.player.episodeNum);
-      state.player.isLiked = isNowLiked;
-      likeBtn.classList.toggle('active', isNowLiked);
+      const isNowLiked = await apiCall('ToggleLike', seriesId, episodeId, seriesTitle, seriesCover, episodeNum);
+      applyLikeState(seriesId, episodeId, Boolean(isNowLiked));
       showToast(isNowLiked ? '已点赞' : '已取消点赞');
-      state.favoritesView.likesList = [];
     } catch (err) {
       showToast('点赞失败: ' + err);
+    } finally {
+      likeBtn.disabled = false;
     }
   });
 
@@ -7666,11 +7867,13 @@ function initPlayerControls() {
 
 async function playNextSeason(seriesId, source = 'player') {
   if (!seriesId || state.player.seasonSwitching) return false;
+  const requestToken = playerRequestToken;
   state.player.seasonSwitching = true;
 
   try {
     const next = await apiCall('GetNextSeason', seriesId);
-    if (!next?.id || (source === 'player' && state.player.seriesId !== seriesId)) return false;
+    if (!next?.id || (source === 'player' &&
+      (!isPlayerRequestCurrent(requestToken) || state.player.seriesId !== seriesId))) return false;
 
     const title = next.title || '下一季';
     if (source === 'feed') {
@@ -7685,19 +7888,13 @@ async function playNextSeason(seriesId, source = 'player') {
     console.warn('load next season failed:', err);
     return false;
   } finally {
-    state.player.seasonSwitching = false;
+    if (source !== 'player' || requestToken === playerRequestToken) state.player.seasonSwitching = false;
   }
 }
 
 async function openPlayer(seriesId, initialEpisodeNum = 1) {
-  // Defensive guard: exit any active fullscreen outside the player stage
-  if (document.fullscreenElement && document.fullscreenElement !== document.getElementById('player-stage')) {
-    try {
-      await document.exitFullscreen();
-    } catch (err) {
-      console.warn('exitFullscreen failed in openPlayer:', err);
-    }
-  }
+  persistProgress();
+  const requestToken = ++playerRequestToken;
 
   if (window.ambientGlow) {
     window.ambientGlow.stop();
@@ -7708,6 +7905,9 @@ async function openPlayer(seriesId, initialEpisodeNum = 1) {
   clearCommentSceneLayout();
 
   state.player.seriesId = seriesId;
+  state.player.episodeId = '';
+  state.player.episodes = [];
+  state.player.detailReady = false;
   state.player.episodeNum = initialEpisodeNum;
   state.player.loading = true;
   state.player.seasonSwitching = false;
@@ -7733,10 +7933,19 @@ async function openPlayer(seriesId, initialEpisodeNum = 1) {
   clearPlayerVideo();
 
   try {
+    if (document.fullscreenElement && document.fullscreenElement !== document.getElementById('player-stage')) {
+      try {
+        await document.exitFullscreen();
+      } catch (err) {
+        console.warn('exitFullscreen failed in openPlayer:', err);
+      }
+      if (!isPlayerRequestCurrent(requestToken)) return;
+    }
     // 1. Fetch series detail and episode list
     const detail = state.detail.data && state.detail.data.id === seriesId
       ? state.detail.data
       : await apiCall('GetSeriesDetail', seriesId);
+    if (!isPlayerRequestCurrent(requestToken)) return;
     if (!detail) {
       showToast('获取短剧详情失败');
       closePlayer();
@@ -7745,8 +7954,9 @@ async function openPlayer(seriesId, initialEpisodeNum = 1) {
 
     state.player.seriesTitle = detail.title;
     state.player.seriesCover = detail.coverUrl;
-    state.player.totalEpisodes = detail.episodeCount || detail.episodes.length;
+    state.player.totalEpisodes = detail.episodeCount || detail.episodes?.length || 1;
     state.player.episodes = detail.episodes || [];
+    state.player.detailReady = true;
     state.player.isFavorite = detail.isFavorite;
     state.player.qualityOptions = fallbackQualityOptions(state.player.quality);
     renderQualityMenu();
@@ -7762,6 +7972,7 @@ async function openPlayer(seriesId, initialEpisodeNum = 1) {
     // 2. Play initial episode
     await playEpisodeNumber(initialEpisodeNum);
   } catch (err) {
+    if (!isPlayerRequestCurrent(requestToken)) return;
     showToast('打开播放器失败: ' + err);
     closePlayer();
   }
@@ -7826,6 +8037,10 @@ async function changePlaybackQuality(quality) {
 }
 
 async function playEpisodeNumber(num, requestedQuality = state.player.quality, resumeAt = null, autoPlay = true) {
+  if (!isPlayerRequestCurrent(playerRequestToken) || state.player.detailReady === false) return false;
+  persistProgress();
+  const requestToken = ++playerRequestToken;
+  const seriesId = state.player.seriesId;
   state.player.episodeNum = num;
   state.player.loading = true;
   state.player.userPaused = !autoPlay;
@@ -7854,11 +8069,21 @@ async function playEpisodeNumber(num, requestedQuality = state.player.quality, r
   clearPlayerVideo();
 
   try {
-    const pb = await apiCall('PlayEpisode', state.player.seriesId, epId, num, requestedQuality, false);
+    const pb = await apiCall('PlayEpisode', seriesId, epId, num, requestedQuality, false);
+    if (!isPlayerRequestCurrent(requestToken)) return false;
     if (!pb || !pb.streamUrl) {
-      showToast('获取播放地址失败');
-      return false;
+      throw new Error('获取播放地址失败');
     }
+
+    state.player.episodeId = pb.episodeId || epId;
+    state.player.episodeNum = pb.episodeNum || num;
+    document.getElementById('player-episode-badge').textContent = `第 ${state.player.episodeNum} 集`;
+    const identity = Object.freeze({
+      requestToken, seriesId, episodeId: state.player.episodeId,
+      episodeNum: state.player.episodeNum, title: state.player.seriesTitle,
+      cover: state.player.seriesCover, totalEpisodes: state.player.totalEpisodes,
+      durationSec: Number(pb.durationSec) || 0
+    });
 
     document.getElementById('player-like').classList.toggle('active', pb.isLiked);
     if (Number(pb.commentCount) > 0) {
@@ -7867,20 +8092,21 @@ async function playEpisodeNumber(num, requestedQuality = state.player.quality, r
     updateQualityControls(pb);
 
     video.crossOrigin = 'anonymous';
-    video.src = pb.streamUrl;
-    video.load();
+    playerPlaybackIdentity = identity;
 
     // Auto-resume from last progress if available
     video.onloadedmetadata = () => {
+      if (!isPlayerRequestCurrent(requestToken) || playerPlaybackIdentity !== identity) return;
       syncMainVideoOrientation();
+      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : identity.durationSec;
       if (resumeAt !== null) {
-        video.currentTime = Math.min(resumeAt, video.duration || resumeAt);
-      } else if (pb.lastPosition > 3 && pb.lastPosition < (video.duration - 5)) {
+        video.currentTime = Math.min(resumeAt, duration || resumeAt);
+      } else if (pb.lastPosition > 3 && pb.lastPosition < (duration - 5)) {
         video.currentTime = pb.lastPosition;
         showToast(`已为您自动跳转到上次播放位置 ${formatTime(pb.lastPosition)}`);
       }
       video.playbackRate = state.player.playbackSpeed;
-      if (autoPlay) {
+      if (autoPlay && !state.player.userPaused) {
         state.player.userPaused = false;
         video.play().catch(e => console.log('play error:', e));
       } else {
@@ -7892,8 +8118,12 @@ async function playEpisodeNumber(num, requestedQuality = state.player.quality, r
       }
     };
 
+    video.src = pb.streamUrl;
+    video.load();
+
     return true;
   } catch (err) {
+    if (!isPlayerRequestCurrent(requestToken)) return false;
     state.player.loading = false;
     document.getElementById('video-loader').style.display = 'none';
     document.getElementById('video-container')?.classList.remove('is-buffering', 'is-loading');
@@ -7914,17 +8144,25 @@ function renderPlaylistDrawer() {
 }
 
 function persistProgress() {
-  if (!state.player.seriesId || !video.duration) return;
+  const identity = playerPlaybackIdentity;
+  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : identity?.durationSec;
+  if (!identity || identity.requestToken !== playerRequestToken ||
+    Number.isNaN(video.duration) || !Number.isFinite(duration) || duration <= 0 || !Number.isFinite(video.currentTime)) return;
   apiCall('SaveProgress',
-    state.player.seriesId,
-    state.player.episodeId,
-    state.player.seriesTitle,
-    state.player.seriesCover,
-    state.player.episodeNum,
-    state.player.totalEpisodes,
+    identity.seriesId,
+    identity.episodeId,
+    identity.title,
+    identity.cover,
+    identity.episodeNum,
+    identity.totalEpisodes,
     video.currentTime,
-    video.duration
-  );
+    duration
+  ).catch(err => console.warn('save playback progress failed:', err));
+}
+
+function isPlayerRequestCurrent(requestToken) {
+  const modal = document.getElementById('player-modal');
+  return requestToken === playerRequestToken && Boolean(modal && modal.style.display !== 'none');
 }
 
 function closePlayer() {
@@ -7937,6 +8175,11 @@ function closePlayer() {
   setPlaybackKeepAwake(false);
   clearNowPlayingState();
   persistProgress();
+  ++playerRequestToken;
+  playerPlaybackIdentity = null;
+  video.onloadedmetadata = null;
+  state.player.detailReady = false;
+  state.player.seasonSwitching = false;
   if (commentState.open) closeCommentSheet();
   // A stale scene class can leave the feed stage narrowed after returning.
   // Clear it unconditionally here because the whole player is going away.
