@@ -5807,7 +5807,35 @@ async function toggleCardReservation(item, button) {
 async function loadDiscoverFilters() {
   if (state.currentView !== 'discover') return;
   const panel = document.getElementById('discover-filters');
-  const alreadyRendered = state.discover.renderedGenre === state.discover.genre && panel && panel.children.length > 0;
+  const subfilters = document.getElementById('discover-subfilters');
+  if (!panel || !subfilters) return;
+  const alreadyRendered = state.discover.renderedGenre === state.discover.genre;
+
+  panel.querySelectorAll('.genre-chip').forEach(chip => {
+    const active = chip.dataset.genre === state.discover.genre;
+    chip.classList.toggle('active', active);
+    chip.setAttribute('aria-selected', String(active));
+  });
+  panel.onclick = event => {
+    const chip = event.target.closest('.filter-chip');
+    if (!chip || !panel.contains(chip)) return;
+    const key = chip.dataset.genre ? 'genre' : chip.dataset.key;
+    const val = chip.dataset.genre || (chip.dataset.val === 'all' ? '' : chip.dataset.val);
+    if (key === 'genre') {
+      if (val === state.discover.genre) return;
+      state.discover.genre = val;
+      state.discover.selections = {};
+      transitionDiscoverFilters();
+      return;
+    }
+    if (!key) return;
+    chip.parentElement.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    if (val) state.discover.selections[key] = val;
+    else delete state.discover.selections[key];
+    state.discover.cursor = '';
+    executeDiscover();
+  };
 
   if (alreadyRendered) {
     // If filters for this genre are already mounted, only re-execute if grid is empty
@@ -5823,8 +5851,7 @@ async function loadDiscoverFilters() {
 
   const panelToken = ++discoverPanelToken;
   state.discover.renderedGenre = '';
-  panel.innerHTML = renderFilterPanelSkeleton();
-  panel.classList.add('discover-section-enter');
+  subfilters.innerHTML = renderFilterPanelSkeleton();
 
   // Parallelize filter panel fetch and initial discover fetch simultaneously!
   const filtersPromise = apiCall('GetFilterPanel', state.discover.genre);
@@ -5833,21 +5860,8 @@ async function loadDiscoverFilters() {
   try {
     const rows = await filtersPromise;
     if (panelToken !== discoverPanelToken) return;
-    panel.innerHTML = '';
+    subfilters.innerHTML = '';
     state.discover.renderedGenre = state.discover.genre;
-
-    // Genre Row
-    const genreRow = document.createElement('div');
-    genreRow.className = 'filter-row';
-    genreRow.innerHTML = `
-      <span class="filter-label">体裁</span>
-      <div class="filter-chips">
-        <button class="filter-chip ${state.discover.genre === 'short_play' ? 'active' : ''}" data-key="genre" data-val="short_play">真人剧</button>
-        <button class="filter-chip ${state.discover.genre === 'comic_series' ? 'active' : ''}" data-key="genre" data-val="comic_series">漫剧</button>
-        <button class="filter-chip ${state.discover.genre === 'ai_series' ? 'active' : ''}" data-key="genre" data-val="ai_series">AI剧</button>
-      </div>
-    `;
-    panel.appendChild(genreRow);
 
     if (rows && rows.length > 0) {
       rows.forEach(r => {
@@ -5867,36 +5881,14 @@ async function loadDiscoverFilters() {
           <span class="filter-label">${escapeHtml(r.name.replace(/^全部/, ''))}</span>
           <div class="filter-chips">${chipsHtml}</div>
         `;
-        panel.appendChild(rowElem);
+        subfilters.appendChild(rowElem);
       });
     }
 
-    // Bind chip clicks
-    panel.querySelectorAll('.filter-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const row = chip.parentElement;
-        row.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-
-        const key = chip.dataset.key;
-        const val = chip.dataset.val === 'all' ? '' : chip.dataset.val;
-        if (key === 'genre') state.discover.genre = val;
-        else if (val) state.discover.selections[key] = val;
-        else delete state.discover.selections[key];
-
-        state.discover.cursor = '';
-        if (key === 'genre') {
-          state.discover.selections = {};
-          transitionDiscoverFilters();
-          return;
-        }
-        executeDiscover();
-      });
-    });
   } catch (err) {
     if (panelToken !== discoverPanelToken) return;
-    panel.innerHTML = '';
-    panel.appendChild(renderViewError({
+    subfilters.innerHTML = '';
+    subfilters.appendChild(renderViewError({
       title: '加载筛选面板失败',
       message: err,
       onRetry: () => loadDiscoverFilters()
@@ -6069,35 +6061,8 @@ function createDramaCardsFragment(items) {
 let discoverPanelToken = 0;
 let discoverRequestToken = 0;
 
-function waitMs(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-async function transitionDiscoverFilters() {
-  const panel = document.getElementById('discover-filters');
-  const grid = document.getElementById('discover-grid');
-  if (!panel || !grid) {
-    loadDiscoverFilters();
-    return;
-  }
-
+function transitionDiscoverFilters() {
   invalidateViewRequests('discover');
-  const transitionToken = discoverPanelToken;
-  panel.classList.remove('discover-section-enter');
-  grid.classList.remove('discover-section-enter');
-  panel.classList.add('discover-transition-leaving');
-  grid.classList.add('discover-transition-leaving');
-
-  await waitMs(140);
-  if (transitionToken !== discoverPanelToken) return;
-
-  panel.classList.remove('discover-transition-leaving');
-  grid.classList.remove('discover-transition-leaving');
-  panel.innerHTML = renderFilterPanelSkeleton();
-  grid.innerHTML = renderDramaGridSkeleton(12);
-  panel.classList.add('discover-section-enter');
-  grid.classList.add('discover-section-enter');
-
   loadDiscoverFilters();
 }
 
