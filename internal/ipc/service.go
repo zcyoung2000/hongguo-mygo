@@ -78,6 +78,7 @@ type PlaybackDTO struct {
 	Quality              string             `json:"quality,omitempty"`
 	Qualities            []QualityOptionDTO `json:"qualities,omitempty"`
 	IsFullCached         bool               `json:"isFullCached"`
+	IsHLSCached          bool               `json:"isHlsCached"`
 }
 
 func NewStore(dir string) (*Store, error) { return userstore.NewStore(dir) }

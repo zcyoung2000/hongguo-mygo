@@ -118,3 +118,46 @@ func TestHLSStartupCleanupKeepsOnlyCompleteRenditions(t *testing.T) {
 		t.Fatal("cached rendition started a download")
 	}
 }
+
+func TestFeedRetirementPreservesCacheCompletedBeforeWriterExit(t *testing.T) {
+	for _, mode := range []string{"already complete", "completes during retirement", "interrupted"} {
+		t.Run(mode, func(t *testing.T) {
+			ms := &MediaServer{cacheDir: t.TempDir(), hlsStreams: make(map[string]*hlsStream)}
+			id := "710000000000001"
+			dir := ms.hlsCacheDir(id, "720p")
+			playlist := writeHLSFixture(t, dir, mode == "already complete")
+			key := PrefetchTaskKey(PrefetchTask{EpisodeID: id, Quality: "720p"})
+			stream := &hlsStream{key: key, dir: dir, playlistPath: playlist, done: make(chan struct{}), cancel: func() {}}
+			ms.hlsStreams[key] = stream
+			ms.SetFeedPreloadWindow(1, id, "720p", nil)
+			ms.SetFeedPreloadWindow(2, "710000000000002", "720p", nil)
+			if stream.retired == nil {
+				t.Fatal("old foreground writer was not retired")
+			}
+			if mode == "completes during retirement" {
+				if err := appendHLSEndList(playlist); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stream.finish(nil)
+			select {
+			case <-stream.retired:
+			case <-time.After(2 * time.Second):
+				t.Fatal("retirement did not drain")
+			}
+			if mode == "interrupted" {
+				if _, err := os.Stat(dir); !os.IsNotExist(err) {
+					t.Fatal("interrupted writer's files survived retirement")
+				}
+				return
+			}
+			if !ms.HasCachedHLS(id, "720p") {
+				t.Fatal("backward navigation lost a completed rendition")
+			}
+			cached, err := ms.StartHLSStream("series", id, 1, "720p")
+			if err != nil || cached == stream || ms.hlsStarts.Load() != 0 {
+				t.Fatalf("revisit must use disk without SDK or conversion: stream=%p err=%v starts=%d", cached, err, ms.hlsStarts.Load())
+			}
+		})
+	}
+}

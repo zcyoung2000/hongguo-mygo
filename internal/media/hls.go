@@ -259,7 +259,11 @@ func (ms *MediaServer) retireHLSStreamLocked(key string, stream *hlsStream) {
 		<-stream.done
 		ms.hlsMu.Lock()
 		defer ms.hlsMu.Unlock()
-		_ = os.RemoveAll(stream.dir)
+		// ENDLIST can be committed just before done is closed. Retirement
+		// must preserve that completed rendition for a later backward swipe.
+		if !hlsPlaylistComplete(filepath.Join(stream.dir, "index.m3u8")) {
+			_ = os.RemoveAll(stream.dir)
+		}
 		if ms.hlsStreams[stream.key] == stream {
 			delete(ms.hlsStreams, stream.key)
 		}
@@ -367,15 +371,17 @@ func (ms *MediaServer) runHLSStream(ctx context.Context, stream *hlsStream, seri
 	runErr := command.Run()
 	close(monitorDone)
 	<-monitorExited
-	if ctx.Err() != nil {
-		return
-	}
 	if runErr != nil {
+		if ctx.Err() != nil {
+			return
+		}
 		ms.failHLSStream(stream, runErr)
 		return
 	}
 	ms.flushMediaNetworkSample()
-	if err := appendHLSEndList(stream.playlistPath); err != nil && ctx.Err() == nil {
+	// A successful converter has produced the entire episode, even if the
+	// preload window changes during bookkeeping immediately after it exits.
+	if err := appendHLSEndList(stream.playlistPath); err != nil {
 		ms.failHLSStream(stream, err)
 		return
 	}

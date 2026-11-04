@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -87,7 +88,9 @@ func TestStreamingPublishesMediaBeforeUpstreamCompletes(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			gate := make(chan struct{})
 			var release sync.Once
+			var upstreamRequests atomic.Int64
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamRequests.Add(1)
 				writer := &gatedMediaWriter{ResponseWriter: w, ctx: r.Context(), gate: gate, limit: len(data) / 2}
 				http.ServeContent(writer, r, "source.mp4", time.Time{}, bytes.NewReader(data))
 			}))
@@ -232,6 +235,24 @@ func TestStreamingPublishesMediaBeforeUpstreamCompletes(t *testing.T) {
 				cancel()
 				if err != nil || !hlsPlaylistComplete(regenerated.playlistPath) {
 					t.Fatalf("cache clear did not regenerate HLS: %v", err)
+				}
+				starts, requests := ms.hlsStarts.Load(), upstreamRequests.Load()
+				// Replay through the actual local endpoint while alternating the
+				// foreground owner. A cached return must never contact upstream.
+				for version := int64(1); version <= 6; version++ {
+					id := "710000000000001"
+					if version%2 == 0 {
+						id = "710000000000002"
+					}
+					ms.SetFeedPreloadWindow(version, id, "720p", nil)
+					response := httptest.NewRecorder()
+					ms.handleHLS(response, httptest.NewRequest(http.MethodGet, "/hls/"+id+"/720p/index.m3u8", nil))
+					if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "#EXT-X-ENDLIST") {
+						t.Fatalf("cached return failed: %d %s", response.Code, response.Body.String())
+					}
+					if ms.hlsStarts.Load() != starts || upstreamRequests.Load() != requests {
+						t.Fatalf("cached return restarted work: conversions %d -> %d, requests %d -> %d", starts, ms.hlsStarts.Load(), requests, upstreamRequests.Load())
+					}
 				}
 			} else {
 				local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -108,12 +108,16 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		progressiveStreamURL = streamURL
 	}
 	hlsStreamURL := ""
-	if (preferHLS || s.media.HasCachedHLS(episodeID, qualityInfo.Selected)) && !isFullCached {
+	isHLSCached := s.media.HasCachedHLS(episodeID, qualityInfo.Selected)
+	if !isFullCached {
 		// Negotiation must not start a media job: a late IPC response could
 		// otherwise restart a preload after the scheduler withdrew admission.
-		// The admitted window or the actual media request starts/reuses HLS.
+		// Return the alternative even for metadata-only lookahead so admission
+		// can select HLS without repeating SDK negotiation or another IPC call.
 		hlsStreamURL = s.media.HLSPlaylistURL(episodeID, seriesID, episodeNum, qualityInfo.Selected)
-		streamURL = hlsStreamURL
+		if preferHLS || isHLSCached {
+			streamURL = hlsStreamURL
+		}
 	}
 
 	hist, err := s.store.GetHistory()
@@ -147,6 +151,7 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		Quality:              qualityInfo.Selected,
 		Qualities:            qualityInfo.Options,
 		IsFullCached:         isFullCached,
+		IsHLSCached:          isHLSCached,
 	}), nil
 }
 
