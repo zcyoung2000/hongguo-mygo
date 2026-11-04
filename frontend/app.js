@@ -2921,10 +2921,11 @@ async function loadDetailAdaptations(detail, excludeIDs, token) {
       detail.id,
       detail.source?.id || '',
       detail.source?.title || '',
+      detail.source?.coverUrl || '',
       excludeIDs
     );
     if (token !== state.detail.requestToken || detail.id !== state.detail.id) return null;
-    renderLoadedDetailCollection('detail-adapted-section', 'detail-adapted-grid', collection, detail.coverUrl || '');
+    renderLoadedDetailCollection('detail-adapted-section', 'detail-adapted-grid', collection, '');
     return collection;
   } catch (err) {
     if (token !== state.detail.requestToken || detail.id !== state.detail.id) return null;

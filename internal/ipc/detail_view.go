@@ -242,7 +242,7 @@ func nextPlayableSeason(seriesID string, collection *SeriesCollectionDTO) *Serie
 	return nil
 }
 
-func (s *HongguoService) GetSeriesAdaptations(ctx context.Context, seriesID, sourceID, sourceTitle, excludeIDs string) (*SeriesCollectionDTO, error) {
+func (s *HongguoService) GetSeriesAdaptations(ctx context.Context, seriesID, sourceID, sourceTitle, sourceCoverURL, excludeIDs string) (*SeriesCollectionDTO, error) {
 	seriesID = strings.TrimSpace(seriesID)
 	sourceID = strings.TrimSpace(sourceID)
 	sourceTitle = strings.TrimSpace(sourceTitle)
@@ -270,7 +270,7 @@ func (s *HongguoService) GetSeriesAdaptations(ctx context.Context, seriesID, sou
 		return nil, fmt.Errorf("failed to fetch adapted series: %w", err)
 	}
 
-	source := &SourceNovelDTO{ID: sourceID, Title: sourceTitle}
+	source := &SourceNovelDTO{ID: sourceID, Title: sourceTitle, CoverURL: sourceCoverURL}
 	cards := s.adaptationsForSource(ctx, seriesID, source, pageItems(sourceData), exclude)
 	if sourceCard := sourceNovelCard(source); sourceCard != nil {
 		cards = append([]SeriesCard{*sourceCard}, cards...)
