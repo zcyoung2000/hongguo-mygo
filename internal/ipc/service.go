@@ -343,7 +343,9 @@ func (s *HongguoService) GetProfile(ctx context.Context) (UserProfile, error) {
 
 func (s *HongguoService) SetFeedScrollCapture(ctx context.Context, enabled bool) (bool, error) {
 	native.SetFeedScrollCapture(enabled)
-	return native.ScrollGestureMonitorRunning(), nil
+	ready := native.ScrollGestureMonitorRunning()
+	log.Printf("[feed-input] capture enabled=%t monitorReady=%t", enabled, ready)
+	return ready, nil
 }
 
 type RecommendFeedResult struct {

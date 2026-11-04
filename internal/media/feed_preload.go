@@ -1,6 +1,7 @@
 package media
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,11 +27,17 @@ type FeedPreloadStatus struct {
 func (ms *MediaServer) stopFeedPreload(key string) {
 	ms.hlsMu.Lock()
 	if stream := ms.hlsStreams[key]; stream != nil {
+		select {
+		case <-stream.done:
+		default:
+			log.Printf("[feed-window] cancel transport=hls key=%q reason=window-replaced", key)
+		}
 		ms.retireHLSStreamLocked(key, stream)
 	}
 	ms.hlsMu.Unlock()
 	ms.progressiveMu.Lock()
 	if stream := ms.progressiveStreams[key]; stream != nil {
+		log.Printf("[feed-window] cancel transport=progressive key=%q reason=window-replaced", key)
 		stream.cancel()
 	}
 	ms.progressiveMu.Unlock()

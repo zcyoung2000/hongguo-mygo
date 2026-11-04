@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/egoist/mygo"
@@ -23,6 +24,7 @@ import (
 var embeddedFS embed.FS
 
 func main() {
+	started := time.Now()
 	home, err := os.UserHomeDir()
 	if err != nil {
 		log.Fatalf("failed to get user home: %v", err)
@@ -41,6 +43,8 @@ func main() {
 		defer logFile.Close()
 		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
 	}
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+	log.Printf("[startup] stage=process-init pid=%d elapsedMs=%d", os.Getpid(), time.Since(started).Milliseconds())
 
 	// 1. Initialize SQLite first; account and anonymous-device identities live
 	// beside user data in the same permissioned database.
@@ -49,6 +53,7 @@ func main() {
 		log.Fatalf("failed to init store: %v", err)
 	}
 	defer store.Close()
+	log.Printf("[startup] stage=store-ready elapsedMs=%d", time.Since(started).Milliseconds())
 
 	profileStore := store.ProfileStore()
 	authenticatedTransport := auth.New()
@@ -60,6 +65,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to init openhongguo client: %v", err)
 	}
+	log.Printf("[startup] stage=sdk-ready elapsedMs=%d", time.Since(started).Milliseconds())
 
 	// 3. Initialize local media streaming & decryption server
 	mediaServer, err := media.NewMediaServer(client)
@@ -67,6 +73,7 @@ func main() {
 		log.Fatalf("failed to init media server: %v", err)
 	}
 	defer mediaServer.Close()
+	log.Printf("[startup] stage=media-ready elapsedMs=%d", time.Since(started).Milliseconds())
 	mediaServer.SetEpisodeCacheCallback(store.RememberEpisode)
 
 	if ffmpegPath, err := media.FFmpegCommand(); err != nil {
@@ -102,6 +109,7 @@ func main() {
 
 	// 6. Launch macOS native window via MyGo
 	mygo.App.WhenReady(func() {
+		log.Printf("[startup] stage=native-ready elapsedMs=%d", time.Since(started).Milliseconds())
 		// Initialize macOS native capabilities: Menus, Media Controls & NowPlaying
 		native.Init()
 
@@ -123,6 +131,7 @@ func main() {
 			},
 		})
 		native.SetWindow(win)
+		log.Printf("[startup] stage=window-created elapsedMs=%d", time.Since(started).Milliseconds())
 		native.StartScrollGestureMonitor()
 		win.OnClosed(func() {
 			fmt.Println("Main window closed")

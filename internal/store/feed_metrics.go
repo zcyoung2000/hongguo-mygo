@@ -15,33 +15,52 @@ import (
 const feedMetricRetentionRows = 5000
 
 type FeedMetric struct {
-	Type                string `json:"type"`
-	FromIndex           int    `json:"fromIndex,omitempty"`
-	ToIndex             int    `json:"toIndex,omitempty"`
-	BufferedAtSwitch    bool   `json:"bufferedAtSwitch"`
-	DurationMS          int64  `json:"durationMs"`
-	TimeToFirstFrameMS  int64  `json:"timeToFirstFrameMs,omitempty"`
-	PlaybackInfoMS      int64  `json:"playbackInfoMs,omitempty"`
-	MediaStartupMS      int64  `json:"mediaStartupMs,omitempty"`
-	HandoffFirstFrameMS int64  `json:"handoffFirstFrameMs,omitempty"`
-	FirstFrameSource    string `json:"firstFrameSource,omitempty"`
-	SwitchReadyMS       int64  `json:"switchReadyMs,omitempty"`
-	RebufferCount       int    `json:"rebufferCount,omitempty"`
-	RebufferMS          int64  `json:"rebufferMs,omitempty"`
-	NetworkProfile      string `json:"networkProfile,omitempty"`
-	NetworkBytesPerSec  int64  `json:"networkBytesPerSec,omitempty"`
-	NetworkFailures     int64  `json:"networkFailures,omitempty"`
-	PrefetchCompleted   int64  `json:"prefetchCompleted,omitempty"`
-	PrefetchFailed      int64  `json:"prefetchFailed,omitempty"`
-	PrefetchCanceled    int64  `json:"prefetchCanceled,omitempty"`
-	PrefetchDropped     int64  `json:"prefetchDropped,omitempty"`
-	HLSStarts           int64  `json:"hlsStarts,omitempty"`
-	HLSHits             int64  `json:"hlsHits,omitempty"`
-	StreamMode          string `json:"streamMode,omitempty"`
-	CacheHit            bool   `json:"cacheHit"`
-	FullFallback        bool   `json:"fullFallback"`
-	Quality             string `json:"quality,omitempty"`
-	At                  string `json:"at"`
+	Type                string  `json:"type"`
+	Event               string  `json:"event,omitempty"`
+	Reason              string  `json:"reason,omitempty"`
+	SessionID           string  `json:"sessionId,omitempty"`
+	SeriesID            string  `json:"seriesId,omitempty"`
+	EpisodeID           string  `json:"episodeId,omitempty"`
+	InputID             int64   `json:"inputId,omitempty"`
+	InputSource         string  `json:"inputSource,omitempty"`
+	Repeat              bool    `json:"repeat,omitempty"`
+	QueueDepth          int     `json:"queueDepth,omitempty"`
+	WaitingMS           int64   `json:"waitingMs,omitempty"`
+	SincePageMS         int64   `json:"sincePageMs,omitempty"`
+	PlayingMS           int64   `json:"playingMs,omitempty"`
+	RenderedMS          int64   `json:"renderedMs,omitempty"`
+	ReadyState          int     `json:"readyState,omitempty"`
+	BufferedSec         float64 `json:"bufferedSec,omitempty"`
+	PageLoading         bool    `json:"pageLoading,omitempty"`
+	ItemCount           int     `json:"itemCount,omitempty"`
+	SlotID              int     `json:"slotId,omitempty"`
+	LoadToken           int     `json:"loadToken,omitempty"`
+	FromIndex           int     `json:"fromIndex"`
+	ToIndex             int     `json:"toIndex"`
+	BufferedAtSwitch    bool    `json:"bufferedAtSwitch"`
+	DurationMS          int64   `json:"durationMs"`
+	TimeToFirstFrameMS  int64   `json:"timeToFirstFrameMs,omitempty"`
+	PlaybackInfoMS      int64   `json:"playbackInfoMs,omitempty"`
+	MediaStartupMS      int64   `json:"mediaStartupMs,omitempty"`
+	HandoffFirstFrameMS int64   `json:"handoffFirstFrameMs,omitempty"`
+	FirstFrameSource    string  `json:"firstFrameSource,omitempty"`
+	SwitchReadyMS       int64   `json:"switchReadyMs,omitempty"`
+	RebufferCount       int     `json:"rebufferCount,omitempty"`
+	RebufferMS          int64   `json:"rebufferMs,omitempty"`
+	NetworkProfile      string  `json:"networkProfile,omitempty"`
+	NetworkBytesPerSec  int64   `json:"networkBytesPerSec,omitempty"`
+	NetworkFailures     int64   `json:"networkFailures,omitempty"`
+	PrefetchCompleted   int64   `json:"prefetchCompleted,omitempty"`
+	PrefetchFailed      int64   `json:"prefetchFailed,omitempty"`
+	PrefetchCanceled    int64   `json:"prefetchCanceled,omitempty"`
+	PrefetchDropped     int64   `json:"prefetchDropped,omitempty"`
+	HLSStarts           int64   `json:"hlsStarts,omitempty"`
+	HLSHits             int64   `json:"hlsHits,omitempty"`
+	StreamMode          string  `json:"streamMode,omitempty"`
+	CacheHit            bool    `json:"cacheHit"`
+	FullFallback        bool    `json:"fullFallback"`
+	Quality             string  `json:"quality,omitempty"`
+	At                  string  `json:"at"`
 }
 
 const feedMetricColumns = `
@@ -51,10 +70,14 @@ const feedMetricColumns = `
 	switch_ready_ms, rebuffer_count, rebuffer_ms, network_profile,
 	network_bytes_per_sec, network_failures, prefetch_completed,
 	prefetch_failed, prefetch_canceled, prefetch_dropped, hls_starts,
-	hls_hits, stream_mode, cache_hit, full_fallback, quality, at
+	hls_hits, stream_mode, cache_hit, full_fallback, quality, at, diagnostic_json
 `
 
-func feedMetricValues(metric FeedMetric) []any {
+func feedMetricValues(metric FeedMetric) ([]any, error) {
+	payload, err := json.Marshal(metric)
+	if err != nil {
+		return nil, err
+	}
 	boolInt := func(value bool) int {
 		if value {
 			return 1
@@ -63,13 +86,13 @@ func feedMetricValues(metric FeedMetric) []any {
 	}
 	return []any{
 		metric.Type, metric.FromIndex, metric.ToIndex, boolInt(metric.BufferedAtSwitch), metric.DurationMS,
-		metric.TimeToFirstFrameMS, metric.PlaybackInfoMS, metric.MediaStartupMS,
-		metric.HandoffFirstFrameMS, metric.FirstFrameSource,
+		metric.TimeToFirstFrameMS, metric.HandoffFirstFrameMS, metric.FirstFrameSource,
+		metric.PlaybackInfoMS, metric.MediaStartupMS,
 		metric.SwitchReadyMS, metric.RebufferCount, metric.RebufferMS, metric.NetworkProfile,
 		metric.NetworkBytesPerSec, metric.NetworkFailures, metric.PrefetchCompleted,
 		metric.PrefetchFailed, metric.PrefetchCanceled, metric.PrefetchDropped, metric.HLSStarts,
-		metric.HLSHits, metric.StreamMode, boolInt(metric.CacheHit), boolInt(metric.FullFallback), metric.Quality, metric.At,
-	}
+		metric.HLSHits, metric.StreamMode, boolInt(metric.CacheHit), boolInt(metric.FullFallback), metric.Quality, metric.At, string(payload),
+	}, nil
 }
 
 func (s *Store) AppendFeedMetrics(metrics []FeedMetric) error {
@@ -85,7 +108,7 @@ func (s *Store) AppendFeedMetrics(metrics []FeedMetric) error {
 	defer tx.Rollback()
 
 	query := "INSERT INTO feed_metrics (" + feedMetricColumns + ") VALUES (" +
-		strings.TrimSuffix(strings.Repeat("?,", 27), ",") + ")"
+		strings.TrimSuffix(strings.Repeat("?,", 28), ",") + ")"
 	statement, err := tx.Prepare(query)
 	if err != nil {
 		return err
@@ -95,7 +118,11 @@ func (s *Store) AppendFeedMetrics(metrics []FeedMetric) error {
 		if metric.At == "" {
 			metric.At = time.Now().UTC().Format(time.RFC3339Nano)
 		}
-		if _, err := statement.Exec(feedMetricValues(metric)...); err != nil {
+		values, err := feedMetricValues(metric)
+		if err != nil {
+			return err
+		}
+		if _, err := statement.Exec(values...); err != nil {
 			return err
 		}
 	}
@@ -127,6 +154,11 @@ func (s *Store) migrateFeedMetricColumns() error {
 			if _, err := s.db.Exec("ALTER TABLE feed_metrics ADD COLUMN " + column + " INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return err
 			}
+		}
+	}
+	if !strings.Contains(","+columns+",", ",diagnostic_json,") {
+		if _, err := s.db.Exec("ALTER TABLE feed_metrics ADD COLUMN diagnostic_json TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
 		}
 	}
 	return nil

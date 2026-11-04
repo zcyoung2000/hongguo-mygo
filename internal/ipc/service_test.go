@@ -2,8 +2,11 @@ package ipc
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,7 +52,9 @@ func TestWarmupWindowLimitsAdaptToNetworkProfile(t *testing.T) {
 }
 
 func TestRecordFeedMetricsWritesSQLite(t *testing.T) {
-	store, err := userstore.NewStore(t.TempDir())
+	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
+	dir := t.TempDir()
+	store, err := userstore.NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore err = %v", err)
 	}
@@ -64,6 +69,12 @@ func TestRecordFeedMetricsWritesSQLite(t *testing.T) {
 		CacheHit:       true,
 		FullFallback:   true,
 		NetworkProfile: "medium",
+		Event:          "navigation-complete",
+		InputID:        42,
+		InputSource:    "keyboard",
+		SessionID:      "session-1",
+		WaitingMS:      350,
+		RenderedMS:     700,
 	}})
 	if err != nil {
 		t.Fatalf("RecordFeedMetrics err = %v", err)
@@ -72,6 +83,22 @@ func TestRecordFeedMetricsWritesSQLite(t *testing.T) {
 	count, err := store.FeedMetricCount()
 	if err != nil || count != 1 {
 		t.Fatalf("SQLite metric count = %d, %v; want 1, nil", count, err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dir, "userdata.db")+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var payload string
+	if err := db.QueryRow(`SELECT diagnostic_json FROM feed_metrics`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var metric FeedMetricDTO
+	if err := json.Unmarshal([]byte(payload), &metric); err != nil {
+		t.Fatal(err)
+	}
+	if metric.InputID != 42 || metric.InputSource != "keyboard" || metric.SessionID != "session-1" || metric.WaitingMS != 350 || metric.RenderedMS != 700 {
+		t.Fatalf("diagnostic correlation fields were lost: %+v", metric)
 	}
 }
 

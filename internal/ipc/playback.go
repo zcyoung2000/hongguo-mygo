@@ -3,6 +3,7 @@ package ipc
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -17,12 +18,17 @@ func (s *HongguoService) UpdateFeedPreloadWindow(ctx context.Context, version in
 }
 
 func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID string, episodeNum int, quality string, preferHLS bool) (*PlaybackDTO, error) {
+	started := time.Now()
+	phase := "resolve-episode"
 	if episodeNum <= 0 {
 		episodeNum = 1
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	defer func() {
+		log.Printf("[feed-playback] series=%q episode=%q phase=%s elapsedMs=%d cancelled=%t", seriesID, episodeID, phase, time.Since(started).Milliseconds(), ctx.Err() != nil)
+	}()
 
 	var episodePosterURL string
 	var commentCount int64
@@ -75,6 +81,9 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 	cachedStart = cachedStart || s.media.HasCachedEpisode(episodeID, quality)
 
 	var qualityInfo QualitySelection
+	resolvedAt := time.Now()
+	log.Printf("[feed-playback] series=%q phase=episode-resolved elapsedMs=%d cached=%t", seriesID, resolvedAt.Sub(started).Milliseconds(), cachedStart)
+	phase = "playback-info"
 	if cachedStart {
 		qualityInfo = QualitySelection{
 			Options:     fallbackQualityOptions(quality),
@@ -95,6 +104,8 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		}
 	}
 	_ = s.store.RememberEpisode(seriesID, episodeID, episodeNum, qualityInfo.Selected)
+	log.Printf("[feed-playback] series=%q phase=quality-resolved elapsedMs=%d phaseMs=%d", seriesID, time.Since(started).Milliseconds(), time.Since(resolvedAt).Milliseconds())
+	phase = "local-state"
 	isFullCached := fileExists(episodeCachePath(s.media.CacheDir(), episodeID, qualityInfo.Selected))
 	fullStreamURL := s.media.VideoURL(episodeID, seriesID, episodeNum, qualityInfo.Selected)
 	streamURL := fullStreamURL
@@ -129,6 +140,7 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 	}
 
 	isLiked := s.store.IsLiked(seriesID, episodeID, episodeNum)
+	phase = "complete"
 
 	return sanitizeIPC(&PlaybackDTO{
 		SeriesID:             seriesID,
@@ -338,8 +350,15 @@ func (s *HongguoService) RecordFeedMetrics(ctx context.Context, metrics []FeedMe
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, metric := range metrics {
+	for i := range metrics {
+		metric := &metrics[i]
 		metric.Type = truncateString(metric.Type, 32)
+		metric.Event = truncateString(metric.Event, 40)
+		metric.Reason = truncateString(metric.Reason, 64)
+		metric.SessionID = truncateString(metric.SessionID, 48)
+		metric.SeriesID = truncateString(metric.SeriesID, 64)
+		metric.EpisodeID = truncateString(metric.EpisodeID, 64)
+		metric.InputSource = truncateString(metric.InputSource, 24)
 		metric.NetworkProfile = truncateString(metric.NetworkProfile, 16)
 		metric.StreamMode = truncateString(metric.StreamMode, 24)
 		metric.Quality = truncateString(metric.Quality, 16)
