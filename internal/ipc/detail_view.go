@@ -191,6 +191,7 @@ func (s *HongguoService) getSeasonCollection(ctx context.Context, seriesID strin
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch series seasons: %w", err)
 	}
+	s.cacheSeriesAlbum(seriesID, album)
 
 	var detailMap map[string]*model.Series
 	if album != nil && len(album.Seasons) > 0 {
@@ -306,6 +307,26 @@ func albumTitle(album *model.Album) string {
 		return ""
 	}
 	return firstNonEmpty(album.Title, "同系列短剧")
+}
+
+func (s *HongguoService) cachedSeriesAlbum(seriesID string) *model.Album {
+	s.cacheMu.RLock()
+	entry, ok := s.cache["series_album:"+seriesID]
+	s.cacheMu.RUnlock()
+	if !ok || time.Now().After(entry.expiresAt) {
+		return nil
+	}
+	album, _ := entry.val.(*model.Album)
+	return album
+}
+
+func (s *HongguoService) cacheSeriesAlbum(seriesID string, album *model.Album) {
+	if seriesID == "" || album == nil {
+		return
+	}
+	s.cacheMu.Lock()
+	s.cache["series_album:"+seriesID] = cacheItem{val: album, expiresAt: time.Now().Add(5 * time.Minute)}
+	s.cacheMu.Unlock()
 }
 
 func parseIDList(value string) map[string]bool {
@@ -532,6 +553,7 @@ func (s *HongguoService) seasonsToCards(album *model.Album, details ...map[strin
 				rightText = d.RightText
 			}
 		}
+		title = seasonDisplayTitle(title, albumSeasonNumber(album, season))
 
 		upcoming := isUpcomingSeries(epCount, rightText)
 
@@ -580,6 +602,29 @@ func (s *HongguoService) seasonsToCards(album *model.Album, details ...map[strin
 		})
 	}
 	return cards
+}
+
+func albumSeasonNumber(album *model.Album, season model.Season) int {
+	if album == nil || len(album.Seasons) < 2 {
+		return 0
+	}
+	if season.Index > 0 {
+		return season.Index
+	}
+	for i, item := range album.Seasons {
+		if item.SeriesID == season.SeriesID {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func seasonDisplayTitle(title string, number int) string {
+	title = strings.TrimSpace(title)
+	if title == "" || number <= 0 || hasSeasonTitleMarker(title) {
+		return title
+	}
+	return fmt.Sprintf("%s 第%d季", title, number)
 }
 
 func (s *HongguoService) adaptationsForSource(ctx context.Context, currentID string, source *SourceNovelDTO, candidates []model.SeriesSummary, excludeIDs map[string]bool) []SeriesCard {
