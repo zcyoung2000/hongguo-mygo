@@ -3,7 +3,9 @@ package media
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -207,6 +209,42 @@ func growingRangeFixture(t *testing.T) (*MediaServer, *progressiveStream, string
 		t.Fatal(err)
 	}
 	return &MediaServer{progressiveStreams: map[string]*progressiveStream{key: stream}}, stream, filepath.Join(dir, "final.mp4")
+}
+
+func TestInterruptedProgressiveFetchFailsInsteadOfPublishingNormalEOF(t *testing.T) {
+	ms, stream, finalPath := growingRangeFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ms.serveProgressiveVideo(w, r, "series", stream.episodeID, 1, "720p", finalPath)
+	}))
+	defer server.Close()
+	client := server.Client()
+	client.Timeout = 2 * time.Second
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	stream.finish(errors.New("conversion interrupted"))
+	body, err := io.ReadAll(response.Body)
+	if err == nil || len(body) != 2048 {
+		t.Fatalf("truncated stream must fail after its published prefix: bytes=%d error=%v", len(body), err)
+	}
+	if fileExists(finalPath) {
+		t.Fatal("interrupted stream became a full cache hit")
+	}
+}
+
+func TestProgressiveCopyReportsErrorAfterItsLastPublishedBytes(t *testing.T) {
+	_, stream, _ := growingRangeFixture(t)
+	want := errors.New("conversion interrupted after final prefix")
+	stream.mu.Lock()
+	stream.done, stream.err = true, want
+	stream.mu.Unlock()
+	var output bytes.Buffer
+	err := copyProgressiveRange(&output, httptest.NewRequest(http.MethodGet, "/", nil), stream, 0, -1)
+	if !errors.Is(err, want) || output.Len() != 2048 {
+		t.Fatalf("copy = %d bytes / %v, want prefix plus producer error", output.Len(), err)
+	}
 }
 
 func serveRangeAsync(t *testing.T, ms *MediaServer, stream *progressiveStream, finalPath string, request *http.Request) (*httptest.ResponseRecorder, <-chan struct{}) {
