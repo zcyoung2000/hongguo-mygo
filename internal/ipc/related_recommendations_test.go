@@ -71,6 +71,35 @@ func TestRankRelatedCandidatesPrefersRelevanceThenPopularity(t *testing.T) {
 	}
 }
 
+func TestRelatedSeasonTitlesAreDistinguished(t *testing.T) {
+	candidates := relatedSourceCandidates([]model.SeriesSummary{
+		{ID: "season-1", Title: "天道余途：苍途问道"},
+		{ID: "season-2", Title: "天道余途：苍途问道"},
+		{ID: "season-3", Title: "天道余途：苍途问道 第二季"},
+	}, relatedRelevanceOfficial)
+	detailMap := map[string]*model.Series{
+		"season-1": {SeriesSummary: model.SeriesSummary{ID: "season-1", Title: "天道余途：苍途问道"}},
+		"season-2": {SeriesSummary: model.SeriesSummary{ID: "season-2", Title: "天道余途：苍途问道"}},
+		"season-3": {SeriesSummary: model.SeriesSummary{ID: "season-3", Title: "天道余途：苍途问道 第二季"}},
+	}
+	numbers := map[string]int{"season-1": 1, "season-2": 2, "season-3": 3}
+
+	applyRelatedSeasonTitles(candidates, detailMap, numbers)
+	want := []string{
+		"天道余途：苍途问道 第1季",
+		"天道余途：苍途问道 第2季",
+		"天道余途：苍途问道 第二季",
+	}
+	for i, candidate := range candidates {
+		if candidate.summary.Title != want[i] {
+			t.Fatalf("titles[%d] = %q, want %q", i, candidate.summary.Title, want[i])
+		}
+		if detailMap[candidate.summary.ID].Title != want[i] {
+			t.Fatalf("detail titles[%d] = %q, want %q", i, detailMap[candidate.summary.ID].Title, want[i])
+		}
+	}
+}
+
 func TestOfficialRelatedCellRequiresSessionAndSpecificTitle(t *testing.T) {
 	if isOfficialRelatedCell(nil) {
 		t.Fatal("nil recommendation accepted")

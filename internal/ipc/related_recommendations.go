@@ -3,6 +3,7 @@ package ipc
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -25,6 +26,10 @@ type relatedCandidate struct {
 	relevance int
 	order     int
 }
+
+var seasonTitleMarker = regexp.MustCompile(
+	`(?i)(第\s*[0-9零一二三四五六七八九十百]+\s*季|season\s*[0-9]+|s[0-9]+\b)`,
+)
 
 func (s *HongguoService) GetSeriesRelated(ctx context.Context, seriesID string) (*SeriesCollectionDTO, error) {
 	seriesID = strings.TrimSpace(seriesID)
@@ -49,9 +54,9 @@ func (s *HongguoService) GetSeriesRelated(ctx context.Context, seriesID string) 
 	defer cancel()
 
 	candidates := s.relatedCandidates(ctx, page)
+	seasonNumbers := s.relatedSeasonNumbers(ctx, page.ID)
 	ids := make([]string, 0, len(candidates))
 	seen := make(map[string]bool, len(candidates)+1)
-	seen[seriesID] = true
 	for _, candidate := range candidates {
 		id := candidate.summary.ID
 		if id == "" || seen[id] {
@@ -63,6 +68,7 @@ func (s *HongguoService) GetSeriesRelated(ctx context.Context, seriesID string) 
 
 	detailMap := s.fetchSeriesBatchMap(ctx, ids)
 	candidates = rankRelatedCandidates(candidates, detailMap)
+	applyRelatedSeasonTitles(candidates, detailMap, seasonNumbers)
 	cards := make([]SeriesCard, 0, len(candidates))
 	for _, candidate := range candidates {
 		cards = append(cards, s.relatedCard(candidate.summary, detailMap[candidate.summary.ID]))
@@ -299,6 +305,77 @@ func relatedSourceCandidates(items []model.SeriesSummary, relevance int) []relat
 		})
 	}
 	return candidates
+}
+
+func (s *HongguoService) relatedSeasonNumbers(ctx context.Context, seriesID string) map[string]int {
+	album := s.cachedSeriesAlbum(seriesID)
+	if album == nil {
+		result, err := retryAnonymous(s, ctx, func(c context.Context) (*model.Album, error) {
+			return s.client.Seasons(c, seriesID)
+		})
+		if err != nil {
+			return nil
+		}
+		album = result
+		s.cacheSeriesAlbum(seriesID, album)
+	}
+	return seasonNumbers(album)
+}
+
+func seasonNumbers(album *model.Album) map[string]int {
+	if album == nil || len(album.Seasons) < 2 {
+		return nil
+	}
+
+	numbers := make(map[string]int, len(album.Seasons))
+	for i, season := range album.Seasons {
+		number := season.Index
+		if number == 0 {
+			number = i + 1
+		}
+		if season.SeriesID != "" && number > 0 {
+			numbers[season.SeriesID] = number
+		}
+	}
+	return numbers
+}
+
+// Season rows often reuse the album title. Preserve every season as a real
+// catalog item, but make the related card visually distinguishable.
+func applyRelatedSeasonTitles(
+	candidates []relatedCandidate,
+	detailMap map[string]*model.Series,
+	seasonNumbers map[string]int,
+) {
+	for i := range candidates {
+		number, ok := seasonNumbers[candidates[i].summary.ID]
+		if !ok {
+			continue
+		}
+
+		candidate := &candidates[i]
+		summary := candidate.summary
+		detail := detailMap[summary.ID]
+		if hasSeasonTitleMarker(summary.Title) || (detail != nil && hasSeasonTitleMarker(detail.Title)) {
+			continue
+		}
+		title := summary.Title
+		if detail != nil && detail.Title != "" {
+			title = detail.Title
+		}
+		title = seasonDisplayTitle(title, number)
+		if title == "" || title == summary.Title {
+			continue
+		}
+		candidate.summary.Title = title
+		if detail != nil {
+			detail.SeriesSummary.Title = title
+		}
+	}
+}
+
+func hasSeasonTitleMarker(title string) bool {
+	return seasonTitleMarker.MatchString(strings.TrimSpace(title))
 }
 
 func rankRelatedCandidates(candidates []relatedCandidate, detailMap map[string]*model.Series) []relatedCandidate {

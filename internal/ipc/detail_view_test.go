@@ -77,6 +77,33 @@ func TestSeasonsToCardsMarksUnreleasedSeasons(t *testing.T) {
 	}
 }
 
+func TestSeasonsToCardsAddsMissingSeasonNumbers(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore err = %v", err)
+	}
+	defer store.Close()
+
+	service := &HongguoService{store: store, media: &MediaServer{}}
+	album := &model.Album{
+		ID:    "album-1",
+		Title: "Test Series",
+		Seasons: []model.Season{
+			{SeriesID: "s1", Index: 1},
+			{SeriesID: "s2", Index: 2},
+			{SeriesID: "s3"},
+		},
+	}
+
+	cards := service.seasonsToCards(album)
+	want := []string{"Test Series 第1季", "Test Series 第2季", "Test Series 第3季"}
+	for i, card := range cards {
+		if card.Title != want[i] {
+			t.Fatalf("cards[%d].Title = %q, want %q", i, card.Title, want[i])
+		}
+	}
+}
+
 func TestSourceNovelCardUsesSourceLabel(t *testing.T) {
 	card := sourceNovelCard(&SourceNovelDTO{
 		ID:       "book-1",
