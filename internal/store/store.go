@@ -446,6 +446,8 @@ func (s *Store) initSchema() error {
 		buffered_at_switch INTEGER NOT NULL DEFAULT 0,
 		duration_ms INTEGER NOT NULL DEFAULT 0,
 		time_to_first_frame_ms INTEGER NOT NULL DEFAULT 0,
+		playback_info_ms INTEGER NOT NULL DEFAULT 0,
+		media_startup_ms INTEGER NOT NULL DEFAULT 0,
 		handoff_first_frame_ms INTEGER NOT NULL DEFAULT 0,
 		first_frame_source TEXT NOT NULL DEFAULT '',
 		switch_ready_ms INTEGER NOT NULL DEFAULT 0,
@@ -468,6 +470,9 @@ func (s *Store) initSchema() error {
 	);
 	`
 	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	if err := s.migrateFeedMetricColumns(); err != nil {
 		return err
 	}
 	return s.initSyncQueues()

@@ -21,6 +21,8 @@ type FeedMetric struct {
 	BufferedAtSwitch    bool   `json:"bufferedAtSwitch"`
 	DurationMS          int64  `json:"durationMs"`
 	TimeToFirstFrameMS  int64  `json:"timeToFirstFrameMs,omitempty"`
+	PlaybackInfoMS      int64  `json:"playbackInfoMs,omitempty"`
+	MediaStartupMS      int64  `json:"mediaStartupMs,omitempty"`
 	HandoffFirstFrameMS int64  `json:"handoffFirstFrameMs,omitempty"`
 	FirstFrameSource    string `json:"firstFrameSource,omitempty"`
 	SwitchReadyMS       int64  `json:"switchReadyMs,omitempty"`
@@ -45,6 +47,7 @@ type FeedMetric struct {
 const feedMetricColumns = `
 	type, from_index, to_index, buffered_at_switch, duration_ms,
 	time_to_first_frame_ms, handoff_first_frame_ms, first_frame_source,
+	playback_info_ms, media_startup_ms,
 	switch_ready_ms, rebuffer_count, rebuffer_ms, network_profile,
 	network_bytes_per_sec, network_failures, prefetch_completed,
 	prefetch_failed, prefetch_canceled, prefetch_dropped, hls_starts,
@@ -60,7 +63,8 @@ func feedMetricValues(metric FeedMetric) []any {
 	}
 	return []any{
 		metric.Type, metric.FromIndex, metric.ToIndex, boolInt(metric.BufferedAtSwitch), metric.DurationMS,
-		metric.TimeToFirstFrameMS, metric.HandoffFirstFrameMS, metric.FirstFrameSource,
+		metric.TimeToFirstFrameMS, metric.PlaybackInfoMS, metric.MediaStartupMS,
+		metric.HandoffFirstFrameMS, metric.FirstFrameSource,
 		metric.SwitchReadyMS, metric.RebufferCount, metric.RebufferMS, metric.NetworkProfile,
 		metric.NetworkBytesPerSec, metric.NetworkFailures, metric.PrefetchCompleted,
 		metric.PrefetchFailed, metric.PrefetchCanceled, metric.PrefetchDropped, metric.HLSStarts,
@@ -81,7 +85,7 @@ func (s *Store) AppendFeedMetrics(metrics []FeedMetric) error {
 	defer tx.Rollback()
 
 	query := "INSERT INTO feed_metrics (" + feedMetricColumns + ") VALUES (" +
-		strings.TrimSuffix(strings.Repeat("?,", 25), ",") + ")"
+		strings.TrimSuffix(strings.Repeat("?,", 27), ",") + ")"
 	statement, err := tx.Prepare(query)
 	if err != nil {
 		return err
@@ -111,6 +115,21 @@ func (s *Store) FeedMetricCount() (int64, error) {
 	var count int64
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM feed_metrics`).Scan(&count)
 	return count, err
+}
+
+func (s *Store) migrateFeedMetricColumns() error {
+	var columns string
+	if err := s.db.QueryRow(`SELECT group_concat(name, ',') FROM pragma_table_info('feed_metrics')`).Scan(&columns); err != nil {
+		return err
+	}
+	for _, column := range []string{"playback_info_ms", "media_startup_ms"} {
+		if !strings.Contains(","+columns+",", ","+column+",") {
+			if _, err := s.db.Exec("ALTER TABLE feed_metrics ADD COLUMN " + column + " INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // migrateFeedMetricsJSONL is a one-time import from the former JSONL

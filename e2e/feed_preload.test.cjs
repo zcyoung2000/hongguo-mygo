@@ -119,14 +119,14 @@ function scheduler() {
   let timerID = 0;
   let now = 0;
   const current = { episodeId: 'current', itemIndex: 0, quality: '720p', video: {
-    src: 'local-current', readyState: 4, currentTime: 5, playbackRate: 1, ended: false
+    src: 'local-current', readyState: 4, videoWidth: 320, currentTime: 5, playbackRate: 1, ended: false
   } };
   const next = { itemIndex: -1 };
   const c = vm.createContext({
     console, Date, performance: { now: () => now },
     setTimeout: callback => { timers.set(++timerID, callback); return timerID; },
     clearTimeout: id => timers.delete(id),
-    HTMLMediaElement: { HAVE_FUTURE_DATA: 3 },
+    HTMLMediaElement: { HAVE_CURRENT_DATA: 2, HAVE_FUTURE_DATA: 3 },
     feedWarmupToken: 1, feedWarmupSession: null, feedWarmupCenterKey: 'center',
     feedPreloadRevision: 0, feedSlots: [current, next], feedSlotCurr: 0, feedSlotNext: 1,
     feedSwitchWaitDir: 0,
@@ -140,7 +140,7 @@ function scheduler() {
     clearFeedSlot: slot => { calls.push(['clear', slot]); slot.itemIndex = -1; },
     apiCall: (...args) => { calls.push(args); return Promise.resolve([]); }
   });
-  load(c, ['decideFeedPreload', 'feedSlotIsFullyBuffered', 'updateFeedPreloadWindow', 'cancelScheduledFeedWarmup', 'wakeFeedWarmup', 'runFeedWarmup']);
+  load(c, ['decideFeedPreload', 'feedVideoHasFirstFrame', 'feedSlotIsFullyBuffered', 'updateFeedPreloadWindow', 'cancelScheduledFeedWarmup', 'wakeFeedWarmup', 'runFeedWarmup']);
   const session = { token: 1, centerIndex: 0, current, running: false, timer: null,
     lastDiagnostics: Infinity, policy: {}, statuses: new Map(), metadataTries: new Map() };
   c.feedWarmupSession = session;
@@ -159,6 +159,22 @@ test('periodic controller warms real episode IDs and their selected quality with
   assert.equal(window[0].episodeId, 'ep-1');
   assert.equal(window[0].quality, '540p');
   assert.ok(calls.some(call => call[0] === 'prepare'));
+});
+
+test('a cold first frame gets all bandwidth before any lookahead negotiation', async () => {
+  const { c, session, calls } = scheduler();
+  session.current.video.readyState = 1;
+  session.current.video.videoWidth = 0;
+  c.cachedFeedPlayback = () => null;
+  let metadataCalls = 0;
+  c.prefetchFeedPlaybackInfo = () => { metadataCalls++; return Promise.resolve(null); };
+  await c.runFeedWarmup(session);
+  assert.equal(metadataCalls, 0);
+  assert.equal(calls.filter(call => call[0] === 'prepare').length, 0);
+  assert.equal(calls.find(call => call[0] === 'UpdateFeedPreloadWindow').at(-1).length, 0);
+  Object.assign(session.current.video, { readyState: 4, videoWidth: 320 });
+  await c.runFeedWarmup(session);
+  assert.equal(metadataCalls, 2, 'lookahead begins after the first frame is available');
 });
 
 test('pressure clears the offscreen decoder and sends an empty media window with current protected', async () => {
@@ -195,6 +211,18 @@ test('backpressure preserves an already cached adjacent decoder for reverse navi
     'keeping resident cached media must not admit speculative downloads');
 });
 
+test('a pending fragment decoder cannot acquire a duplicate HLS download under pressure', async () => {
+  const { c, session, calls } = scheduler();
+  Object.assign(c.feedSlots[1], { itemIndex: 1, ready: true, episodeId: 'ep-1',
+    quality: '540p', progressiveMedia: {}, video: { src: 'blob:pending' } });
+  c.feedVideoBufferAhead = () => 2;
+  c.feedSwitchWaitDir = 1;
+  await c.runFeedWarmup(session);
+  assert.equal(calls.filter(call => call[0] === 'clear').length, 0);
+  assert.equal(calls.find(call => call[0] === 'UpdateFeedPreloadWindow').at(-1).length, 0);
+  assert.equal(calls.filter(call => call[0] === 'prepare').length, 0);
+});
+
 test('a slow old reply cannot prepare a decoder or rearm a timer after cancellation', async () => {
   const { c, session, timers, setNow, calls } = scheduler();
   let reply;
@@ -217,12 +245,14 @@ test('a waiting event does not overlap a running controller IPC call', async () 
   let reply;
   c.apiCall = (...args) => { calls.push(args); return new Promise(resolve => { reply = resolve; }); };
   const first = c.runFeedWarmup(session);
+  assert.equal(session.pendingMedia.has('ep-1:540p'), true);
   c.wakeFeedWarmup(true);
   await c.runFeedWarmup(session);
   assert.equal(calls.length, 1);
   assert.equal(session.pending, true);
   reply([]);
   await first;
+  assert.equal(session.pendingMedia, null);
 });
 
 test('while current is starved, lookahead negotiates metadata without starting media', async () => {

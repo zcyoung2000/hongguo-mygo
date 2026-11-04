@@ -37,13 +37,14 @@ type progressiveStream struct {
 	// a background full-file prefetch.
 	rendererOwned bool
 
-	mu      sync.Mutex
-	cond    *sync.Cond
-	written int64
-	done    bool
-	err     error
-	waiters map[chan struct{}]struct{}
-	readers int
+	mu        sync.Mutex
+	cond      *sync.Cond
+	written   int64
+	done      bool
+	err       error
+	waiters   map[chan struct{}]struct{}
+	readers   int
+	finalized bool
 
 	// Written by the stream goroutine before finish() reads it.
 	stderrTail string
@@ -335,6 +336,12 @@ func (stream *progressiveStream) finish(commandErr error) {
 	stream.notifyWaitersLocked()
 	stream.mu.Unlock()
 	_ = stream.file.Close()
+	if finalErr == nil {
+		// Publish the completed file even while a slow MSE reader is consuming
+		// earlier fragments. A second request must reuse it instead of starting
+		// another writer against the same temporary path.
+		stream.finalize()
+	}
 	if finalErr != nil && finalErr != context.Canceled {
 		tail := ""
 		if stream.stderrTail != "" {
@@ -347,15 +354,17 @@ func (stream *progressiveStream) finish(commandErr error) {
 
 func (stream *progressiveStream) finalize() {
 	stream.mu.Lock()
-	alreadyFinalized := stream.done && stream.err != nil
-	stream.mu.Unlock()
-	if alreadyFinalized {
+	defer stream.mu.Unlock()
+	if stream.finalized || !stream.done || stream.err != nil || stream.finalPath == "" {
 		return
 	}
 	if err := os.Rename(stream.tempPath, stream.finalPath); err != nil {
+		stream.err = err
 		log.Printf("[progressive stream] finalize failed for %s: %v", stream.key, err)
 		_ = os.Remove(stream.tempPath)
+		return
 	}
+	stream.finalized = true
 }
 
 func ffmpegProgressiveArgs(streamURL, audioURL, keyHex string) []string {
@@ -532,7 +541,11 @@ func (ms *MediaServer) serveProgressiveVideo(w http.ResponseWriter, r *http.Requ
 	// representation with 200 and chunked transfer; a nonzero offset never does.
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
-		_ = copyProgressiveRange(w, r, stream, 0, -1)
+		if err := copyProgressiveRange(w, r, stream, 0, -1); err != nil {
+			// An interrupted conversion must fail the fetch body. A normal
+			// chunked EOF would advertise a truncated MP4 as complete to MSE.
+			panic(http.ErrAbortHandler)
+		}
 	}
 }
 
@@ -577,7 +590,7 @@ func copyProgressiveRange(w io.Writer, request *http.Request, stream *progressiv
 			return nil
 		}
 		if done {
-			return nil
+			return streamErr
 		}
 		if flusher, canFlush := w.(http.Flusher); canFlush {
 			flusher.Flush()
