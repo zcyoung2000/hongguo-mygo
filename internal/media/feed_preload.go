@@ -99,10 +99,10 @@ func (ms *MediaServer) SetFeedPreloadWindow(version int64, currentEpisodeID, cur
 	if validContentID(currentEpisodeID) {
 		currentKey = PrefetchTaskKey(PrefetchTask{EpisodeID: currentEpisodeID, Quality: currentQuality})
 	}
-	tasks := make([]PrefetchTask, 0, 3)
-	desired := make(map[string]PrefetchTask, 3)
+	tasks := make([]PrefetchTask, 0, 2)
+	desired := make(map[string]PrefetchTask, 2)
 	for _, item := range items {
-		if !validContentID(item.EpisodeID) || len(tasks) >= 3 {
+		if !validContentID(item.EpisodeID) || len(tasks) >= 2 {
 			continue
 		}
 		task := normalizePrefetchTask(PrefetchTask{SeriesID: item.SeriesID, EpisodeID: item.EpisodeID, Number: item.Number, Quality: item.Quality})
@@ -139,39 +139,24 @@ func (ms *MediaServer) SetFeedPreloadWindow(version int64, currentEpisodeID, cur
 	}
 
 	statuses := make([]FeedPreloadStatus, len(tasks))
-	active := 0
 	for i, task := range tasks {
 		statuses[i] = ms.feedPreloadStatus(task)
-		if statuses[i].Active {
-			active++
-		}
 	}
-	for i := len(tasks) - 1; active > 2 && i >= 0; i-- {
-		if statuses[i].Active {
-			ms.stopFeedPreload(PrefetchTaskKey(tasks[i]))
-			statuses[i].Active = false
-			active--
-		}
+	// A reverse swipe can move an active download to second place. Give the
+	// newly nearest episode priority rather than keeping both writers busy.
+	if len(tasks) == 2 && !statuses[0].Complete && statuses[1].Active {
+		ms.stopFeedPreload(PrefetchTaskKey(tasks[1]))
+		statuses[1].Active = false
 	}
 	for i, task := range tasks {
+		// Complete the nearest episode before spending bandwidth farther ahead.
+		// Only complete renditions survive a restart, so a collection of short
+		// prefixes cannot provide a useful local startup queue.
+		if i > 0 && !statuses[i-1].Complete {
+			break
+		}
 		if statuses[i].Complete || statuses[i].Active {
 			continue
-		}
-		// Leave one of the three media slots for current playback. More distant
-		// work cannot begin until every closer item has a playable prefix.
-		if i > 0 && !statuses[i-1].Complete && statuses[i-1].CachedSeconds < 6 {
-			break
-		}
-		// A failed nearer job takes priority over already-running farther work.
-		for j := len(tasks) - 1; active >= 2 && j > i; j-- {
-			if statuses[j].Active {
-				ms.stopFeedPreload(PrefetchTaskKey(tasks[j]))
-				statuses[j].Active = false
-				active--
-			}
-		}
-		if active >= 2 {
-			break
 		}
 		key := PrefetchTaskKey(task)
 		if last := ms.feedPreloadTries[key]; !last.IsZero() && time.Since(last) < 5*time.Second {
@@ -182,9 +167,6 @@ func (ms *MediaServer) SetFeedPreloadWindow(version int64, currentEpisodeID, cur
 			break
 		}
 		statuses[i] = ms.feedPreloadStatus(task)
-		if statuses[i].Active {
-			active++
-		}
 	}
 	return statuses
 }

@@ -428,6 +428,14 @@ func (s *Store) initSchema() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_feed_seen_recent ON feed_seen(channel, generation, seen_at DESC);
 
+	CREATE TABLE IF NOT EXISTS feed_queue (
+		position INTEGER PRIMARY KEY AUTOINCREMENT,
+		channel TEXT NOT NULL,
+		series_id TEXT NOT NULL,
+		payload BLOB NOT NULL,
+		UNIQUE(channel, series_id)
+	);
+
 	CREATE TABLE IF NOT EXISTS media_cache (
 		series_id TEXT NOT NULL,
 		episode_id TEXT NOT NULL,
@@ -576,6 +584,31 @@ func (s *Store) GetCachedEpisodeAt(seriesID, quality string, episodeNum int) (Ca
 	return item, true
 }
 
+// An index row can outlive an evicted file. Return all quality candidates so
+// playback can prefer a complete local alternative over a new network probe.
+func (s *Store) GetCachedEpisodesAt(seriesID, quality string, episodeNum int) ([]CachedEpisode, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT series_id, episode_id, episode_num, quality FROM media_cache
+		WHERE series_id = ? AND episode_num = ?
+		ORDER BY (quality = ?) DESC, updated_at DESC
+	`, seriesID, episodeNum, quality)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CachedEpisode
+	for rows.Next() {
+		var item CachedEpisode
+		if err := rows.Scan(&item.SeriesID, &item.EpisodeID, &item.EpisodeNum, &item.Quality); err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) ClearCachedEpisodes() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -685,6 +718,30 @@ func (s *Store) GetFeedSeenIDs(channel string, generation int64) map[string]bool
 	return seen
 }
 
+func (s *Store) GetRecentFeedSeenIDs(channel string, generation int64) map[string]bool {
+	seen := make(map[string]bool)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	rows, err := s.db.Query(`
+		SELECT series_id
+		FROM feed_seen
+		WHERE channel = ? AND generation > ?
+	`, channel, generation-3)
+	if err != nil {
+		return seen
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var seriesID string
+		if err := rows.Scan(&seriesID); err == nil {
+			seen[seriesID] = true
+		}
+	}
+	return seen
+}
+
 func (s *Store) SaveFeedSeenIDs(channel string, generation int64, seriesIDs []string) error {
 	if len(seriesIDs) == 0 {
 		return nil
@@ -742,10 +799,10 @@ func (s *Store) StartNextFeedGeneration(channel string) (int64, error) {
 	if err != nil {
 		return generation, err
 	}
-	if _, err = s.db.Exec(`
+	if _, err := s.db.Exec(`
 		DELETE FROM feed_seen
-		WHERE channel = ? AND generation < ?
-	`, channel, generation); err != nil {
+		WHERE channel = ? AND generation <= ?
+	`, channel, generation-3); err != nil {
 		return generation, err
 	}
 	return generation, nil

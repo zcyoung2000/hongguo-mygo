@@ -759,6 +759,7 @@ function clearFeedSlot(slot) {
   slot.mediaWaiting = false;
   slot.failed = false;
   slot.metadataRequested = false;
+  slot.queueConsumed = false;
   slot.streamUrl = '';
   slot.fullStreamUrl = '';
   slot.progressiveStreamUrl = '';
@@ -1664,7 +1665,7 @@ function decideFeedPreload(sample, previous = {}) {
   let depth = previous.depth || 0;
   let stableSince = previous.stableSince ?? null;
   let cooldownUntil = previous.cooldownUntil || 0;
-  const limit = sample.profile === 'weak' ? 1 : (sample.profile === 'strong' ? 3 : 2);
+  const limit = sample.profile === 'weak' ? 1 : 2;
 
   if (sample.waiting || (!sample.complete && reserve < 4)) {
     if (depth > 0 || sample.waiting) cooldownUntil = sample.now + 4000;
@@ -1682,7 +1683,6 @@ function decideFeedPreload(sample, previous = {}) {
     // widening beyond it needs a sustained surplus across several samples.
     depth = Math.max(depth, 1);
     if (stableMS >= 2500 && (sample.complete || reserve >= 14) && sample.nextReady) depth = Math.max(depth, 2);
-    if (stableMS >= 5000 && (sample.complete || reserve >= 24) && sample.nextReady && sample.secondReady) depth = 3;
   }
   depth = Math.min(depth, limit);
   if (depth < (previous.depth || 0)) cooldownUntil = Math.max(cooldownUntil, sample.now + 3000);
@@ -1748,7 +1748,7 @@ async function runFeedWarmup(session) {
     // Negotiation is cheap and does not start a media download. Keep a small,
     // bounded metadata window ready even while current playback needs recovery.
     const firstFrameReady = feedVideoHasFirstFrame(session.current.video);
-    for (let offset = 1; firstFrameReady && offset <= 3; offset++) {
+    for (let offset = 1; firstFrameReady && offset <= 2; offset++) {
       const index = session.centerIndex + offset;
       if (!state.feed.items[index] || cachedFeedPlayback(index)) continue;
       const lastTry = session.metadataTries.get(index) ?? -Infinity;
@@ -1802,7 +1802,7 @@ async function runFeedWarmup(session) {
     if (!valid()) return;
     session.statuses = new Map((statuses || []).map(status => [`${status.episodeId}:${status.quality}`, status]));
     if (items.length && nextSlot && !nextSlot.preparing) {
-      // Only i+1 needs a decoder. i+2/i+3 warm the SAME local HLS cache and
+      // Only i+1 needs a decoder. i+2 warms the SAME local HLS cache and
       // acquire a decoder when the three-element carousel rotates to them.
       prepareFeedSlot(nextSlot, session.centerIndex + 1, false, null, true)
         .catch(err => console.warn('feed next warmup failed:', err));
@@ -3765,10 +3765,25 @@ async function loadFeed(reset = false, channel = '', forceRefresh = false) {
   try {
     const queryCursor = forceRefresh ? 'refresh' : (reset ? '' : state.feed.cursor);
     const method = reset ? 'GetRecommendFeed' : 'GetRecommendFeedBatch';
-    const res = await apiCall(method, state.feed.channel, queryCursor, reset ? 1 : 12);
+    let res = null;
+    if (reset && !forceRefresh && state.feed.channel !== '关注') {
+      try {
+        res = await apiCall('RestoreRecommendFeed', state.feed.channel);
+      } catch (err) {
+        console.warn('restore recommend queue failed:', err);
+      }
+      if (requestToken !== feedRequestToken) return;
+    }
+    if (!res?.items?.length) {
+      res = await apiCall(method, state.feed.channel, queryCursor, reset ? 1 : 12);
+    }
     recordFeedDiagnostic('catalog-response', { durationMs: Math.round(performance.now() - requestedAt),
       itemCount: res?.items?.length || 0, reason: requestToken === feedRequestToken ? 'current' : 'stale' });
     if (requestToken !== feedRequestToken) return;
+
+    // Even a fully filtered batch advances the stream. An empty cursor also
+    // clears an expired stream so a retry can use the persisted continuation.
+    if (res) state.feed.cursor = res.cursor || '';
 
     if (!res || !res.items || res.items.length === 0) {
       showFeedSkeleton(false);
@@ -3784,9 +3799,8 @@ async function loadFeed(reset = false, channel = '', forceRefresh = false) {
       return;
     }
 
-    if (reset) {
+    if (reset || state.feed.items.length === 0) {
       state.feed.items = res.items;
-      state.feed.cursor = res.cursor || '';
       state.feed.hasMore = Boolean(res.hasMore);
       state.feed.emptyFeedPages = 0;
       if (state.currentView === 'recommend') {
@@ -3799,7 +3813,6 @@ async function loadFeed(reset = false, channel = '', forceRefresh = false) {
       const existingIds = new Set(state.feed.items.map(it => it.id));
       const newItems = res.items.filter(it => !existingIds.has(it.id));
       state.feed.items.push(...newItems);
-      state.feed.cursor = res.cursor || '';
       state.feed.hasMore = Boolean(res.hasMore);
       if (newItems.length > 0) state.feed.emptyFeedPages = 0;
       else state.feed.emptyFeedPages++;
@@ -3892,10 +3905,21 @@ function activateFeedDrama(drama, itemIndex, slot = null) {
 }
 
 function requestFeedDramaMetadata(slot) {
-  if (!slot || slot.metadataRequested || state.currentView !== 'recommend' ||
+  if (!slot || state.currentView !== 'recommend' ||
       feedSlots[feedSlotCurr] !== slot || !feedVideoHasFirstFrame(slot.video)) return;
   const drama = state.feed.items[slot.itemIndex];
   if (!drama || drama.id !== slot.seriesId) return;
+  // A fetched or offscreen preloaded card is still pending. Remove it from
+  // the durable queue only after it has actually appeared in the foreground.
+  if (!slot.queueConsumed && state.feed.channel !== '关注') {
+    slot.queueConsumed = true;
+    const token = slot.loadToken;
+    apiCall('ConsumeRecommendFeedItem', state.feed.channel, drama.id).catch(err => {
+      if (slot.loadToken === token) slot.queueConsumed = false;
+      console.warn('consume recommend queue item failed:', err);
+    });
+  }
+  if (slot.metadataRequested) return;
   if (!state.feed.hasStartedPlayback) {
     state.feed.hasStartedPlayback = true;
     recordFeedPlaybackMetric(slot.itemIndex, 'startup');

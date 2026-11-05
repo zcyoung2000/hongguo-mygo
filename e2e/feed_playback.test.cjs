@@ -36,6 +36,7 @@ function harness() {
     clearFeedSlot: slot => {
       slot.loadToken = (slot.loadToken || 0) + 1;
       slot.ready = false;
+      slot.queueConsumed = false;
       slot.video.src = '';
       slot.preparing = null;
     }
@@ -113,7 +114,7 @@ test('cold-start playback gets the first frame before requesting series decorati
   slot.video.onloadeddata();
   slot.video.onplaying();
   await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(calls.map(call => call[0]), ['PlayEpisode', 'detail']);
+  assert.deepEqual(calls.map(call => call[0]), ['PlayEpisode', 'ConsumeRecommendFeedItem', 'detail']);
 });
 
 test('foreground preparation exposes loading before playback metadata returns', async () => {
@@ -128,6 +129,27 @@ test('foreground preparation exposes loading before playback metadata returns', 
   assert.ok(loadingUpdates > 0, 'a slow SDK reply must not leave the visible page without feedback');
   resolve(playback());
   await pending;
+});
+
+test('only a visible foreground frame consumes a pending recommendation', async () => {
+  const c = harness();
+  const current = videoSlot();
+  const next = videoSlot();
+  Object.assign(current, { itemIndex: 0, seriesId: 'series-a' });
+  Object.assign(next, { itemIndex: 1, seriesId: 'series-b' });
+  Object.assign(next.video, { src: 'http://localhost/next', readyState: 4, videoWidth: 320 });
+  c.feedSlots = [current, next];
+  const calls = [];
+  c.apiCall = (...args) => { calls.push(args); return Promise.resolve(); };
+  c.requestFeedDramaMetadata(next);
+  c.requestFeedDramaMetadata(current);
+  assert.equal(calls.length, 0, 'preloading and unresolved first frames must remain pending');
+  Object.assign(current.video, { src: 'http://localhost/current', readyState: 4, videoWidth: 320 });
+  c.requestFeedDramaMetadata(current);
+  c.requestFeedDramaMetadata(current);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], 'ConsumeRecommendFeedItem');
+  assert.equal(calls[0][2], 'series-a');
 });
 
 test('the initial uncached video opens progressive fragments through MSE and reuses its blob decoder', async () => {
@@ -416,7 +438,7 @@ test('revisiting a resident frame after metadata expiry preserves its decoder', 
   const c = harness();
   const slot = videoSlot();
   Object.assign(slot, { itemIndex: 0, seriesId: 'series-a', quality: '720p',
-    ready: true, streamUrl: 'http://localhost/cached.m3u8', expiresAt: Date.now() - 1 });
+    ready: true, queueConsumed: true, streamUrl: 'http://localhost/cached.m3u8', expiresAt: Date.now() - 1 });
   Object.assign(slot.video, { src: slot.streamUrl, readyState: 4, videoWidth: 320 });
   c.feedSlots = [slot];
   c.apiCall = () => { throw new Error('resident playback must not renegotiate'); };

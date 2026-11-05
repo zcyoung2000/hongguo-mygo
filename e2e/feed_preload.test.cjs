@@ -38,7 +38,7 @@ test('uses spare buffer progressively, with closer playable prefixes required fi
   assert.equal(decide({ now: 3000 }).depth, 1);
   assert.equal(decide({ now: 4000, nextReady: true }).depth, 2);
   assert.equal(decide({ now: 5000, nextReady: true }).depth, 2);
-  assert.equal(decide({ now: 6000, nextReady: true, secondReady: true }).depth, 3);
+  assert.equal(decide({ now: 6000, nextReady: true, secondReady: true }).depth, 2);
 });
 
 test('cold start reserves all media bandwidth for the first video', () => {
@@ -94,7 +94,7 @@ test('2x playback needs twice as much media buffer to expand the preload window'
 });
 
 test('a fully buffered short video can use idle bandwidth, within network and list caps', () => {
-  for (const [profile, expected] of [['weak', 1], ['unknown', 2], ['medium', 2], ['strong', 3]]) {
+  for (const [profile, expected] of [['weak', 1], ['unknown', 2], ['medium', 2], ['strong', 2]]) {
     const decide = policy();
     for (const now of [0, 1000, 3000]) decide({ now, profile, complete: true, bufferSec: 2, nextReady: true, secondReady: true });
     assert.equal(decide({ now: 6000, profile, complete: true, bufferSec: 1, nextReady: true, secondReady: true }).depth, expected);
@@ -110,7 +110,7 @@ test('a transient network downgrade cannot immediately reopen farther downloads'
   for (const now of [8000, 9000]) {
     assert.equal(decide({ now, nextReady: true, secondReady: true }).depth, 1);
   }
-  assert.equal(decide({ now: 10000, nextReady: true, secondReady: true }).depth, 3);
+  assert.equal(decide({ now: 10000, nextReady: true, secondReady: true }).depth, 2);
 });
 
 function scheduler() {

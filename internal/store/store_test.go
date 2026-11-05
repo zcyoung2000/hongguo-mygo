@@ -200,6 +200,53 @@ func TestFeedProgressAndSeenGeneration(t *testing.T) {
 	}
 }
 
+func TestRecentFeedSeenIDsSuppressesImmediateRepeatsAcrossGenerations(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	if err := store.SaveFeedSeenIDs("test", 1, []string{"a", "b"}); err != nil {
+		t.Fatalf("SaveFeedSeenIDs generation 1 failed: %v", err)
+	}
+	seen := store.GetRecentFeedSeenIDs("test", 2)
+	if !seen["a"] || !seen["b"] {
+		t.Fatalf("generation 2 should inherit generation 1: %v", seen)
+	}
+
+	if err := store.SaveFeedSeenIDs("test", 2, []string{"c"}); err != nil {
+		t.Fatalf("SaveFeedSeenIDs generation 2 failed: %v", err)
+	}
+	seen = store.GetRecentFeedSeenIDs("test", 3)
+	if !seen["a"] || !seen["b"] || !seen["c"] {
+		t.Fatalf("generation 3 should inherit the previous two generations: %v", seen)
+	}
+
+	if err := store.SaveFeedSeenIDs("test", 3, []string{"d"}); err != nil {
+		t.Fatalf("SaveFeedSeenIDs generation 3 failed: %v", err)
+	}
+	seen = store.GetRecentFeedSeenIDs("test", 1)
+	if !seen["a"] || !seen["b"] || !seen["c"] || !seen["d"] {
+		t.Fatalf("generation 1 should inherit all three retained generations: %v", seen)
+	}
+
+	if err := store.SaveFeedProgress("test", "", 3); err != nil {
+		t.Fatalf("SaveFeedProgress failed: %v", err)
+	}
+	if _, err := store.StartNextFeedGeneration("test"); err != nil {
+		t.Fatalf("StartNextFeedGeneration failed: %v", err)
+	}
+	seen = store.GetRecentFeedSeenIDs("test", 4)
+	progress, progressOK := store.GetFeedProgress("test")
+	if !progressOK || progress.Generation != 4 {
+		t.Fatalf("next progress mismatch: ok=%v progress=%+v", progressOK, progress)
+	}
+	if !seen["c"] || !seen["d"] || seen["a"] || seen["b"] {
+		t.Fatalf("generation rotation should drop only the oldest generation: %v", seen)
+	}
+}
+
 func TestCachedEpisodeIndex(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {

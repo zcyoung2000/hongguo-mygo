@@ -38,13 +38,19 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 		// A full local cache can start instantly without a quality probe or
 		// another episode-list round trip. Series details/comments still load
 		// in the background on the frontend.
-		if cached, ok := s.store.GetCachedEpisodeAt(seriesID, quality, episodeNum); ok &&
-			cached.EpisodeNum == episodeNum &&
-			s.media.HasCachedEpisode(cached.EpisodeID, cached.Quality) {
+		candidates, err := s.store.GetCachedEpisodesAt(seriesID, normalizeVideoQuality(quality), episodeNum)
+		if err != nil {
+			return nil, err
+		}
+		for _, cached := range candidates {
+			if !s.media.HasCachedEpisode(cached.EpisodeID, cached.Quality) {
+				continue
+			}
 			episodeID = cached.EpisodeID
 			episodeNum = cached.EpisodeNum
 			quality = cached.Quality
 			cachedStart = true
+			break
 		}
 	}
 

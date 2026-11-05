@@ -327,19 +327,19 @@ func testAdaptivePreloadStreaming(t *testing.T, ms *MediaServer, release func())
 	for time.Now().Before(deadline) {
 		version++
 		statuses = ms.SetFeedPreloadWindow(version, "710000000000001", "720p", items)
-		if statuses[2].Active {
-			t.Fatal("third speculative download competed with current + next + second-next")
+		if len(statuses) != 2 {
+			t.Fatalf("preload window must admit at most two videos: %+v", statuses)
 		}
-		if statuses[1].Active && statuses[0].CachedSeconds < 6 {
-			t.Fatal("second-next started before the immediate next had a playable prefix")
+		if statuses[1].Active && !statuses[0].Complete {
+			t.Fatal("second-next competed with the incomplete immediate next")
 		}
-		if statuses[1].CachedSeconds >= 6 && hlsPlaylistReady(current.playlistPath) {
+		if statuses[0].CachedSeconds >= 6 && hlsPlaylistReady(current.playlistPath) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(statuses) != 3 || statuses[0].CachedSeconds < 6 || statuses[1].CachedSeconds < 6 {
-		t.Fatalf("next two videos did not warm while current was still downloading: %+v", statuses)
+	if len(statuses) != 2 || statuses[0].CachedSeconds < 6 || statuses[1].CachedSeconds != 0 {
+		t.Fatalf("preload must prioritize completing the immediate next: %+v", statuses)
 	}
 	if statuses[0].Complete || statuses[1].Complete || hlsPlaylistComplete(current.playlistPath) {
 		t.Fatal("upstream completed before the adaptive scheduling assertions")
@@ -375,6 +375,21 @@ func testAdaptivePreloadStreaming(t *testing.T, ms *MediaServer, release func())
 	defer cancel()
 	if err := promoted.wait(waitCtx); err != nil || !hlsPlaylistComplete(promoted.playlistPath) {
 		t.Fatalf("promoted video did not finish normally after backpressure: %v", err)
+	}
+	version++
+	statuses = ms.SetFeedPreloadWindow(version, "710000000000001", "720p", items)
+	if !statuses[0].Complete {
+		t.Fatal("completed nearest cache was not reused")
+	}
+	farKey := PrefetchTaskKey(PrefetchTask{EpisodeID: items[1].EpisodeID, Quality: "720p"})
+	ms.hlsMu.Lock()
+	far := ms.hlsStreams[farKey]
+	ms.hlsMu.Unlock()
+	if far == nil {
+		t.Fatal("second-next did not start after the nearest episode completed")
+	}
+	if err := far.wait(waitCtx); err != nil || !hlsPlaylistComplete(far.playlistPath) {
+		t.Fatalf("second-next did not finish: %v", err)
 	}
 }
 
