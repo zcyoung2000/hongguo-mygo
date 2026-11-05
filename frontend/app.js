@@ -2015,15 +2015,29 @@ async function waitForMygoBridge(timeoutMs = 5000) {
   }
 }
 
+// Keyboard actions stay immediate; pointer feedback may use subtle motion.
+// Capture runs before control handlers, including synthetic clicks from keys.
+document.addEventListener('keydown', () => {
+  document.documentElement.dataset.motionInput = 'keyboard';
+}, true);
+document.addEventListener('pointerdown', () => {
+  document.documentElement.dataset.motionInput = 'pointer';
+}, true);
+
+// Toasts remain mounted so a new message can reverse an in-progress exit.
+function revealToast(toast, duration) {
+  clearTimeout(toast._timer);
+  toast.classList.add('is-visible');
+  toast._timer = setTimeout(() => {
+    toast.classList.remove('is-visible');
+  }, duration);
+}
+
 // Toast notification
 function showToast(msg) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
-  toast.style.display = 'block';
-  clearTimeout(toast._timer);
-  toast._timer = setTimeout(() => {
-    toast.style.display = 'none';
-  }, 2200);
+  revealToast(toast, 2200);
 }
 
 // ==========================================================================
@@ -3696,7 +3710,6 @@ function initSettingsEvents() {
 // 1. Recommend View (Vertical Swipe Video Feed - TikTok/Hongguo Style)
 // ==========================================================================
 
-let feedHintTimer = null;
 let feedRequestToken = 0;
 function showFeedHint(text, spinner = false, duration = 2200) {
   const toast = document.getElementById('feed-hint-toast');
@@ -3706,12 +3719,7 @@ function showFeedHint(text, spinner = false, duration = 2200) {
 
   txt.textContent = text;
   if (spin) spin.style.display = spinner ? 'inline-block' : 'none';
-  toast.style.display = 'flex';
-
-  clearTimeout(feedHintTimer);
-  feedHintTimer = setTimeout(() => {
-    toast.style.display = 'none';
-  }, duration);
+  revealToast(toast, duration);
 }
 
 async function loadRecommend() {

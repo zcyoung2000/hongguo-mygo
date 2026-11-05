@@ -165,7 +165,7 @@
             <!-- Shared rail, controls and episode drawer are mounted by player-chrome.js -->
 
             <!-- Floating Feedback Hint Toast -->
-            <div class="feed-hint-toast" id="feed-hint-toast" style="display: none;">
+            <div class="feed-hint-toast" id="feed-hint-toast" role="status" aria-live="polite" aria-atomic="true">
               <svg class="macos-spinner-sm" id="feed-hint-spinner" style="display: none;" viewBox="0 0 32 32" width="16" height="16" fill="none" aria-hidden="true">
                 <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="1.0" transform="rotate(0 16 16)" />
                 <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.93" transform="rotate(30 16 16)" />
@@ -720,7 +720,7 @@
     </div>
 
     <!-- Notification Toast -->
-    <div class="toast" id="toast" style="display: none;"></div>
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
     <!-- Official Episode Comment Sheet -->
     <div class="comment-sheet-overlay" id="comment-sheet-overlay" style="display: none;">
