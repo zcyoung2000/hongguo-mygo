@@ -200,6 +200,19 @@ test('an explicit pending swipe keeps its target decoder despite pressure on the
   assert.equal(calls.find(call => call[0] === 'UpdateFeedPreloadWindow').at(-1).length, 1);
 });
 
+test('a handoff readiness transition with buffered media does not cancel the next preload', async () => {
+  const { c, session, calls } = scheduler();
+  session.current.video.readyState = 2;
+  session.current.mediaWaiting = true;
+  session.policy = { depth: 1 };
+  c.feedVideoBufferAhead = () => 8;
+  c.feedSlots[1].itemIndex = 1;
+  await c.runFeedWarmup(session);
+  assert.equal(session.policy.depth, 1);
+  assert.equal(calls.filter(call => call[0] === 'clear').length, 0);
+  assert.equal(calls.find(call => call[0] === 'UpdateFeedPreloadWindow').at(-1).length, 1);
+});
+
 test('backpressure preserves an already cached adjacent decoder for reverse navigation', async () => {
   const { c, session, calls } = scheduler();
   Object.assign(c.feedSlots[1], { itemIndex: 1, completeCached: true, video: { src: 'local-cached' } });

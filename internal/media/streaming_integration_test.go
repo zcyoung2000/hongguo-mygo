@@ -330,16 +330,16 @@ func testAdaptivePreloadStreaming(t *testing.T, ms *MediaServer, release func())
 		if len(statuses) != 2 {
 			t.Fatalf("preload window must admit at most two videos: %+v", statuses)
 		}
-		if statuses[1].Active && !statuses[0].Complete {
-			t.Fatal("second-next competed with the incomplete immediate next")
+		if statuses[1].Active && !statuses[0].Complete && statuses[0].CachedSeconds < 6 {
+			t.Fatal("second-next started before the nearest video had a playable prefix")
 		}
-		if statuses[0].CachedSeconds >= 6 && hlsPlaylistReady(current.playlistPath) {
+		if statuses[1].CachedSeconds >= 6 && hlsPlaylistReady(current.playlistPath) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(statuses) != 2 || statuses[0].CachedSeconds < 6 || statuses[1].CachedSeconds != 0 {
-		t.Fatalf("preload must prioritize completing the immediate next: %+v", statuses)
+	if len(statuses) != 2 || statuses[0].CachedSeconds < 6 || statuses[1].CachedSeconds < 6 {
+		t.Fatalf("next two videos must warm before the nearest finishes downloading: %+v", statuses)
 	}
 	if statuses[0].Complete || statuses[1].Complete || hlsPlaylistComplete(current.playlistPath) {
 		t.Fatal("upstream completed before the adaptive scheduling assertions")

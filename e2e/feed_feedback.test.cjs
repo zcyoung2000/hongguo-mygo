@@ -18,7 +18,7 @@ function harness() {
     buffered: { length: 1, start: () => 0, end: () => 30 } });
   const slot = { id: 0, itemIndex: 0, video, metricPreparedAt: 1, metricRebufferMS: 0, metricRebufferCount: 0 };
   const nodes = {
-    'feed-play-indicator': { style: {} }, 'feed-loader-text': { textContent: '' },
+    'feed-play-indicator': { style: {} },
     'feed-loader': { style: { display: 'none' }, setAttribute: (name, value) => { attributes[name] = value; } },
     'feed-stage': { classList: { toggle: (name, value) => classes.set(name, value), remove: name => classes.delete(name) } }
   };
@@ -54,23 +54,22 @@ test('a real waiting event shows delayed feedback, then playing clears it', () =
   assert.equal(h.nodes['feed-loader'].style.display, 'none');
   h.advance(1);
   assert.equal(h.nodes['feed-loader'].style.display, 'flex');
-  assert.equal(h.nodes['feed-loader-text'].textContent, '视频缓冲中');
+  assert.equal(h.attributes['aria-label'], '加载中');
   h.video.readyState = 4;
   h.video.dispatchEvent(new Event('playing'));
   assert.equal(h.nodes['feed-loader'].style.display, 'none');
   assert.equal(h.classes.get('is-buffering'), false);
   assert.ok(h.traces.includes('media-playing'));
 });
-test('catalog waits have feedback even while the outgoing video is fully buffered', () => {
-  const h = harness();
-  h.c.feedSwitchWaitReason = 'catalog-page';
-  h.c.updateFeedPlayIndicator();
-  h.advance(200);
-  assert.equal(h.nodes['feed-loader'].style.display, 'flex');
-  assert.equal(h.attributes['aria-label'], '正在加载下一条推荐');
-  h.c.feedSwitchWaitReason = '';
-  h.c.updateFeedPlayIndicator();
-  assert.equal(h.nodes['feed-loader'].style.display, 'none');
+test('preparing the next frame or catalog page does not cover a healthy playing video', () => {
+  for (const reason of ['catalog-page', 'first-frame']) {
+    const h = harness();
+    h.c.feedSwitchWaitReason = reason;
+    h.c.updateFeedPlayIndicator();
+    h.advance(500);
+    assert.equal(h.nodes['feed-loader'].style.display, 'none');
+    assert.equal(h.classes.get('is-buffering'), false);
+  }
 });
 test('short waits, a user pause, or leaving the feed cannot leave a spinner behind', () => {
   for (const action of ['playing', 'pause', 'leave']) {

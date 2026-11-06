@@ -232,7 +232,6 @@ function createLoader(text = '正在加载...') {
     <div class="video-loader" role="status" aria-label="${escapeHtml(text)}">
       <div class="macos-loader-hud">
         ${MACOS_SPINNER_SVG}
-        ${text ? `<span class="macos-loader-text">${escapeHtml(text)}</span>` : ''}
       </div>
     </div>
   `;
@@ -1768,7 +1767,11 @@ async function runFeedWarmup(session) {
     session.policy = decideFeedPreload({
       now, bufferSec: firstFrameReady ? ahead : 0, rate: video.playbackRate, profile: effectiveFeedNetworkProfile(),
       complete: firstFrameReady && feedSlotIsFullyBuffered(session.current),
+      // WebKit briefly lowers readyState during a handoff/seek even when a
+      // playable prefix is buffered. Do not cancel and rebuild the next HLS
+      // rendition just because its new foreground decoder is catching up.
       waiting: video.readyState < HTMLMediaElement.HAVE_FUTURE_DATA &&
+        ahead / Math.max(0.25, Number(video.playbackRate) || 1) < 1.5 &&
         !video.ended && (video.currentTime > 0 || session.policy.depth > 0),
       nextReady: ready(1), secondReady: ready(2),
       available: state.feed.items.length - session.centerIndex - 1
@@ -3794,7 +3797,6 @@ async function loadFeed(reset = false, channel = '', forceRefresh = false) {
       if (!reset) state.feed.emptyFeedPages++;
       if (reset) {
         if (!canRetry) showFeedHint('暂无关注内容', false, 3000);
-        else showFeedHint('正在换个推荐流...', true, 2200);
       }
       return;
     }
@@ -4258,7 +4260,6 @@ function queueFeedSwitch(dir, request = null) {
   const discrete = request?.source === 'keyboard' && !request.repeat;
   if (discrete && feedQueuedSwitches.length >= 4) {
     recordFeedDiagnostic('navigation-ignored', { inputId: request.id, reason: 'queue-full', queueDepth: 4 });
-    showFeedHint('正在切换，请稍候', false, 1000);
     return;
   }
   if (discrete && feedQueuedSwitches.length < 4) feedQueuedSwitches.push({ dir, request });
@@ -5390,8 +5391,8 @@ function updateFeedPlayIndicator() {
 
   const slot = feedSlotForVideo(feedVideo);
   const isFeedBuffering = state.currentView === 'recommend' && !state.feed.userPaused &&
-    (Boolean(feedSwitchWaitReason) || (state.feed.items.length > 0 && feedVideo &&
-      !feedVideo.error && !slot?.failed && (!feedVideo.src || feedVideo.readyState < 3 || slot?.mediaWaiting)));
+    state.feed.items.length > 0 && feedVideo && !feedVideo.ended &&
+    !feedVideo.error && !slot?.failed && (!feedVideo.src || feedVideo.readyState < 3 || slot?.mediaWaiting);
 
   if (!isFeedBuffering) {
     if (feedBufferingTimer) clearTimeout(feedBufferingTimer);
@@ -5407,13 +5408,7 @@ function updateFeedPlayIndicator() {
       updateFeedPlayIndicator();
     }, 200);
   }
-  const label = feedSwitchWaitReason === 'catalog-page' ? '正在加载下一条推荐' :
-    (feedSwitchWaitReason ? '正在准备下一条视频' : '视频缓冲中');
-  loader?.setAttribute('aria-label', label);
-  const loaderText = document.getElementById('feed-loader-text');
-  if (loaderText) loaderText.textContent = label;
-
-
+  loader?.setAttribute('aria-label', '加载中');
   if (feedStage) {
     feedStage.classList.toggle('is-buffering', Boolean(isFeedBuffering));
   }
@@ -5632,14 +5627,12 @@ function initFeedControls() {
       );
       const total = state.feed.totalEpisodes || (state.feed.episodes ? state.feed.episodes.length : 1);
       if (state.feed.episodeNum < total) {
-        showFeedHint(`正在进入第 ${state.feed.episodeNum + 1} 集...`, true, 2200);
         const nextNum = state.feed.episodeNum + 1;
         enterSeriesPlayer(state.feed.seriesId, nextNum);
       } else {
         const seriesId = state.feed.seriesId;
         playNextSeason(seriesId, 'feed').then(started => {
           if (started || state.feed.seriesId !== seriesId) return;
-          showFeedHint('本剧已播放完毕，即将进入下一部', false, 2500);
           if (feedNextDramaTimer) clearTimeout(feedNextDramaTimer);
           feedNextDramaTimer = setTimeout(() => {
             feedNextDramaTimer = null;
@@ -8039,7 +8032,6 @@ function initPlayerControls() {
     }
     persistProgress();
     if (state.player.episodeNum < state.player.totalEpisodes) {
-      showToast(`正在自动连播第 ${state.player.episodeNum + 1} 集...`);
       playEpisodeNumber(state.player.episodeNum + 1);
     } else {
       const seriesId = state.player.seriesId;
@@ -8254,12 +8246,9 @@ async function playNextSeason(seriesId, source = 'player') {
     if (!next?.id || (source === 'player' &&
       (!isPlayerRequestCurrent(requestToken) || state.player.seriesId !== seriesId))) return false;
 
-    const title = next.title || '下一季';
     if (source === 'feed') {
-      showFeedHint(`正在自动播放下一季：${title}`, true, 2600);
       enterSeriesPlayer(next.id, 1);
     } else {
-      showToast(`正在自动播放下一季：${title}`);
       await openPlayer(next.id, 1);
     }
     return true;

@@ -142,17 +142,16 @@ func (ms *MediaServer) SetFeedPreloadWindow(version int64, currentEpisodeID, cur
 	for i, task := range tasks {
 		statuses[i] = ms.feedPreloadStatus(task)
 	}
-	// A reverse swipe can move an active download to second place. Give the
-	// newly nearest episode priority rather than keeping both writers busy.
-	if len(tasks) == 2 && !statuses[0].Complete && statuses[1].Active {
+	// Protect the nearest playable prefix, then warm the second video while
+	// both continue towards complete caches. Waiting for the entire nearest
+	// episode leaves rapid consecutive swipes with nothing ready to play.
+	nearestReady := len(statuses) > 0 && (statuses[0].Complete || statuses[0].CachedSeconds >= 6)
+	if len(tasks) == 2 && !nearestReady && statuses[1].Active {
 		ms.stopFeedPreload(PrefetchTaskKey(tasks[1]))
 		statuses[1].Active = false
 	}
 	for i, task := range tasks {
-		// Complete the nearest episode before spending bandwidth farther ahead.
-		// Only complete renditions survive a restart, so a collection of short
-		// prefixes cannot provide a useful local startup queue.
-		if i > 0 && !statuses[i-1].Complete {
+		if i > 0 && !statuses[i-1].Complete && statuses[i-1].CachedSeconds < 6 {
 			break
 		}
 		if statuses[i].Complete || statuses[i].Active {

@@ -91,25 +91,44 @@ func TestFeedPreloadWindowRejectsInvalidEpisodeIDsWithoutStartingWork(t *testing
 	}
 }
 
-func TestFeedPreloadReorderedWindowPrioritizesCompletingNearest(t *testing.T) {
-	ms := &MediaServer{cacheDir: t.TempDir(), hlsStreams: make(map[string]*hlsStream)}
-	items := []FeedPreloadItem{
-		{EpisodeID: "710000000000002", Quality: "720p"},
-		{EpisodeID: "710000000000003", Quality: "720p"},
-	}
-	canceled := make(map[string]bool)
-	for _, item := range items {
-		key := PrefetchTaskKey(PrefetchTask{EpisodeID: item.EpisodeID, Quality: item.Quality})
-		done := make(chan struct{})
-		dir := ms.hlsCacheDir(item.EpisodeID, item.Quality)
-		playlist := writeHLSFixture(t, dir, false)
-		ms.hlsStreams[key] = &hlsStream{key: key, dir: dir, playlistPath: playlist, done: done,
-			cancel: func() { canceled[key] = true; close(done) }}
-	}
-	statuses := ms.SetFeedPreloadWindow(1, "710000000000001", "720p", items)
-	nearKey := PrefetchTaskKey(PrefetchTask{EpisodeID: items[0].EpisodeID, Quality: "720p"})
-	farKey := PrefetchTaskKey(PrefetchTask{EpisodeID: items[1].EpisodeID, Quality: "720p"})
-	if len(statuses) != 2 || !statuses[0].Active || statuses[1].Active || canceled[nearKey] || !canceled[farKey] {
-		t.Fatalf("farther download competed with the nearest episode: %+v, canceled=%v", statuses, canceled)
+func TestFeedPreloadReorderedWindowProtectsNearestPrefix(t *testing.T) {
+	for _, prefixReady := range []bool{false, true} {
+		t.Run(map[bool]string{false: "nearest still cold", true: "nearest playable"}[prefixReady], func(t *testing.T) {
+			ms := &MediaServer{cacheDir: t.TempDir(), hlsStreams: make(map[string]*hlsStream)}
+			items := []FeedPreloadItem{
+				{EpisodeID: "710000000000002", Quality: "720p"},
+				{EpisodeID: "710000000000003", Quality: "720p"},
+			}
+			canceled := make(map[string]bool)
+			for _, item := range items {
+				key := PrefetchTaskKey(PrefetchTask{EpisodeID: item.EpisodeID, Quality: item.Quality})
+				done := make(chan struct{})
+				dir := ms.hlsCacheDir(item.EpisodeID, item.Quality)
+				playlist := writeHLSFixture(t, dir, false)
+				if prefixReady {
+					data, err := os.ReadFile(playlist)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(playlist, []byte(strings.ReplaceAll(string(data), "#EXTINF:2,", "#EXTINF:6,")), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				ms.hlsStreams[key] = &hlsStream{key: key, dir: dir, playlistPath: playlist, done: done,
+					cancel: func() { canceled[key] = true; close(done) }}
+			}
+			statuses := ms.SetFeedPreloadWindow(1, "710000000000001", "720p", items)
+			nearKey := PrefetchTaskKey(PrefetchTask{EpisodeID: items[0].EpisodeID, Quality: "720p"})
+			farKey := PrefetchTaskKey(PrefetchTask{EpisodeID: items[1].EpisodeID, Quality: "720p"})
+			if len(statuses) != 2 || !statuses[0].Active || statuses[1].Active != prefixReady || canceled[nearKey] || canceled[farKey] == prefixReady {
+				t.Fatalf("preload should protect cold prefixes and keep playable renditions running: %+v, canceled=%v", statuses, canceled)
+			}
+			if prefixReady {
+				ms.SetFeedPreloadWindow(2, "710000000000001", "720p", items)
+				if len(canceled) != 0 {
+					t.Fatalf("a repeated window restarted warmed media: %v", canceled)
+				}
+			}
+		})
 	}
 }
