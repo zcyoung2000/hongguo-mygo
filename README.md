@@ -6,7 +6,7 @@ A native macOS client for short dramas, built with Go.
 
 ## Overview
 
-myguo embeds a vanilla JavaScript frontend in a native WKWebView window, communicates with Go through a typed IPC bridge, and plays media through a local streaming server. Catalog and playback integration is provided by the OpenHongguo SDK.
+myguo now uses a MyGo GPU-drawn native UI as the application shell: sidebar navigation, search, catalogs, series details, episode selection, and local history/favorites/reservations call Go services directly. The player area remains an embedded WebView so audible playback, episode switching, progress, favorites, PiP, and media controls keep their proven browser pipeline. Media still flows through the local MediaServer and OpenHongguo SDK.
 
 The project is intended for personal technical study and local use. It is not affiliated with or endorsed by the upstream content provider.
 
@@ -14,9 +14,9 @@ The project is intended for personal technical study and local use. It is not af
 
 | Area | Description |
 | --- | --- |
-| Native desktop UI | Hidden-inset title bar, sidebar navigation, dark theme, responsive grids, and inline SVG icons. |
+| Native desktop UI | MyGo `ui` GPU-drawn shell with hidden-inset title bar, sidebar navigation, dark theme, responsive/virtualized grids, and SVG icons. |
 | Discovery | Recommendations, search and suggestions, filters, rankings, new-release schedules, actor pages, and series details. |
-| Account data | Profile, history, favorites, likes, and reservations from authenticated upstream endpoints. |
+| Local library | History, favorites, likes, and reservations stored in SQLite; the native shell reads and writes these records directly through existing services. |
 | Comments and danmaku | Episode comments, replies, timed danmaku playback, sending, and likes. |
 | Playback | Episode lists, quality selection, progress saving, continuous playback, and keyboard controls. |
 | Media pipeline | A local server proxies video, decrypts protected streams through FFmpeg, and supports HTTP range requests. |
@@ -66,13 +66,16 @@ Application data is stored under `~/Library/Application Support/myguo/`. SQLite 
 ## Architecture
 
 ```text
-WKWebView frontend
+MyGo native UI (`ui.View`)
         |
-        v
-MyGo IPC bridge
+        +--> Go services --> OpenHongguo SDK and request helpers
+        |         |
+        |         +--> SQLite user data
         |
-        v
-myguo Go services --> OpenHongguo SDK and request helpers
+        +--> Embedded player WebView
+                  |
+                  v
+            focused player bridge --> myguo Go services
         |
         +--> SQLite user data
         +--> MediaServer and FFmpeg
@@ -84,6 +87,9 @@ myguo Go services --> OpenHongguo SDK and request helpers
 go mod tidy
 go test ./...
 CGO_ENABLED=0 go build -o /dev/null .
+node frontend/player-bridge.test.js
+go test -race ./internal/uiapp
+node --test e2e/*.test.cjs
 ```
 
 When changing the UI, keep list views in responsive card grids, use inline SVG rather than emoji or bitmap glyphs, and preserve native window drag behavior.

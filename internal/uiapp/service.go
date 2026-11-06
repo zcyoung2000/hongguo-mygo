@@ -1,0 +1,737 @@
+package uiapp
+
+import (
+	"context"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/egoist/mygo/ui"
+	"myguo/internal/ipc"
+)
+
+const serviceTimeout = 15 * time.Second
+
+type CatalogItem struct {
+	ResumeEpisode  int
+	ResumePosition float64
+	ID             string
+	Title          string
+	Description    string
+	CoverURL       string
+	EpisodeCount   int
+	Category       string
+	Rank           int
+	Heat           string
+	Subtitles      []string
+}
+
+type CatalogPage struct {
+	Items   []CatalogItem
+	Cursor  string
+	HasMore bool
+	Loading bool
+	Error   string
+}
+
+type Detail struct {
+	ID             string
+	Title          string
+	Description    string
+	CoverURL       string
+	Tags           []string
+	StatusText     string
+	Category       string
+	PlayCount      int64
+	EpisodeCount   int
+	Episodes       []CatalogItem
+	Favorite       bool
+	Reserved       bool
+	Related        []CatalogItem
+	RelatedTitle   string
+	RelatedLoading bool
+	Loading        bool
+	Error          string
+}
+
+type FilterOption struct {
+	Label string
+	Value string
+}
+
+type FilterRow struct {
+	Title   string
+	Key     string
+	Options []FilterOption
+}
+
+type Library struct {
+	Title       string
+	Description string
+	Empty       bool
+	Loading     bool
+	Error       string
+	Items       []CatalogItem
+}
+
+type Catalog struct {
+	GenreIndex  int
+	Genre       []string
+	Filters     []FilterRow
+	Selection   []int
+	Loading     bool
+	LoadingMore bool
+	Error       string
+	HasMore     bool
+	Cursor      string
+	Items       []CatalogItem
+}
+
+type LibraryTab int
+
+const (
+	libraryHistory LibraryTab = iota
+	libraryFavorites
+	libraryLikes
+	libraryReservations
+)
+
+type LibraryView struct {
+	Tab       LibraryTab
+	History   Library
+	Favorites Library
+	Reserved  Library
+	Likes     Library
+	Grids     [4]*ui.GridState
+	Grid      int
+	Selected  int
+}
+
+// App state and all render snapshots are protected by mu. Network work never holds it.
+type App struct {
+	mu                sync.Mutex
+	generation        uint64
+	catalogGeneration uint64
+	libraryGeneration [4]uint64
+	started           bool
+	resume            CatalogItem
+	service           *ipc.HongguoService
+	player            *PlayerBridge
+	invalidateFn      func()
+	testMode          bool
+	favorite          favoriteProvider
+	detailSource      detailProvider
+	playerSource      playbackProvider
+	historyClear      historyClearer
+
+	view     string
+	seriesID string
+	loading  bool
+	error    string
+	notice   string
+
+	query       string
+	search      CatalogPage
+	catalog     Catalog
+	detail      Detail
+	libraryData libraryProvider
+	library     LibraryView
+	playerOn    bool
+}
+
+func NewApp(service *ipc.HongguoService, player *PlayerBridge) *App {
+	return &App{
+		service: service,
+		player:  player,
+		view:    "discover",
+		catalog: Catalog{Genre: []string{"真人剧", "漫剧", "AI剧"}, HasMore: true},
+	}
+}
+
+type libraryProvider interface {
+	GetHistory(ctx context.Context) ([]ipc.HistoryItem, error)
+	GetFavorites(ctx context.Context) ([]ipc.FavoriteItem, error)
+	GetReservations(ctx context.Context) ([]ipc.ReservationItem, error)
+	GetLikes(ctx context.Context) ([]ipc.LikeItem, error)
+}
+
+type favoriteProvider interface {
+	ToggleFavorite(ctx context.Context, seriesID, title, coverURL, desc string, totalEpisodes int) (bool, error)
+	ToggleReservation(ctx context.Context, seriesID, title, coverURL, note, publishAt string) (bool, error)
+}
+
+type detailProvider interface {
+	GetSeriesPage(ctx context.Context, seriesID string) (*ipc.SeriesDetailPageDTO, error)
+	GetSeriesRelated(ctx context.Context, seriesID string) (*ipc.SeriesCollectionDTO, error)
+	GetFilterPanel(ctx context.Context, genre string) ([]ipc.FilterRowDTO, error)
+	GetDiscover(ctx context.Context, genre string, selections map[string]string, cursor string) (ipc.DiscoverResponse, error)
+}
+
+type historyClearer interface {
+	ClearHistory(ctx context.Context) error
+}
+
+func NewTestApp(player *PlayerBridge) *App {
+	return &App{player: player, view: "discover", catalog: Catalog{Genre: []string{"真人剧", "漫剧", "AI剧"}, HasMore: true}, testMode: true}
+}
+
+func NewLibraryGrids() [4]*ui.GridState {
+	return [4]*ui.GridState{{}, {}, {}, {}}
+}
+
+func (a *App) SetInvalidator(fn func()) {
+	a.mu.Lock()
+	a.invalidateFn = fn
+	a.mu.Unlock()
+	if a.player != nil {
+		a.player.SetInvalidator(fn)
+	}
+}
+func (a *App) SetLibraryGrids(grids [4]*ui.GridState) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.library.Grids = grids
+}
+func (a *App) View() string              { a.mu.Lock(); defer a.mu.Unlock(); return a.view }
+func (a *App) Query() string             { a.mu.Lock(); defer a.mu.Unlock(); return a.query }
+func (a *App) GlobalError() string       { a.mu.Lock(); defer a.mu.Unlock(); return a.error }
+func (a *App) Notice() string            { a.mu.Lock(); defer a.mu.Unlock(); return a.notice }
+func (a *App) PlayerVisible() bool       { a.mu.Lock(); defer a.mu.Unlock(); return a.playerOn }
+func (a *App) SearchState() CatalogPage  { a.mu.Lock(); defer a.mu.Unlock(); return a.search }
+func (a *App) CatalogState() Catalog     { a.mu.Lock(); defer a.mu.Unlock(); return a.catalog }
+func (a *App) LibraryState() LibraryView { a.mu.Lock(); defer a.mu.Unlock(); return a.library }
+func (a *App) DetailState() Detail       { a.mu.Lock(); defer a.mu.Unlock(); return a.detail }
+
+// Called under mu, including by Render. Published slices are replaced, never edited.
+func (a *App) catalogGenre() string {
+	if a.catalog.GenreIndex < 0 || a.catalog.GenreIndex >= len(a.catalog.Genre) {
+		return "short_play"
+	}
+	return []string{"short_play", "comic_series", "ai_series"}[a.catalog.GenreIndex]
+}
+func catalogValues(genre string, rows []FilterRow, selected []int) map[string]string {
+	values := map[string]string{}
+	for index, row := range rows {
+		if index < len(selected) && selected[index] > 0 && selected[index] < len(row.Options) {
+			values[row.Key] = row.Options[selected[index]].Value
+		}
+	}
+	if len(values) == 0 {
+		values["genre"] = genre
+	}
+	return values
+}
+func (a *App) SelectGenre(next int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if next == a.catalog.GenreIndex || next < 0 || next >= len(a.catalog.Genre) {
+		return
+	}
+	a.catalog.GenreIndex = next
+	a.catalog.Filters, a.catalog.Selection = nil, nil
+	a.resetCatalog()
+	if !a.testMode {
+		go a.loadFilters()
+		go a.loadCatalog(false)
+	}
+}
+func (a *App) resetCatalog() {
+	a.catalogGeneration++
+	a.catalog.Items, a.catalog.Cursor, a.catalog.Error = nil, "", ""
+	a.catalog.HasMore, a.catalog.Loading, a.catalog.LoadingMore = true, false, false
+	a.invalidate()
+}
+func (a *App) SelectFilter(rowIndex, optionIndex int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if rowIndex < 0 || rowIndex >= len(a.catalog.Filters) || optionIndex < 0 || optionIndex >= len(a.catalog.Filters[rowIndex].Options) {
+		return
+	}
+	selected := append([]int(nil), a.catalog.Selection...)
+	for len(selected) < len(a.catalog.Filters) {
+		selected = append(selected, 0)
+	}
+	if selected[rowIndex] == optionIndex {
+		return
+	}
+	selected[rowIndex] = optionIndex
+	a.catalog.Selection = selected
+	a.resetCatalog()
+	if !a.testMode {
+		go a.loadCatalog(false)
+	}
+}
+func (a *App) SearchSubmitted() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	term := strings.TrimSpace(a.query)
+	if term == "" {
+		return false
+	}
+	a.open("search", "")
+	a.search = CatalogPage{Loading: true}
+	generation := a.generation
+	if !a.testMode {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
+			defer cancel()
+			items, err := a.service.Search(ctx, term)
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if a.generation != generation {
+				return
+			}
+			a.search = CatalogPage{Items: convertCards(items)}
+			if err != nil {
+				a.search.Error = "搜索失败：" + err.Error()
+			}
+			a.invalidate()
+		}()
+	}
+	return true
+}
+func (a *App) SearchChanged() bool   { return false }
+func (a *App) SetQuery(value string) { a.mu.Lock(); defer a.mu.Unlock(); a.query = value }
+func (a *App) OpenView(view string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.view == view && a.started {
+		return
+	}
+	a.started = true
+	a.open(view, "")
+	if a.testMode {
+		return
+	}
+	switch view {
+	case "discover":
+		go a.loadFilters()
+		go a.loadCatalog(false)
+	case "history":
+		go a.loadLibrary(libraryHistory)
+	case "favorites":
+		go a.loadLibrary(libraryFavorites)
+	case "likes":
+		go a.loadLibrary(libraryLikes)
+	case "reservations":
+		go a.loadLibrary(libraryReservations)
+	}
+}
+func (a *App) OpenDetail(seriesID string) { a.OpenItem(CatalogItem{ID: seriesID}) }
+func (a *App) OpenItem(item CatalogItem) {
+	if item.ID == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.open("detail", item.ID)
+	a.resume = item
+	a.detail = Detail{ID: item.ID, Loading: true, RelatedLoading: true}
+	a.invalidate()
+	generation := a.generation
+	if !a.testMode {
+		go a.loadDetailAt(item.ID, generation)
+	}
+}
+func (a *App) ToggleDetailFavorite()    { a.toggleDetail(false) }
+func (a *App) ToggleDetailReservation() { a.toggleDetail(true) }
+func (a *App) toggleDetail(reservation bool) {
+	a.mu.Lock()
+	detail, generation, provider := a.detail, a.generation, a.favoriteProvider()
+	a.mu.Unlock()
+	if detail.ID == "" || detail.Loading {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
+		defer cancel()
+		var enabled bool
+		var err error
+		if reservation {
+			enabled, err = provider.ToggleReservation(ctx, detail.ID, detail.Title, detail.CoverURL, detail.Description, "")
+		} else {
+			enabled, err = provider.ToggleFavorite(ctx, detail.ID, detail.Title, detail.CoverURL, detail.Description, detail.EpisodeCount)
+		}
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.generation != generation {
+			return
+		}
+		if err != nil {
+			a.fail("更新失败：", err)
+			return
+		}
+		if reservation {
+			a.detail.Reserved = enabled
+		} else {
+			a.detail.Favorite = enabled
+		}
+		a.invalidate()
+	}()
+}
+func (a *App) favoriteProvider() favoriteProvider {
+	if a.favorite != nil {
+		return a.favorite
+	}
+	return a.service
+}
+func (a *App) ChooseEpisode(num int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if num <= 0 || a.player == nil || a.detail.Loading || a.detail.ID == "" {
+		return
+	}
+	a.player.Play(a.detail.ID, "", num, 0, true)
+}
+func (a *App) OpenRelated(seriesID string) { a.OpenDetail(seriesID) }
+func (a *App) LoadMoreCatalog()            { a.loadCatalog(true) }
+func (a *App) LoadMoreSearch() bool        { return false }
+func (a *App) RefreshLibrary(tab LibraryTab) {
+	if !a.testMode {
+		go a.loadLibrary(tab)
+	}
+}
+func (a *App) PlayerResume() {
+	if a.player != nil {
+		a.player.Resume()
+	}
+}
+func (a *App) PlayerPause() {
+	if a.player != nil {
+		a.player.Pause()
+	}
+}
+func (a *App) PlayerPrevious() {
+	if a.player != nil {
+		a.player.Previous()
+	}
+}
+func (a *App) PlayerNext() {
+	if a.player != nil {
+		a.player.Next()
+	}
+}
+func (a *App) PlayerPictureInPicture() {
+	if a.player != nil {
+		a.player.PictureInPicture()
+	}
+}
+func (a *App) ClearHistory() {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
+		defer cancel()
+		err := a.historyClearProvider().ClearHistory(ctx)
+		a.mu.Lock()
+		if err != nil {
+			a.fail("清空历史失败：", err)
+		} else {
+			a.setNotice("观看历史已清空")
+		}
+		a.mu.Unlock()
+		if err == nil && !a.testMode {
+			a.loadLibrary(libraryHistory)
+		}
+	}()
+}
+func (a *App) historyClearProvider() historyClearer {
+	if a.historyClear != nil {
+		return a.historyClear
+	}
+	return a.service
+}
+func (a *App) loadFilters() {
+	a.mu.Lock()
+	genre, generation, provider := a.catalogGenre(), a.catalogGeneration, a.detailProvider()
+	a.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
+	defer cancel()
+	rows, err := provider.GetFilterPanel(ctx, genre)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if generation != a.catalogGeneration {
+		return
+	}
+	if err != nil {
+		a.fail("筛选加载失败：", err)
+		return
+	}
+	a.catalog.Filters = convertFilters(rows)
+	a.invalidate()
+}
+func (a *App) loadCatalog(more bool) {
+	a.mu.Lock()
+	if a.catalog.Loading || a.catalog.LoadingMore || (more && !a.catalog.HasMore) {
+		a.mu.Unlock()
+		return
+	}
+	a.catalog.Loading, a.catalog.LoadingMore = !more, more
+	genre, generation, provider := a.catalogGenre(), a.catalogGeneration, a.detailProvider()
+	values := catalogValues(genre, a.catalog.Filters, a.catalog.Selection)
+	cursor := ""
+	if more {
+		cursor = a.catalog.Cursor
+	}
+	a.invalidate()
+	a.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
+	defer cancel()
+	page, err := provider.GetDiscover(ctx, genre, values, cursor)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if generation != a.catalogGeneration {
+		return
+	}
+	a.catalog.Loading, a.catalog.LoadingMore = false, false
+	if err != nil {
+		a.catalog.Error = "目录加载失败，请稍后重试"
+		a.fail("目录加载失败：", err)
+		return
+	}
+	items := convertCards(page.Items)
+	if more {
+		items = append(append([]CatalogItem(nil), a.catalog.Items...), items...)
+	}
+	a.catalog.Items, a.catalog.Cursor, a.catalog.HasMore, a.catalog.Error = items, page.Cursor, page.HasMore, ""
+	a.invalidate()
+}
+func (a *App) loadDetail(seriesID string) {
+	a.mu.Lock()
+	generation := a.generation
+	a.mu.Unlock()
+	a.loadDetailAt(seriesID, generation)
+}
+func (a *App) loadDetailAt(seriesID string, generation uint64) {
+	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
+	defer cancel()
+	page, err := a.detailProvider().GetSeriesPage(ctx, seriesID)
+	a.mu.Lock()
+	if generation != a.generation {
+		a.mu.Unlock()
+		return
+	}
+	if err != nil || page == nil {
+		a.detail.Loading, a.detail.Error = false, "详情加载失败，请稍后重试"
+		a.invalidate()
+		a.mu.Unlock()
+		return
+	}
+	a.detail = convertDetail(seriesID, page)
+	a.detail.RelatedLoading = true
+	if a.player != nil {
+		a.player.SetSeriesMetadata(seriesID, page.Title, page.CoverURL, page.EpisodeCount)
+		num, position := 1, float64(0)
+		if a.resume.ID == seriesID && a.resume.ResumeEpisode > 0 {
+			num, position = a.resume.ResumeEpisode, a.resume.ResumePosition
+		}
+		a.player.Play(seriesID, "", num, position, true)
+	}
+	a.invalidate()
+	a.mu.Unlock()
+	a.loadRelatedAt(seriesID, generation)
+}
+func (a *App) loadRelatedAt(seriesID string, generation uint64) {
+	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
+	defer cancel()
+	collection, err := a.detailProvider().GetSeriesRelated(ctx, seriesID)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if generation != a.generation {
+		return
+	}
+	a.detail.RelatedLoading = false
+	if err != nil || collection == nil {
+		a.detail.RelatedTitle = "相关推荐加载失败"
+	} else {
+		a.detail.Related, a.detail.RelatedTitle = convertCards(collection.Items), collection.Title
+	}
+	a.invalidate()
+}
+func (a *App) detailProvider() detailProvider {
+	if a.detailSource != nil {
+		return a.detailSource
+	}
+	return a.service
+}
+func (a *App) libraryAt(tab LibraryTab) *Library {
+	switch tab {
+	case libraryHistory:
+		return &a.library.History
+	case libraryFavorites:
+		return &a.library.Favorites
+	case libraryLikes:
+		return &a.library.Likes
+	default:
+		return &a.library.Reserved
+	}
+}
+func (a *App) loadLibrary(tab LibraryTab) {
+	a.mu.Lock()
+	a.libraryGeneration[tab]++
+	generation := a.libraryGeneration[tab]
+	library := a.libraryAt(tab)
+	library.Loading, library.Error, library.Empty = true, "", false
+	provider := a.libraryProvider()
+	a.invalidate()
+	a.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
+	defer cancel()
+	var items []CatalogItem
+	var err error
+	switch tab {
+	case libraryHistory:
+		items, err = convertHistory(provider.GetHistory(ctx))
+	case libraryFavorites:
+		items, err = convertFavorites(provider.GetFavorites(ctx))
+	case libraryLikes:
+		items, err = convertLikes(provider.GetLikes(ctx))
+	default:
+		items, err = convertReservations(provider.GetReservations(ctx))
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if generation != a.libraryGeneration[tab] {
+		return
+	}
+	library = a.libraryAt(tab)
+	library.Loading = false
+	if err != nil {
+		library.Error = "数据加载失败，请稍后重试"
+		a.fail("资料库加载失败：", err)
+		return
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].Rank < items[j].Rank })
+	library.Items, library.Empty = items, len(items) == 0
+	library.Title = map[LibraryTab]string{libraryHistory: "观看历史", libraryFavorites: "我的收藏", libraryLikes: "我的点赞", libraryReservations: "新剧预约"}[tab]
+	a.invalidate()
+}
+func (a *App) libraryProvider() libraryProvider {
+	if a.libraryData != nil {
+		return a.libraryData
+	}
+	return a.service
+}
+
+// open, fail, setNotice and invalidate require mu. Player commands enqueue work and never wait for the UI thread.
+func (a *App) open(view, seriesID string) {
+	a.generation++
+	a.view, a.seriesID, a.error, a.loading, a.playerOn = view, seriesID, "", false, view == "detail"
+	a.resume = CatalogItem{}
+	a.detail = Detail{}
+	if a.player != nil {
+		a.player.Stop()
+	}
+	a.invalidate()
+}
+func (a *App) fail(prefix string, err error) { a.error = prefix + err.Error(); a.invalidate() }
+func (a *App) setNotice(message string)      { a.notice = message; a.invalidate() }
+func (a *App) invalidate() {
+	if a.invalidateFn != nil {
+		a.invalidateFn()
+	}
+}
+
+func convertCards(cards []ipc.SeriesCard) []CatalogItem {
+	items := make([]CatalogItem, 0, len(cards))
+	for _, card := range cards {
+		items = append(items, CatalogItem{
+			ID: card.ID, Title: card.Title, Description: card.Description, CoverURL: card.CoverURL,
+			EpisodeCount: card.EpisodeCount, Category: card.Category, Heat: card.Heat, Subtitles: card.Tags,
+		})
+	}
+	return items
+}
+
+func convertFilters(rows []ipc.FilterRowDTO) []FilterRow {
+	out := make([]FilterRow, 0, len(rows))
+	for _, row := range rows {
+		options := []FilterOption{{Label: "全部", Value: ""}}
+		for _, option := range row.Options {
+			options = append(options, FilterOption{Label: option.Name, Value: option.Value})
+		}
+		out = append(out, FilterRow{Title: row.Name, Key: row.Key, Options: options})
+	}
+	return out
+}
+
+func convertHistory(items []ipc.HistoryItem, err error) ([]CatalogItem, error) {
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CatalogItem, 0, len(items))
+	for index, item := range items {
+		title := item.Title
+		if title == "" {
+			title = "第" + strconv.Itoa(item.EpisodeNum) + "集"
+		}
+		progress := ""
+		if item.DurationSec > 0 {
+			progress = strconv.Itoa(int(item.PositionSec*100/float64(item.DurationSec))) + "%"
+		}
+		out = append(out, CatalogItem{
+			ID: item.SeriesID, Title: title, Description: "看到第" + strconv.Itoa(item.EpisodeNum) + "集 · " + progress,
+			CoverURL: item.CoverURL, EpisodeCount: item.TotalEpisodes, Rank: index,
+			ResumeEpisode: item.EpisodeNum, ResumePosition: item.PositionSec,
+		})
+	}
+	return out, nil
+}
+
+func convertFavorites(items []ipc.FavoriteItem, err error) ([]CatalogItem, error) {
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CatalogItem, 0, len(items))
+	for index, item := range items {
+		out = append(out, CatalogItem{
+			ID: item.SeriesID, Title: item.Title, Description: item.Description, CoverURL: item.CoverURL,
+			EpisodeCount: item.TotalEpisodes, Rank: index,
+		})
+	}
+	return out, nil
+}
+
+func convertReservations(items []ipc.ReservationItem, err error) ([]CatalogItem, error) {
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CatalogItem, 0, len(items))
+	for index, item := range items {
+		out = append(out, CatalogItem{
+			ID: item.SeriesID, Title: item.Title, Description: item.Note, CoverURL: item.CoverURL,
+			Heat: item.PublishAt, Rank: index,
+		})
+	}
+	return out, nil
+}
+
+func convertLikes(items []ipc.LikeItem, err error) ([]CatalogItem, error) {
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CatalogItem, 0, len(items))
+	for index, item := range items {
+		out = append(out, CatalogItem{
+			ID: item.SeriesID, Title: item.Title, Description: item.Description, CoverURL: item.CoverURL,
+			EpisodeCount: item.TotalEpisodes, Rank: index,
+		})
+	}
+	return out, nil
+}
+
+func convertDetail(seriesID string, page *ipc.SeriesDetailPageDTO) Detail {
+	episodes := make([]CatalogItem, 0, len(page.Episodes))
+	for _, episode := range page.Episodes {
+		episodes = append(episodes, CatalogItem{
+			ID: episode.ID, Title: episode.Title, CoverURL: episode.PosterURL,
+			EpisodeCount: episode.Number, Rank: episode.Number,
+		})
+	}
+	return Detail{
+		ID: seriesID, Title: page.Title, Description: page.Description, CoverURL: page.CoverURL,
+		Tags: page.Tags, StatusText: page.StatusText, Category: page.Category, PlayCount: page.PlayCount,
+		EpisodeCount: page.EpisodeCount, Episodes: episodes, Favorite: page.IsFavorite, Reserved: page.Reserved,
+		RelatedTitle: "相关推荐",
+	}
+}

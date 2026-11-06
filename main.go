@@ -12,12 +12,14 @@ import (
 
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/ui"
 	"myguo/internal/appdirs"
 	"myguo/internal/auth"
 	"myguo/internal/ipc"
 	"myguo/internal/media"
 	"myguo/internal/native"
 	userstore "myguo/internal/store"
+	"myguo/internal/uiapp"
 )
 
 //go:embed frontend/*
@@ -81,8 +83,7 @@ func main() {
 	} else {
 		log.Printf("[ffmpeg] using %s", ffmpegPath)
 	}
-	native.SetFeedScrollCapture(true)
-
+	native.SetFeedScrollCapture(false)
 	// 4. Create and bind HongguoService for MyGo IPC
 	service := ipc.NewHongguoService(
 		client,
@@ -103,6 +104,10 @@ func main() {
 	}
 	mygo.SetFrontend(frontendFS)
 
+	player := uiapp.NewPlayerBridge(service, mediaServer)
+	app := uiapp.NewApp(service, player)
+	mygo.BindAs("PlayerBridge", player.Callbacks())
+
 	// Set the app-wide source before Run so the initial sidebar material is
 	// already dark; MyGo applies this setting when the app starts.
 	mygo.Theme.SetSource(mygo.ThemeDark)
@@ -113,8 +118,6 @@ func main() {
 		// Initialize macOS native capabilities: Menus, Media Controls & NowPlaying
 		native.Init()
 
-		// Keep the content area opaque while only the transparent sidebar exposes
-		// AppKit's native sidebar vibrancy.
 		win := mygo.NewWindow(mygo.WindowOptions{
 			Title:           appdirs.AppName,
 			Width:           1280,
@@ -125,14 +128,33 @@ func main() {
 			Transparent:     true,
 			BackgroundColor: "transparent",
 			Vibrancy:        mygo.VibrancySidebar,
-			URL:             "/",
+			Content:         ui.View(app.Render),
+		})
+		playerView, err := win.NewWebView(mygo.WebViewOptions{
+			URL: "/native-player.html",
 			Page: mygo.PageOptions{
 				PictureInPicture: true,
+				PreloadScript:    nativePlayerPreload,
 			},
 		})
+		if err != nil {
+			log.Fatalf("failed to create player webview: %v", err)
+		}
+		player.Attach(win, playerView)
+		app.SetLibraryGrids(uiapp.NewLibraryGrids())
+		app.SetInvalidator(win.Invalidate)
+		native.SetMediaCommandHandler(player.MediaCommandPayload)
+		native.SetNavigateHandler(func(payload native.NavigatePayload) {
+			if payload.SeriesID != "" {
+				go app.OpenDetail(payload.SeriesID)
+				return
+			}
+			go app.OpenView(payload.View)
+		})
 		native.SetWindow(win)
-		log.Printf("[startup] stage=window-created elapsedMs=%d", time.Since(started).Milliseconds())
-		native.StartScrollGestureMonitor()
+		log.Printf("[startup] stage=native-window-created elapsedMs=%d", time.Since(started).Milliseconds())
+		go app.OpenView("discover")
+		win.Invalidate()
 		win.OnClosed(func() {
 			fmt.Println("Main window closed")
 			native.Cleanup()
@@ -143,3 +165,11 @@ func main() {
 		log.Fatalf("app run error: %v", err)
 	}
 }
+
+const nativePlayerPreload = `
+window.nativePlayer = {
+  progress(payload) { window.mygo.call('PlayerBridge.Progress', payload).catch(error => console.error("[native-player] IPC failed", error)); },
+  saveProgress(payload) { window.mygo.call('PlayerBridge.SaveProgress', payload).catch(error => console.error("[native-player] IPC failed", error)); },
+  next(payload) { window.mygo.call('PlayerBridge.Next', payload).catch(error => console.error("[native-player] IPC failed", error)); },
+};
+`

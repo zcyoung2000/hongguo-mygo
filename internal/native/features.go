@@ -62,8 +62,10 @@ var (
 	powerMu      sync.Mutex
 	powerRelease func()
 
-	nowPlayingMu sync.Mutex
-	lastNowArgs  UpdateNowPlayingArgs
+	nowPlayingMu        sync.Mutex
+	lastNowArgs         UpdateNowPlayingArgs
+	mediaCommandHandler func(MediaCommandPayload)
+	navigateHandler     func(NavigatePayload)
 )
 
 func Init() {
@@ -101,6 +103,13 @@ func initNowPlaying() {
 			action = "seek"
 		default:
 			action = "toggle"
+		}
+		if mediaCommandHandler != nil {
+			mediaCommandHandler(MediaCommandPayload{
+				Command:  action,
+				Position: pos.Seconds(),
+			})
+			return
 		}
 		_ = mediaCommandEvent.Emit(window, MediaCommandPayload{
 			Command:  action,
@@ -225,6 +234,10 @@ func emitMediaCommand(cmd string, pos float64) {
 	if window == nil {
 		return
 	}
+	if mediaCommandHandler != nil {
+		mediaCommandHandler(MediaCommandPayload{Command: cmd, Position: pos})
+		return
+	}
 	_ = mediaCommandEvent.Emit(window, MediaCommandPayload{
 		Command:  cmd,
 		Position: pos,
@@ -236,6 +249,10 @@ func emitNavigate(view, seriesID string) {
 		return
 	}
 	window.Focus()
+	if navigateHandler != nil {
+		navigateHandler(NavigatePayload{View: view, SeriesID: seriesID})
+		return
+	}
 	_ = navigateEvent.Emit(window, NavigatePayload{
 		View:     view,
 		SeriesID: seriesID,
@@ -390,6 +407,10 @@ func TogglePictureInPicture() {
 func SetWindow(win *mygo.Window) {
 	window = win
 }
+
+func SetMediaCommandHandler(fn func(MediaCommandPayload)) { mediaCommandHandler = fn }
+
+func SetNavigateHandler(fn func(NavigatePayload)) { navigateHandler = fn }
 
 func SetFeedScrollCapture(enabled bool) {
 	feedScrollCapture.Store(enabled)

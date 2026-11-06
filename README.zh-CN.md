@@ -6,7 +6,7 @@
 
 ## 项目简介
 
-myguo 将原生 JavaScript 前端嵌入 WKWebView 窗口，通过类型化 IPC 桥接调用 Go 后端，并通过本地流媒体服务播放视频。目录与播放能力由 OpenHongguo SDK 提供。
+myguo 现在以 MyGo GPU 自绘的原生 UI 作为应用主体：侧栏导航、搜索、目录、详情、选集以及本地历史/收藏/预约直接调用既有 Go 服务。播放区域保留嵌入 WebView，让有声播放、切集、进度、收藏关联、画中画和媒体控制继续复用成熟链路；媒体仍经由本地 MediaServer 与 OpenHongguo SDK。
 
 本项目仅供个人技术研究与本地使用，与上游内容平台没有隶属或认可关系。
 
@@ -14,9 +14,9 @@ myguo 将原生 JavaScript 前端嵌入 WKWebView 窗口，通过类型化 IPC �
 
 | 分类 | 说明 |
 | --- | --- |
-| 原生桌面界面 | 隐藏式标题栏、侧边栏导航、暗色主题、响应式网格和内联 SVG 图标。 |
+| 原生桌面界面 | MyGo `ui` GPU 自绘外壳，包含隐藏式标题栏、侧边栏导航、暗色主题、响应式/虚拟化网格和 SVG 图标。 |
 | 内容发现 | 推荐、搜索与搜索建议、筛选、排行榜、新剧日历、演员主页和剧集详情。 |
-| 账号数据 | 通过已认证的上游接口同步个人资料、历史、收藏、点赞和预约。 |
+| 本地资料库 | 历史、收藏、点赞和预约保存在 SQLite；原生主体通过既有服务直接读写这些真实记录。 |
 | 评论与弹幕 | 剧集评论、回复、时间轴弹幕播放、发送和点赞。 |
 | 播放体验 | 剧集列表、画质选择、进度保存、自动连播和键盘控制。 |
 | 媒体管线 | 本地服务代理视频，使用 FFmpeg 解密受保护流，并支持 HTTP Range 请求。 |
@@ -66,13 +66,16 @@ myguo 可以使用匿名设备配置运行。如需同步个人数据：
 ## 架构
 
 ```text
-WKWebView frontend
+MyGo 原生主体（`ui.View`）
         |
-        v
-MyGo IPC bridge
+        +--> Go 服务 --> OpenHongguo SDK 与请求辅助层
+        |         |
+        |         +--> SQLite 用户数据
         |
-        v
-myguo Go services --> OpenHongguo SDK and request helpers
+        +--> 嵌入式播放器 WebView
+                  |
+                  v
+            聚焦播放桥 --> myguo Go 服务
         |
         +--> SQLite user data
         +--> MediaServer and FFmpeg
@@ -84,6 +87,9 @@ myguo Go services --> OpenHongguo SDK and request helpers
 go mod tidy
 go test ./...
 CGO_ENABLED=0 go build -o /dev/null .
+node frontend/player-bridge.test.js
+go test -race ./internal/uiapp
+node --test e2e/*.test.cjs
 ```
 
 修改界面时，保持列表页使用响应式卡片网格；图标使用内联 SVG，不要使用 Emoji 或位图符号；保留标题栏和侧边栏的原生窗口拖拽行为。
