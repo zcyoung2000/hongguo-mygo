@@ -12,6 +12,7 @@ This repository is a native macOS short-drama browsing client. Before starting d
 6. All drama and poster images must use `handleImgError(this)`.
 7. Delegate implementation tasks to a Codex subagent with `sc layout run tabs --provider codex --model zhipu/glm-5.3-flash` unless the user explicitly chooses another model; use a separate app-managed worktree branch, then review and merge the result back to the current target branch.
 8. Do not rely on `sc worktree create` for child-agent completion wakeups; its completed sessions currently lack parent association. Read or poll `sc agents list --worktree <path>` when using that path.
+9. Send follow-ups to the same wakeable child only when they refine that child's current task; start a new `sc layout run tabs` child for every unrelated task. Attach user screenshots by copying them to a stable absolute path and giving that path to the child; verify the child is idle before sending, and do not rely on queue delivery.
 
 ## Integration boundaries
 
