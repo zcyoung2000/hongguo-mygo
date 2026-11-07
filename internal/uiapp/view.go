@@ -497,7 +497,7 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 	card := ui.Column(c.Key(item.ID + "|" + item.EpisodeID)).Role(ui.RoleButton).Label(item.Title).Focusable().
 		Width(width).MinWidth(width).MaxWidth(width).Gap(6)
 	shouldOpen := item.Kind != "source_novel" && (a.view != "reservations" || !item.Upcoming)
-	if shouldOpen && card.Hovered() {
+	if shouldOpen {
 		hoverBackground(card, ui.Transparent, ui.RGBA(255, 255, 255, 0.04))
 	}
 	if shouldOpen && (card.Clicked() || card.Shortcut(0, ui.KeyEnter) || card.Shortcut(0, ui.KeySpace)) {
@@ -840,9 +840,8 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 			Background(ui.RGBA(255, 255, 255, 0.05)).
 			Border(1, ui.RGBA(255, 255, 255, 0.08)).
 			AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(label)
-		if actBtn.Hovered() {
-			actBtn.Background(ui.RGBA(255, 255, 255, 0.10)).Border(1, ui.RGBA(255, 255, 255, 0.14))
-		}
+		hoverBackground(actBtn, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.10))
+		actBtn.Border(1, ui.RGBA(255, 255, 255, 0.08))
 		if actBtn.Clicked() {
 			go a.RemoveLibraryItem(tab, item)
 		}
@@ -880,9 +879,7 @@ func (a *App) renderDetail(c *ui.Context) {
 					Material(glass.Glass{Interactive: true}).
 					Border(1, ui.RGBA(255, 255, 255, 0.12)).
 					AlignItems(ui.Center).Role(ui.RoleButton).Label("返回短剧列表").Focusable()
-				if backBtn.Hovered() {
-					backBtn.Background(ui.RGBA(255, 255, 255, 0.10))
-				}
+				hoverBackground(backBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.10))
 				if backBtn.Clicked() || backBtn.Shortcut(0, ui.KeyEnter) || backBtn.Shortcut(0, ui.KeySpace) {
 					go a.NavigateHistory(-1)
 				}
@@ -933,13 +930,7 @@ func (a *App) renderDetail(c *ui.Context) {
 							}).Border(1, ui.RGBA(255, 255, 255, 0.22)).
 							Shadow(0, 3, 10, 0, ui.RGBA(0, 0, 0, 0.35)).
 							AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(playLabel)
-						if playBtn.Hovered() {
-							playBtn.LinearGradient(ui.LinearGradient{
-								From:  ui.Hex("#e5244b"),
-								To:    ui.Hex("#c4173b"),
-								Angle: 180,
-							})
-						}
+						hoverBackground(playBtn, ui.RGB(209, 27, 66), ui.RGB(229, 36, 75))
 						if playBtn.Clicked() {
 							go a.PlayDetail()
 						}
@@ -959,8 +950,8 @@ func (a *App) renderDetail(c *ui.Context) {
 						AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(favLabel)
 					if detail.Favorite {
 						favBtn.Background(ui.RGBA(226, 26, 68, 0.16)).Border(1, ui.Hex("#e21a44"))
-					} else if favBtn.Hovered() {
-						favBtn.Background(ui.RGBA(255, 255, 255, 0.12))
+					} else {
+						hoverBackground(favBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.12))
 					}
 					if favBtn.Clicked() {
 						go a.ToggleDetailFavorite()
@@ -986,8 +977,8 @@ func (a *App) renderDetail(c *ui.Context) {
 							AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(resLabel)
 						if detail.Reserved {
 							resBtn.Background(ui.RGBA(226, 26, 68, 0.16)).Border(1, ui.Hex("#e21a44"))
-						} else if resBtn.Hovered() {
-							resBtn.Background(ui.RGBA(255, 255, 255, 0.12))
+						} else {
+							hoverBackground(resBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.12))
 						}
 						if resBtn.Clicked() {
 							go a.ToggleDetailReservation()
@@ -1147,46 +1138,47 @@ func (a *App) loadingView(c *ui.Context, message string) {
 }
 
 func (a *App) detailSkeleton(c *ui.Context) {
+	skeleton := pageShimmer(c)
 	scroll := ui.Scroll(c).Grow(1).Gap(c.Theme().Space(4))
 	scroll.Children(func() {
-		ui.Row(c).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
-			ui.Box(c).Size(160, 220).Radius(12).Background(c.Theme().SurfaceHover)
-			ui.Column(c).Grow(1).Gap(12).Children(func() {
-				ui.Box(c).Height(26).Radius(8).Background(c.Theme().SurfaceHover)
-				ui.Row(c).Gap(10).Children(func() {
-					for range 4 {
-						ui.Box(c).Size(66, 20).Radius(10).Background(c.Theme().SurfaceHover)
+		ui.Row(c.Key("detail-hero-skeleton")).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
+			skeleton.bone(c.Key("poster"), 12).Size(160, 220)
+			ui.Column(c.Key("detail-copy")).Grow(1).Gap(12).Children(func() {
+				skeleton.text(c.Key("title"), 24, 1.2).WidthPercent(48)
+				ui.Row(c.Key("tags")).Gap(10).Children(func() {
+					for index := range 4 {
+						skeleton.bone(c.Key(index), 10).Size(66, 20)
 					}
 				})
-				ui.Row(c).Gap(8).Children(func() {
-					for range 4 {
-						ui.Box(c).Size(58, 24).Radius(12).Background(c.Theme().SurfaceHover)
+				ui.Row(c.Key("metadata")).Gap(8).Children(func() {
+					for index := range 4 {
+						skeleton.bone(c.Key(index), 12).Size(58, 24)
 					}
 				})
-				ui.Column(c).Gap(8).Children(func() {
-					ui.Box(c).Height(13).Radius(6).Background(c.Theme().SurfaceHover).FillWidth()
-					ui.Box(c).Height(13).Radius(6).Background(c.Theme().SurfaceHover).FillWidth()
-					ui.Box(c).Width(190).Height(13).Radius(6).Background(c.Theme().SurfaceHover)
+				ui.Column(c.Key("description")).Gap(8).Children(func() {
+					skeleton.text(c.Key("line-0"), 13, 1.45).WidthPercent(100)
+					skeleton.text(c.Key("line-1"), 13, 1.45).WidthPercent(100)
+					skeleton.text(c.Key("line-2"), 13, 1.45).Width(190)
 				})
-				ui.Row(c).Gap(10).Children(func() {
-					ui.Box(c).Size(140, 38).Radius(19).Background(c.Theme().SurfaceHover)
-					ui.Box(c).Size(88, 38).Radius(19).Background(c.Theme().SurfaceHover)
+				ui.Row(c.Key("actions")).Gap(10).Children(func() {
+					skeleton.bone(c.Key("primary"), 19).Size(140, 38)
+					skeleton.bone(c.Key("secondary"), 19).Size(88, 38)
 				})
 			})
 		})
-		ui.Column(c).Gap(12).Children(func() {
-			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-				ui.Box(c).Width(52).Height(18).Radius(6).Background(c.Theme().SurfaceHover)
-				ui.Box(c).Width(44).Height(14).Radius(6).Background(c.Theme().SurfaceHover)
+		ui.Column(c.Key("episodes-skeleton")).Gap(12).Children(func() {
+			ui.Row(c.Key("header")).Gap(12).AlignItems(ui.Center).Children(func() {
+				skeleton.text(c.Key("title"), 17, 1.3).Width(52)
+				skeleton.text(c.Key("count"), 12, 1.3).Width(44)
 			})
-			ui.Row(c).Wrap().Gap(8).Children(func() {
-				for range 12 {
-					ui.Box(c).Size(68, 32).Radius(8).Background(c.Theme().SurfaceHover)
+			ui.Row(c.Key("episodes")).Wrap().Gap(8).Children(func() {
+				for index := range 12 {
+					skeleton.bone(c.Key(index), 8).Size(68, 32)
 				}
 			})
 		})
-		ui.Column(c).Gap(12).Children(func() {
-			ui.Box(c).Width(90).Height(18).Radius(6).Background(c.Theme().SurfaceHover)
+		ui.Column(c.Key("related-skeleton")).Gap(12).Children(func() {
+			skeleton.text(c.Key("title"), 15, 1.3).Width(90)
 			a.gridSkeleton(c, 4, gridContentWidth(c))
 		})
 	})
@@ -1197,35 +1189,37 @@ func (a *App) gridSkeleton(c *ui.Context, count int, width float32) {
 }
 
 func (a *App) filterSkeleton(c *ui.Context) {
-	ui.Column(c).Padding(16, 20).Gap(14).Radius(12).Border(1, c.Theme().Border).Background(c.Theme().Surface).Children(func() {
-		a.filterSkeletonRow(c, 3)
-		a.filterSkeletonRow(c, 5)
-		a.filterSkeletonRow(c, 4)
+	skeleton := pageShimmer(c)
+	ui.Column(c.Key("filter-skeleton")).Padding(16, 20).Gap(14).Radius(12).Border(1, c.Theme().Border).Background(c.Theme().Surface).Children(func() {
+		a.filterSkeletonRow(c.Key("genre"), skeleton, 3)
+		a.filterSkeletonRow(c.Key("topic"), skeleton, 5)
+		a.filterSkeletonRow(c.Key("status"), skeleton, 4)
 	})
 }
 
-func (a *App) filterSkeletonRow(c *ui.Context, chips int) {
+func (a *App) filterSkeletonRow(c *ui.Context, skeleton shimmer, chips int) {
 	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-		ui.Box(c).Size(40, 14).Radius(6).Background(c.Theme().SurfaceHover)
-		ui.Row(c).Gap(8).Children(func() {
-			for range chips {
-				ui.Box(c).Size(52, 28).Radius(14).Background(c.Theme().SurfaceHover)
+		skeleton.text(c.Key("label"), 12, 1.3).Width(40)
+		ui.Row(c.Key("chips")).Gap(8).Children(func() {
+			for index := range chips {
+				skeleton.bone(c.Key(index), 14).Size(52, 28)
 			}
 		})
 	})
 }
 
 func (a *App) rankSkeleton(c *ui.Context) {
-	ui.Column(c).Grow(1).Gap(10).Children(func() {
-		for range 8 {
-			ui.Row(c).Gap(16).AlignItems(ui.Center).Padding(12, 18).Radius(12).Border(1, c.Theme().Border).Background(c.Theme().Surface).Children(func() {
-				ui.Box(c).Size(32, 26).Radius(6).Background(c.Theme().SurfaceHover)
-				ui.Box(c).Size(50, 68).Radius(8).Background(c.Theme().SurfaceHover)
-				ui.Column(c).Grow(1).Gap(8).Children(func() {
-					ui.Box(c).Height(16).Radius(6).Background(c.Theme().SurfaceHover).FillWidth()
-					ui.Box(c).Width(130).Height(12).Radius(6).Background(c.Theme().SurfaceHover)
+	skeleton := pageShimmer(c)
+	ui.Column(c.Key("rank-skeleton")).Grow(1).Gap(10).Children(func() {
+		for index := range 8 {
+			ui.Row(c.Key(index)).Gap(16).AlignItems(ui.Center).Padding(12, 18).Radius(12).Border(1, c.Theme().Border).Background(c.Theme().Surface).Children(func() {
+				skeleton.bone(c.Key("position"), 6).Size(32, 26)
+				skeleton.bone(c.Key("poster"), 8).Size(50, 68)
+				ui.Column(c.Key("copy")).Grow(1).Gap(8).Children(func() {
+					skeleton.text(c.Key("title"), 14, 1.3).WidthPercent(80)
+					skeleton.text(c.Key("metadata"), 12, 1.3).Width(130)
 				})
-				ui.Box(c).Size(82, 28).Radius(14).Background(c.Theme().SurfaceHover)
+				skeleton.bone(c.Key("action"), 14).Size(82, 28)
 			})
 		}
 	})

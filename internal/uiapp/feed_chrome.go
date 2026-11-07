@@ -101,8 +101,8 @@ func (a *App) renderFeedChannels(c *ui.Context) {
 				segment := parts.Segment(idx).Label(ch.label).Padding(0, 18).Height(32).Radius(18).
 					Transition(ui.ElementTransition{Duration: 160 * time.Millisecond, Colors: true})
 
-				if !isSelected && segment.Hovered() {
-					segment.Background(ui.RGBA(255, 255, 255, 0.08))
+				if !isSelected {
+					hoverBackground(segment, ui.Transparent, ui.RGBA(255, 255, 255, 0.08))
 				} else {
 					segment.Background(ui.Transparent)
 				}

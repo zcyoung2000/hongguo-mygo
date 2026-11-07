@@ -76,15 +76,15 @@ func gridContentWidth(c *ui.Context) float32 {
 // dramaSkeleton mirrors the real card geometry before any content arrives,
 // so skeletons and loaded grids cannot shift the page.
 func dramaSkeleton(c *ui.Context, count int, width float32) {
+	skeleton := pageShimmer(c)
 	cardWidth := dramaCardWidth(width)
 	posterHeight := cardWidth * posterAspectRatio
-	ui.Row(c).Wrap().Gap(dramaCardGap).Children(func() {
-		for range count {
-			ui.Column(c).Width(cardWidth).Gap(6).Children(func() {
-				ui.Box(c).Width(cardWidth).Height(posterHeight).AspectRatio(posterAspectRatio).
-					Radius(8).Background(c.Theme().SurfaceHover)
-				ui.Box(c).Height(16).Radius(6).Background(c.Theme().SurfaceHover).FillWidth()
-				ui.Box(c).WidthPercent(58).Height(12).Radius(6).Background(c.Theme().SurfaceHover)
+	ui.Row(c.Key("drama-skeleton")).Wrap().Gap(dramaCardGap).Children(func() {
+		for index := range count {
+			ui.Column(c.Key(index)).Width(cardWidth).Gap(6).Children(func() {
+				skeleton.bone(c.Key("poster"), 8).Width(cardWidth).Height(posterHeight).AspectRatio(posterAspectRatio)
+				skeleton.text(c.Key("title"), 13, 1.3).WidthPercent(92)
+				skeleton.text(c.Key("metadata"), 12, 1.3).WidthPercent(boneWidth(index))
 			})
 		}
 	})

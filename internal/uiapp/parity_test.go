@@ -550,6 +550,9 @@ func TestNativePageScreens(t *testing.T) {
 		t.Helper()
 		tt := ui.NewTester(app.Render, 1200, 800)
 		tt.SetDark(true)
+		if strings.Contains(name, "-loading") {
+			tt.Advance(shimmerSampleOffset)
+		}
 		file, err := os.Create(filepath.Join(dir, name+".png"))
 		if err != nil {
 			t.Fatal(err)

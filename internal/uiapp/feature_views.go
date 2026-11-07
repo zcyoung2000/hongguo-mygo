@@ -97,9 +97,8 @@ func (a *App) rankItem(c *ui.Context, index int, item ipc.RankItemDTO) {
 		Background(ui.RGBA(255, 255, 255, 0.035)).
 		Shadow(0, 4, 16, 0, ui.RGBA(0, 0, 0, 0.25))
 
-	if row.Hovered() {
-		row.Background(ui.RGBA(255, 255, 255, 0.065)).Border(1, ui.RGBA(255, 255, 255, 0.12))
-	}
+	hoverBackground(row, ui.RGBA(255, 255, 255, 0.035), ui.RGBA(255, 255, 255, 0.065))
+	row.Border(1, ui.RGBA(255, 255, 255, 0.06))
 	row.Role(ui.RoleButton).Label(positionLabel + " " + item.Title).Focusable()
 	if item.ItemType != "actor" && (row.Clicked() || row.Shortcut(0, ui.KeyEnter) || row.Shortcut(0, ui.KeySpace)) {
 		go a.OpenItem(CatalogItem{ID: id, ResumeEpisode: 1, ResumePosition: -1})
@@ -153,11 +152,9 @@ func (a *App) rankItem(c *ui.Context, index int, item ipc.RankItemDTO) {
 		// Right Action Button
 		if item.ItemType == "actor" {
 			actBtn := ui.Row(c.Key("actor-btn:"+actorID)).Height(32).Padding(0, 14).Radius(8).
-				Background(ui.RGBA(255, 255, 255, 0.08)).Border(1, ui.RGBA(255, 255, 255, 0.12)).
 				AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label("主页")
-			if actBtn.Hovered() {
-				actBtn.Background(ui.RGBA(255, 255, 255, 0.14))
-			}
+			hoverBackground(actBtn, ui.RGBA(255, 255, 255, 0.08), ui.RGBA(255, 255, 255, 0.14))
+			actBtn.Border(1, ui.RGBA(255, 255, 255, 0.12))
 			if actBtn.Clicked() {
 				go a.OpenActor(actorID)
 			}
@@ -166,20 +163,10 @@ func (a *App) rankItem(c *ui.Context, index int, item ipc.RankItemDTO) {
 			})
 		} else {
 			playBtn := ui.Row(c.Key("play-btn:"+id)).Height(32).Padding(0, 16).Radius(8).
-				LinearGradient(ui.LinearGradient{
-					From:  ui.Hex("#d91b42"),
-					To:    ui.Hex("#b81235"),
-					Angle: 180,
-				}).Border(1, ui.RGBA(255, 255, 255, 0.20)).
+				Background(ui.RGBA(209, 27, 66, 1)).Border(1, ui.RGBA(255, 255, 255, 0.20)).
 				Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.35)).
 				AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label("立即播放")
-			if playBtn.Hovered() {
-				playBtn.LinearGradient(ui.LinearGradient{
-					From:  ui.Hex("#e5244b"),
-					To:    ui.Hex("#c4173b"),
-					Angle: 180,
-				})
-			}
+			hoverBackground(playBtn, ui.RGB(209, 27, 66), ui.RGB(229, 36, 75))
 			if playBtn.Clicked() {
 				go a.OpenItem(CatalogItem{ID: id, ResumeEpisode: 1, ResumePosition: -1})
 			}
@@ -233,9 +220,9 @@ func (a *App) renderReleases(c *ui.Context) {
 						To:    ui.Hex("#b81235"),
 						Angle: 135,
 					}).Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.35))
-				} else if tab.Hovered() {
-					tab.Background(ui.RGBA(255, 255, 255, 0.08))
 				}
+				hoverBackground(tab, ui.RGBA(255, 255, 255, 0.04), ui.RGBA(255, 255, 255, 0.08))
+				tab.Border(1, ui.RGBA(255, 255, 255, 0.08))
 				tab.Role(ui.RoleButton).Label(formatCalendarLabel(dStr)).Focusable()
 				if tab.Clicked() || tab.Shortcut(0, ui.KeyEnter) || tab.Shortcut(0, ui.KeySpace) {
 					go a.SelectRelease(true, dStr)
@@ -279,9 +266,7 @@ func (a *App) renderActor(c *ui.Context) {
 			Material(glass.Glass{Interactive: true}).
 			Border(1, ui.RGBA(255, 255, 255, 0.12)).
 			AlignItems(ui.Center).Role(ui.RoleButton).Label("返回短剧详情").Focusable()
-		if backBtn.Hovered() {
-			backBtn.Background(ui.RGBA(255, 255, 255, 0.10))
-		}
+		hoverBackground(backBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.10))
 		if backBtn.Clicked() || backBtn.Shortcut(0, ui.KeyEnter) || backBtn.Shortcut(0, ui.KeySpace) {
 			go a.NavigateHistory(-1)
 		}
