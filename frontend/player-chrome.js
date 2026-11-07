@@ -129,6 +129,12 @@ function mountPlayerChrome({ prefix, target, drawerTitle = '选集播放' }) {
         <button class="icon-btn" id="${id('close-drawer')}" title="关闭">${icons.close}</button>
       </div>
       <div class="episodes-grid" id="${id('drawer-grid')}"></div>
+      <div class="drawer-collapse-wrap" id="${id('drawer-collapse-wrap')}" style="display: none;">
+        <button class="drawer-collapse" id="${id('drawer-collapse')}" type="button" aria-expanded="false">
+          <span data-collapse-text>展开全部</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+        </button>
+      </div>
     </aside>
   `;
 
@@ -140,7 +146,8 @@ function mountPlayerChrome({ prefix, target, drawerTitle = '选集播放' }) {
     'progress-wrap', 'progress-buffer', 'progress-current', 'time-tooltip',
     'play', 'prev-ep', 'next-ep', 'time-display', 'quality', 'quality-menu',
     'speed', 'speed-menu', 'drawer-toggle', 'pip', 'fullscreen',
-    'playlist-drawer', 'drawer-title', 'drawer-count', 'drawer-grid', 'close-drawer'
+    'playlist-drawer', 'drawer-title', 'drawer-count', 'drawer-grid', 'close-drawer',
+    'drawer-collapse-wrap', 'drawer-collapse'
   ];
   const elements = Object.fromEntries(names.map(name => [name, fragment.querySelector(`#${CSS.escape(id(name))}`)]));
   target.appendChild(fragment);
