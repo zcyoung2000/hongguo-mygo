@@ -675,8 +675,11 @@ func (s *HongguoService) adaptationsForSource(ctx context.Context, currentID str
 
 		d := detail.Series
 		coverURL := d.CoverURL
-		if coverURL == "" {
+		if !hasUsableCover(coverURL, d.CoverExpiresAt) {
 			coverURL = candidatesByID[d.ID].CoverURL
+			if !hasUsableCover(coverURL, candidatesByID[d.ID].CoverExpiresAt) {
+				coverURL = ""
+			}
 		}
 		upcoming := isUpcomingSeries(d.EpisodeCount, d.RightText)
 
@@ -738,6 +741,10 @@ func isSameSourceNovel(series *model.Series, source *SourceNovelDTO) bool {
 		return true
 	}
 	return series.RelatedNovelBookID == source.ID
+}
+
+func hasUsableCover(coverURL string, expiresAt time.Time) bool {
+	return coverURL != "" && (expiresAt.IsZero() || time.Now().Before(expiresAt))
 }
 
 func seriesContentTypeLabel(contentType int) string {

@@ -3,6 +3,7 @@ package ipc
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/beilunyang/openhongguo/sdk/model"
 )
@@ -59,5 +60,70 @@ func TestGetSeriesAdaptationsSecondCandidateCoverFallback(t *testing.T) {
 	}, nil)
 	if len(cards) != 1 || cards[0].CoverURL != service.media.ImageURL(batchCover) {
 		t.Fatalf("present batch cover was not preferred: %+v", cards)
+	}
+}
+
+func TestGetSeriesAdaptationsUsesFreshCandidateWhenBatchCoverExpired(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore err = %v", err)
+	}
+	defer store.Close()
+
+	expired := time.Now().Add(-time.Hour)
+	service := &HongguoService{
+		store: store,
+		media: &MediaServer{},
+		seriesBatch: func(context.Context, []string) ([]model.SeriesDetail, error) {
+			return []model.SeriesDetail{{
+				Series: &model.Series{
+					SeriesSummary: model.SeriesSummary{
+						ID:             "adapted-1",
+						Title:          "同一剧本",
+						CoverURL:       "https://images.example/expired-batch.jpg",
+						CoverExpiresAt: expired,
+					},
+					RelatedNovelBookID: "book-1",
+				},
+			}}, nil
+		},
+	}
+	source := &SourceNovelDTO{ID: "book-1", Title: "原著小说"}
+
+	cards := service.adaptationsForSource(context.Background(), "current", source, []model.SeriesSummary{
+		{
+			ID:             "adapted-1",
+			Title:          "同一剧本",
+			CoverURL:       "https://images.example/fresh-search.jpg",
+			CoverExpiresAt: time.Now().Add(time.Hour),
+		},
+	}, nil)
+	if len(cards) != 1 || cards[0].CoverURL != service.media.ImageURL("https://images.example/fresh-search.jpg") {
+		t.Fatalf("expired batch cover did not use fresh candidate cover: %+v", cards)
+	}
+
+	service.seriesBatch = func(context.Context, []string) ([]model.SeriesDetail, error) {
+		return []model.SeriesDetail{{
+			Series: &model.Series{
+				SeriesSummary: model.SeriesSummary{
+					ID:             "adapted-1",
+					Title:          "同一剧本",
+					CoverURL:       "https://images.example/expired-batch.jpg",
+					CoverExpiresAt: expired,
+				},
+				RelatedNovelBookID: "book-1",
+			},
+		}}, nil
+	}
+	cards = service.adaptationsForSource(context.Background(), "current", source, []model.SeriesSummary{
+		{
+			ID:             "adapted-1",
+			Title:          "同一剧本",
+			CoverURL:       "https://images.example/expired-search.jpg",
+			CoverExpiresAt: expired,
+		},
+	}, nil)
+	if len(cards) != 1 || cards[0].CoverURL != "" {
+		t.Fatalf("all expired covers should leave the card cover empty without placeholder art: %+v", cards)
 	}
 }
