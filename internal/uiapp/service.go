@@ -143,6 +143,8 @@ type App struct {
 	playerChrome                PlayerChrome
 	playerChromeKnown           bool
 	playerDrawerOpen            bool
+	detailEpisodesExpanded      bool
+	detailScroll                ui.ScrollState
 	sidebarWidth                float32
 	preferencesPath             string
 	preferencesLoaded           bool
@@ -463,8 +465,13 @@ func (a *App) favoriteProvider() favoriteProvider {
 }
 func (a *App) ChooseEpisode(num int) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if num <= 0 || (a.player == nil && a.media == nil) || a.detail.Loading || a.detail.ID == "" || a.detail.Upcoming {
+	loaded := num > 0 && (a.player != nil || a.media != nil) && !a.detail.Loading && a.detail.ID != "" && !a.detail.Upcoming
+	if loaded {
+		a.detailEpisodesExpanded = false
+		a.detailScroll.Y = 0
+	}
+	a.mu.Unlock()
+	if !loaded {
 		return
 	}
 	a.playLocked(num, -1)
@@ -758,6 +765,7 @@ func (a *App) open(view, seriesID string) {
 	a.notice = ""
 	a.resume = CatalogItem{}
 	a.mediaOn = false
+	a.detailEpisodesExpanded = false
 	if a.media != nil {
 		a.media.Stop()
 	}

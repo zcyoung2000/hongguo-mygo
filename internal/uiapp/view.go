@@ -854,7 +854,7 @@ func (a *App) renderDetail(c *ui.Context) {
 		a.errorView(c, detail.Error, func() { go a.OpenDetail(detail.ID) })
 		return
 	}
-	scroll := ui.Scroll(c).Grow(1).Gap(c.Theme().Space(3))
+	scroll := ui.Scroll(c.Key("detail-page-scroll")).Grow(1).Gap(c.Theme().Space(3)).TrackScroll(&a.detailScroll)
 	scroll.Children(func() {
 		// Top Bar with a single back navigation entry.
 		ui.Row(c.Key("detail-top-bar")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).Children(func() {
@@ -1035,8 +1035,22 @@ func (a *App) renderDetail(c *ui.Context) {
 		if len(detail.Episodes) == 0 {
 			ui.Text(c, "暂无可播放选集").TextColor(c.Theme().TextMuted)
 		} else {
+			episodes := detail.Episodes
+			visibleIndexes := a.detailEpisodeCollapsedIndexes(episodes)
 			ui.Row(c.Key("detail-episodes-wrap")).Wrap().Gap(8).Children(func() {
-				for _, episode := range detail.Episodes {
+				for index, episode := range episodes {
+					if !a.detailEpisodesExpanded {
+						shown := false
+						for _, visibleIndex := range visibleIndexes {
+							if index == visibleIndex {
+								shown = true
+								break
+							}
+						}
+						if !shown {
+							continue
+						}
+					}
 					ep := episode
 					isActive := a.resume.ResumeEpisode == ep.EpisodeCount
 					numStr := fmt.Sprintf("%d", ep.EpisodeCount)
@@ -1064,12 +1078,37 @@ func (a *App) renderDetail(c *ui.Context) {
 						txt := ui.Text(c, numStr).FontSize(13)
 						if isActive {
 							txt.Bold().TextColor(ui.Hex("#ffffff"))
+							epBtn.ScrollIntoView()
 						} else {
 							txt.TextColor(ui.RGBA(255, 255, 255, 0.85))
 						}
 					})
 				}
 			})
+			if len(episodes) > detailEpisodeCollapsedCount(len(episodes)) {
+				toggleLabel := "展开全部"
+				if a.detailEpisodesExpanded {
+					toggleLabel = "收起"
+				}
+				toggle := ui.Row(c.Key("detail-episode-toggle")).Height(32).Padding(0, 14).Radius(8).
+					Background(ui.RGBA(255, 255, 255, 0.05)).
+					Border(1, ui.RGBA(255, 255, 255, 0.08)).
+					AlignItems(ui.Center).Justify(ui.Center).Gap(6).
+					Role(ui.RoleButton).Label(toggleLabel)
+				if toggle.Hovered() {
+					toggle.Background(ui.RGBA(255, 255, 255, 0.12)).Border(1, ui.RGBA(255, 255, 255, 0.16))
+				}
+				if toggle.Clicked() {
+					a.detailEpisodesExpanded = !a.detailEpisodesExpanded
+				}
+				toggle.Children(func() {
+					icon := ui.Icon(c, chevronIcon).Size(16, 16).TextColor(ui.RGBA(255, 255, 255, 0.72))
+					if a.detailEpisodesExpanded {
+						icon.Rotate(180)
+					}
+					ui.Text(c, toggleLabel).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.85))
+				})
+			}
 		}
 
 		ui.Text(c, detail.RelatedTitle).Bold()
