@@ -29,7 +29,7 @@ func TestParseAccountShortRankBuildsItemsAndCursor(t *testing.T) {
 						"rec_text_item": {"RecommendText": "992万推荐"}
 					}],
 					"ugc_user_data": [{
-						"user_info": {"base_info": {"user_name": "Actor", "user_id": 7100000000000201}},
+						"user_info": {"base_info": {"user_name": "Actor", "user_id": 7100000000000201, "actor_id_str": 7100000000000301}},
 						"rec_text_item": {"RecommendText": "999万人气"},
 						"intro": "作品一",
 						"sub_title_list": [{"content": "1部作品"}]
@@ -49,7 +49,7 @@ func TestParseAccountShortRankBuildsItemsAndCursor(t *testing.T) {
 	if len(rank.Items) != 2 || rank.Items[0].SeriesID != "7100000000000101" || rank.Items[0].EpisodeCount != 90 {
 		t.Fatalf("unexpected video item: %+v", rank.Items)
 	}
-	if rank.Items[1].ActorID != "7100000000000201" || rank.Items[1].Details[0] != "1部作品" {
+	if rank.Items[1].UserID != "7100000000000201" || rank.Items[1].ActorID != "7100000000000301" || rank.Items[1].Details[0] != "1部作品" {
 		t.Fatalf("unexpected actor item: %+v", rank.Items[1])
 	}
 	if rank.Cursor == "" || !rank.HasMore {

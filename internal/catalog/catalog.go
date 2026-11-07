@@ -836,17 +836,17 @@ func parseAccountShortRank(body []byte, contentId, boardId string, cur rankCurso
 			})
 		}
 		for _, user := range cell.Users {
-			id := string(user.Info.Base.ActorID)
-			if id == "" {
-				id = string(user.Info.Base.UserID)
+			profileID := string(user.Info.Base.UserID)
+			if profileID == "" {
+				profileID = string(user.Info.Base.ActorID)
 			}
-			if id == "" || strings.TrimSpace(user.Info.Base.Name) == "" {
+			if profileID == "" || strings.TrimSpace(user.Info.Base.Name) == "" {
 				continue
 			}
 			item := model.RankItem{
 				Position:  len(out.Items) + 1,
-				ActorID:   id,
-				UserID:    string(user.Info.Base.UserID),
+				ActorID:   string(user.Info.Base.ActorID),
+				UserID:    profileID,
 				Actor:     strings.TrimSpace(user.Info.Base.Name),
 				AvatarURL: user.Info.Base.Avatar,
 				Score:     user.Rec.Text,
