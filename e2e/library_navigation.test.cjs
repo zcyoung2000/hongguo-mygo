@@ -346,3 +346,34 @@ test('history view replaces cached rows with the refreshed cloud snapshot', asyn
   assert.equal(c.state.historyView.list[0].seriesId, 'fresh');
   assert.equal(Number.isFinite(c.state.libraryRefreshAt.history), true);
 });
+
+test('first collection entry updates likes before a slow favorites read completes', async () => {
+  const { c, requests, element } = harness('favorites', collections);
+  c.state.favoritesView.favoritesList = [];
+  c.state.favoritesView.likesList = [];
+  const pending = c.loadFavoritesAndLikes();
+  assert.equal(element('tab-likes-count').textContent, '…');
+  requests[1].resolve([{ seriesId: 'liked', episodeId: 'episode' }]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(element('tab-likes-count').textContent, 1);
+  assert.equal(element('tab-favorites-count').textContent, '…');
+  c.switchFavoritesTab('likes');
+  assert.equal(element('favorites-grid').children[0].item.id, 'liked');
+  requests[0].resolve([]);
+  await pending;
+  assert.equal(element('tab-favorites-count').textContent, 0);
+  assert.equal(element('tab-likes-count').textContent, 1);
+});
+
+test('failed initial likes read is unknown, while a successful empty read is zero', async () => {
+  const { c, requests, element } = harness('favorites', collections);
+  c.state.favoritesView.likesList = [];
+  const first = c.loadFavoritesAndLikes();
+  requests[0].resolve([]); requests[1].reject(new Error('read failed'));
+  await first;
+  assert.equal(element('tab-likes-count').textContent, '—');
+  const retry = c.loadFavoritesAndLikes();
+  requests[2].resolve([]); requests[3].resolve([]);
+  await retry;
+  assert.equal(element('tab-likes-count').textContent, 0);
+});

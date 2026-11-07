@@ -136,14 +136,13 @@ func (a *App) rankItem(c *ui.Context, index int, item ipc.RankItemDTO) {
 			if item.EpisodeCount > 0 {
 				meta = append(meta, fmt.Sprintf("%d集", item.EpisodeCount))
 			}
-			if item.Description != "" && item.ItemType == "drama" {
-				meta = append(meta, item.Description)
-			}
-			if item.Intro != "" {
-				meta = append(meta, item.Intro)
-			}
-			if len(item.Details) > 0 {
-				meta = append(meta, strings.Join(item.Details, " · "))
+			if item.ItemType == "actor" {
+				if item.Intro != "" {
+					meta = append(meta, item.Intro)
+				}
+				if len(item.Details) > 0 {
+					meta = append(meta, strings.Join(item.Details, " · "))
+				}
 			}
 			if len(meta) > 0 {
 				ui.Text(c, strings.Join(meta, " · ")).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.60)).SingleLine()

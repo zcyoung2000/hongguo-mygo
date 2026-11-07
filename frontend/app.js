@@ -1832,7 +1832,8 @@ const state = {
     favoritesList: [],
     likesList: [],
     loading: false,
-    errors: {}
+    errors: {},
+    loaded: {}
   },
   libraryRefreshAt: {},
 
@@ -6171,9 +6172,6 @@ function createDramaCard(item, fallbackCover = '') {
       </button>`
     : '';
 
-  const descText = (item.author || item.description || '').trim();
-  const descHtml = descText ? `<div class="card-desc" title="${escapeHtml(descText)}">${escapeHtml(descText)}</div>` : '';
-
   card.innerHTML = `
     <div class="card-poster-wrap">
       <img class="card-poster" src="${safeImageSrc(item.coverUrl || fallbackCover)}" alt="${safeTitle}" loading="lazy" decoding="async" onerror="handleImgError(this)">
@@ -6184,8 +6182,7 @@ function createDramaCard(item, fallbackCover = '') {
     </div>
     <div class="card-info">
       <div class="card-title" title="${safeTitle}">${safeTitle}</div>
-      <div class="card-heat">${escapeHtml(item.heat || '热播中')}</div>
-      ${descHtml}
+      ${item.heat ? `<div class="card-heat">${escapeHtml(item.heat)}</div>` : ''}
     </div>
   `;
 
@@ -7292,6 +7289,7 @@ async function loadFavoritesAndLikes() {
 
   const token = beginViewRequest('favorites');
   state.favoritesView.loading = true;
+  updateFavoritesTabsCount();
 
   const currentTab = state.favoritesView.tab || 'favorites';
   const hasCached = (currentTab === 'favorites' && state.favoritesView.favoritesList.length > 0) ||
@@ -7313,20 +7311,24 @@ async function loadFavoritesAndLikes() {
   try {
     const shouldRefresh = shouldRefreshLibraryData('favorites');
     const methods = shouldRefresh ? ['RefreshFavorites', 'RefreshLikes'] : ['GetFavorites', 'GetLikes'];
-    const results = await Promise.allSettled([apiCall(methods[0]), apiCall(methods[1])]);
-    if (!isViewRequestCurrent('favorites', token)) return;
     const errors = state.favoritesView.errors || (state.favoritesView.errors = {});
-    ['favorites', 'likes'].forEach((tab, index) => {
-      const result = results[index];
-      if (result.status === 'fulfilled') {
-        state.favoritesView[tab === 'favorites' ? 'favoritesList' : 'likesList'] = result.value || [];
+    const loaded = state.favoritesView.loaded || (state.favoritesView.loaded = {});
+    const results = await Promise.allSettled(['favorites', 'likes'].map(async (tab, index) => {
+      try {
+        const list = await apiCall(methods[index]);
+        if (!isViewRequestCurrent('favorites', token)) return;
+        state.favoritesView[tab === 'favorites' ? 'favoritesList' : 'likesList'] = list || [];
+        loaded[tab] = true;
         errors[tab] = null;
-      } else {
-        errors[tab] = result.reason || new Error('暂时无法读取，请重试');
+      } catch (err) {
+        if (!isViewRequestCurrent('favorites', token)) return;
+        errors[tab] = err || new Error('暂时无法读取，请重试');
+        throw err;
+      } finally {
+        if (isViewRequestCurrent('favorites', token)) updateFavoritesTabsCount();
       }
-    });
-
-    updateFavoritesTabsCount();
+    }));
+    if (!isViewRequestCurrent('favorites', token)) return;
     renderFavoritesOrLikes();
     if (shouldRefresh && results.every(result => result.status === 'fulfilled')) {
       markLibraryDataRefreshed('favorites');
@@ -7345,8 +7347,10 @@ async function loadFavoritesAndLikes() {
 }
 
 function updateFavoritesTabsCount() {
-  const favCount = state.favoritesView.favoritesList ? state.favoritesView.favoritesList.length : 0;
-  const likesCount = state.favoritesView.likesList ? state.favoritesView.likesList.length : 0;
+  const count = (tab, list) => state.favoritesView.loaded?.[tab] || list?.length > 0
+    ? (list || []).length : (state.favoritesView.errors?.[tab] ? '—' : '…');
+  const favCount = count('favorites', state.favoritesView.favoritesList);
+  const likesCount = count('likes', state.favoritesView.likesList);
 
   const tabFav = document.getElementById('tab-favorites-count');
   if (tabFav) tabFav.textContent = favCount;
@@ -7417,9 +7421,6 @@ function renderFavoritesOrLikes() {
         title: it.title,
         coverUrl: it.coverUrl,
         episodeCount: it.totalEpisodes,
-        heat: '已收藏',
-        description: it.description || '精彩短剧',
-        category: '收藏',
         deleteTitle: '取消收藏',
         onDelete: async () => {
           try {
@@ -7455,9 +7456,6 @@ function renderFavoritesOrLikes() {
         coverUrl: it.coverUrl,
         episodeNum: it.episodeNum,
         episodeCount: it.totalEpisodes,
-        heat: it.episodeNum > 0 ? `已点赞 第${it.episodeNum}集` : '已点赞',
-        description: it.description || (it.episodeNum > 0 ? `第${it.episodeNum}集 · 点赞记录` : '精彩短剧'),
-        category: '点赞',
         deleteTitle: '取消点赞',
         onDelete: async () => {
           try {

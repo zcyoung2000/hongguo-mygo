@@ -81,3 +81,68 @@ func TestLoadLibraryShowsErrorWithoutSyntheticRecords(t *testing.T) {
 		t.Fatalf("error history = %+v", app.library.History)
 	}
 }
+
+// A slow favorites read must not prevent the shared header from learning likes.
+type delayedCollections struct {
+	fakeLibrary
+	favoritesStarted chan struct{}
+	likesStarted     chan struct{}
+	releaseFavorites chan struct{}
+}
+
+func (f *delayedCollections) GetFavorites(context.Context) ([]ipc.FavoriteItem, error) {
+	close(f.favoritesStarted)
+	<-f.releaseFavorites
+	return f.favorites, f.err
+}
+func (f *delayedCollections) GetLikes(context.Context) ([]ipc.LikeItem, error) {
+	close(f.likesStarted)
+	return f.likes, f.err
+}
+
+func TestEnteringEitherCollectionLoadsBothCounts(t *testing.T) {
+	for _, tab := range []LibraryTab{libraryFavorites, libraryLikes} {
+		app := NewTestApp(nil)
+		provider := &delayedCollections{
+			fakeLibrary: fakeLibrary{
+				favorites: []ipc.FavoriteItem{{SeriesID: "123456"}},
+				likes:     []ipc.LikeItem{{SeriesID: "123456", EpisodeID: "654321"}},
+			},
+			favoritesStarted: make(chan struct{}), likesStarted: make(chan struct{}), releaseFavorites: make(chan struct{}),
+		}
+		app.libraryData = provider
+		if libraryCountLabel(app.library.Likes) != "…" {
+			t.Fatal("unloaded likes reported as zero")
+		}
+		done := make(chan struct{})
+		go func() { app.loadLibrary(tab); close(done) }()
+		for _, started := range []chan struct{}{provider.favoritesStarted, provider.likesStarted} {
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				close(provider.releaseFavorites)
+				t.Fatal("both collections must start without waiting for the other")
+			}
+		}
+		close(provider.releaseFavorites)
+		<-done
+		if libraryCountLabel(app.library.Favorites) != "1" || libraryCountLabel(app.library.Likes) != "1" {
+			t.Fatalf("first entry counts: %+v", app.library)
+		}
+	}
+}
+
+func TestCollectionCountDistinguishesEmptyFailedAndCached(t *testing.T) {
+	for _, tc := range []struct {
+		library Library
+		want    string
+	}{
+		{Library{Loaded: true, Empty: true}, "0"},
+		{Library{Error: "read failed"}, "—"},
+		{Library{Loaded: true, Error: "refresh failed", Items: []CatalogItem{{ID: "123456"}}}, "1"},
+	} {
+		if got := libraryCountLabel(tc.library); got != tc.want {
+			t.Fatalf("count = %q, want %q", got, tc.want)
+		}
+	}
+}

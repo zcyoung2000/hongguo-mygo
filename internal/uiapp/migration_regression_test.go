@@ -229,6 +229,11 @@ func TestNativeCollectionActionsFitTheMinimumWindow(t *testing.T) {
 			}
 			tt := ui.NewTester(app.Render, 1000, 640)
 			tt.SetDark(true)
+			for _, removed := range []string{item.Description, "已收藏", "已点赞"} {
+				if tt.HasText(removed) {
+					t.Fatalf("card still displays %q: %v", removed, tt.Texts())
+				}
+			}
 			r, ok := tt.Find(action)
 			if !ok || r.Y < 0 || r.Y+r.H > 640 || r.X < 0 || r.X+r.W > 1000 {
 				t.Fatalf("%s is clipped at the minimum window size: %+v (found=%v)", action, r, ok)

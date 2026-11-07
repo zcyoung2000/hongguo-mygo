@@ -539,16 +539,6 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 				relTime := formatRelativeTime(item.UpdatedAt)
 				ui.Text(c, relTime).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50))
 			})
-		} else if a.view == "favorites" {
-			ui.Text(c, "已收藏").FontSize(12).Bold().TextColor(ui.Hex("#ff3358")).Width(width)
-			if item.Description != "" {
-				ui.Text(c, item.Description).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50)).SingleLine().Width(width)
-			}
-		} else if a.view == "likes" {
-			ui.Text(c, "已点赞").FontSize(12).Bold().TextColor(ui.Hex("#ff3358")).Width(width)
-			if item.Description != "" {
-				ui.Text(c, item.Description).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50)).SingleLine().Width(width)
-			}
 		} else if a.view == "reservations" {
 			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Width(width).Children(func() {
 				ui.Text(c, "上线日期").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.60))
@@ -572,7 +562,7 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 				}
 				ui.Text(c, "新剧").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50)).SingleLine().Width(width)
 			}
-		} else {
+		} else if a.view != "favorites" && a.view != "likes" {
 			if item.Upcoming && item.PublishAt != "" {
 				ui.Text(c, formatPublishDate(item.PublishAt)).TextColor(t.TextMuted).SingleLine().Width(width)
 			}
@@ -591,16 +581,6 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 					}
 				}
 				ui.Text(c, meta).TextColor(t.TextMuted).SingleLine().Width(width)
-			}
-			description := item.Description
-			if item.Author != "" {
-				description = item.Author
-			}
-			if item.EpisodeCount > 0 && description == fmt.Sprintf("全%d集", item.EpisodeCount) {
-				description = ""
-			}
-			if description != "" {
-				ui.Text(c, description).TextColor(t.TextMuted).SingleLine().Width(width)
 			}
 			if item.Upcoming {
 				label := "预约"
@@ -761,8 +741,8 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		})
 	}
 	if tab == libraryFavorites || tab == libraryLikes {
-		favCount := len(state.Favorites.Items)
-		likeCount := len(state.Likes.Items)
+		favCount := libraryCountLabel(state.Favorites)
+		likeCount := libraryCountLabel(state.Likes)
 		title := "我的收藏"
 		if tab == libraryLikes {
 			title = "我的点赞"
@@ -771,12 +751,12 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, title).FontSize(20).Bold().TextColor(ui.Hex("#ffffff"))
 				ui.Row(c).Padding(3, 10).Radius(12).Background(ui.RGBA(255, 255, 255, 0.06)).Children(func() {
-					ui.Textf(c, "共 %d 部收藏 · %d 个点赞", favCount, likeCount).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
+					ui.Textf(c, "共 %s 部收藏 · %s 个点赞", favCount, likeCount).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
 				})
 			})
 			a.renderSlidingTabs(c, "fav-tabs", "fav-views", []slidingTabItem{
-				{"favorites", fmt.Sprintf("收藏 %d", favCount)},
-				{"likes", fmt.Sprintf("点赞 %d", likeCount)},
+				{"favorites", fmt.Sprintf("收藏 %s", favCount)},
+				{"likes", fmt.Sprintf("点赞 %s", likeCount)},
 			}, a.view, func(vId string) {
 				go a.OpenView(vId)
 			})
@@ -1278,9 +1258,6 @@ func catalogRowHeight(items []CatalogItem) float32 {
 			height += 26
 		}
 		if item.Category != "" {
-			height += 26
-		}
-		if item.Description != "" || item.Author != "" {
 			height += 26
 		}
 		if item.Upcoming {
