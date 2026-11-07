@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
@@ -578,7 +579,11 @@ func (s *Service) RefreshFavorites(ctx context.Context) ([]FavoriteItem, error) 
 	if cookies, _ := s.credentials(); cookies == "" {
 		return s.GetFavorites(ctx)
 	}
-	if err := s.syncRemoteFavorites(ctx, s.currentFavoriteGeneration()); err != nil {
+	if err := s.syncFavoriteSnapshotWithRetry(ctx, s.currentFavoriteGeneration()); err != nil {
+		if localItems, localErr := s.GetFavorites(ctx); localErr == nil {
+			log.Printf("[favorites] refresh degraded to local snapshot: %v", err)
+			return localItems, nil
+		}
 		return nil, err
 	}
 	return s.GetFavorites(ctx)
@@ -773,6 +778,28 @@ func (s *Service) syncRemoteFavorites(ctx context.Context, generation uint64) er
 	}
 	s.refreshFavoriteCache(generation)
 	return nil
+}
+
+func (s *Service) syncFavoriteSnapshotWithRetry(ctx context.Context, generation uint64) error {
+	backoff := 250 * time.Millisecond
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := s.syncRemoteFavorites(ctx, generation); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if attempt == 1 || errors.Is(lastErr, context.DeadlineExceeded) || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return lastErr
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+	return lastErr
 }
 
 func (s *Service) refreshFavoriteCache(generation uint64) {

@@ -494,6 +494,35 @@ func TestFavoritePendingOperationFlushesBeforeRemoteShelfSync(t *testing.T) {
 	}
 }
 
+func TestShelfTimeoutDegradesToLocalFavoriteSnapshot(t *testing.T) {
+	const seriesID = "710000000000001"
+	log := &requestLog{}
+	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.add(capturedRequest{path: r.URL.Path})
+		time.Sleep(20 * time.Millisecond)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	if err := store.SaveFavoriteBatch([]FavoriteItem{{
+		SeriesID:      seriesID,
+		Title:         "本地收藏",
+		CoverURL:      "https://media.invalid/cover.jpg",
+		TotalEpisodes: 12,
+	}}); err != nil {
+		t.Fatalf("SaveFavoriteBatch() error = %v", err)
+	}
+
+	items, err := service.RefreshFavorites(context.Background())
+	if err != nil {
+		t.Fatalf("RefreshFavorites() error = %v", err)
+	}
+	if len(items) != 1 || items[0].SeriesID != seriesID || items[0].Title != "本地收藏" {
+		t.Fatalf("degraded favorites = %#v, want the authentic local snapshot", items)
+	}
+	if calls := log.matching("bookshelf/video/list"); len(calls) != 2 {
+		t.Fatalf("bookshelf/video/list calls = %d, want bounded retry count 2", len(calls))
+	}
+}
+
 func TestRemoteLikesReplaceLocalSet(t *testing.T) {
 	log := &requestLog{}
 	service, store := newSyncTestService(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
