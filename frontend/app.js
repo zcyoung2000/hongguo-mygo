@@ -7040,7 +7040,7 @@ async function loadNewReleases() {
 }
 
 function createNewReleaseCard(item) {
-  const statusBadge = item.online ? '已上线' : (item.note || '预计上线');
+  const statusBadge = item.online ? '' : (item.note || '预计上线');
   return createDramaCard({
     id: item.seriesId,
     title: item.title,
