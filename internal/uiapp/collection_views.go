@@ -2,6 +2,7 @@ package uiapp
 
 import (
 	"math"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -17,7 +18,7 @@ func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *u
 	gap := gridTheme.Space(2)
 	columns := max(1, int(math.Floor(float64((width+gap)/(160+gap)))))
 	cardWidth := max(float32(150), (width-float32(columns-1)*gap)/float32(columns)-4)
-	height := catalogRowHeight(items) + (cardWidth-150)*4/3 + extra
+	height := collectionRowHeight(a.view, items) + (cardWidth-150)*4/3 + extra
 	host.Children(func() {
 		c.SetTheme(&gridTheme)
 		defer c.SetTheme(&baseTheme)
@@ -32,4 +33,52 @@ func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *u
 		}).Grow(1).TrackScroll(scroll).ScrollbarInsets(0, 0, 12, 0)
 	})
 	return host
+}
+
+const (
+	catalogButtonHeight   float32 = 28
+	catalogTextLineHeight float32 = 20
+)
+
+// Titles render one line for the first 18 CJK-sized characters and wrap once
+// beyond that, so the row estimate tracks the rendered title block.
+func catalogTitleHeight(title string) float32 {
+	if utf8.RuneCountInString(title) <= 18 {
+		return catalogTextLineHeight
+	}
+	return catalogTextLineHeight * 2
+}
+
+func collectionRowHeight(view string, items []CatalogItem) float32 {
+	var tallest float32
+	for _, item := range items {
+		height := catalogTitleHeight(item.Title) + catalogTextLineHeight
+		switch view {
+		case "history", "reservations":
+		case "new":
+			if item.Upcoming {
+				if item.PublishAt != "" {
+					height += catalogTextLineHeight
+				}
+				height += catalogButtonHeight
+			} else {
+				height += catalogTextLineHeight
+				if item.Heat != "" {
+					height += catalogTextLineHeight
+				}
+			}
+		default:
+			height = catalogTitleHeight(item.Title)
+			if item.Upcoming {
+				height += catalogTextLineHeight + catalogButtonHeight
+			} else {
+				height += catalogTextLineHeight
+				if item.Heat != "" {
+					height += catalogTextLineHeight
+				}
+			}
+		}
+		tallest = max(tallest, height)
+	}
+	return tallest
 }

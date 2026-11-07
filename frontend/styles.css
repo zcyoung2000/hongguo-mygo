@@ -2534,10 +2534,6 @@ body.is-resizing-sidebar * {
   width: max-content;
 }
 
-.player-close-right-btn {
-  justify-self: end;
-}
-
 .player-back-btn:hover {
   background: rgba(255, 255, 255, 0.22);
   border-color: rgba(255, 255, 255, 0.35);

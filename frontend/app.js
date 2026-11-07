@@ -7798,7 +7798,6 @@ function initPlayerControls() {
   const modal = document.getElementById('player-modal');
   const stageWrap = document.getElementById('player-stage');
   const closeBtn = document.getElementById('btn-close-player');
-  const closeRightBtn = document.getElementById('btn-close-player-right');
   const playPauseBtn = document.getElementById('player-play');
   const iconPlay = playPauseBtn.querySelector('.icon-play');
   const iconPause = playPauseBtn.querySelector('.icon-pause');
@@ -7903,7 +7902,6 @@ function initPlayerControls() {
 
   // Close player
   if (closeBtn) closeBtn.addEventListener('click', closePlayer);
-  if (closeRightBtn) closeRightBtn.addEventListener('click', closePlayer);
 
   // Play/Pause
   function togglePlay() {

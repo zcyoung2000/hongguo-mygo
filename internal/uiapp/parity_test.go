@@ -272,6 +272,23 @@ func TestNoGlobalBackForwardControlsOnAnyNativePage(t *testing.T) {
 	}
 }
 
+func TestDetailShowsOnlyBackNavigation(t *testing.T) {
+	app := NewTestApp(nil)
+	app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{
+		SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "回归详情", EpisodeCount: 1},
+	}}
+	app.OpenDetail("123456")
+	app.loadDetail("123456")
+	tt := ui.NewTester(app.Render, 1200, 800)
+	tt.Advance(200 * time.Millisecond)
+	if !tt.HasText("短剧详情") || !tt.HasText("← 返回") {
+		t.Fatalf("detail back navigation missing: %v", tt.Texts())
+	}
+	if tt.HasText("关闭") || tt.HasText("关闭详情") {
+		t.Fatalf("duplicate close entry remains: %v", tt.Texts())
+	}
+}
+
 func TestRankUsesTheOriginalDefaultHotBoard(t *testing.T) {
 	provider := &parityProvider{rankResult: ipc.RankResponse{Content: "all", Board: "ranklist_hot_sc", Items: []ipc.RankItemDTO{{SeriesID: "123456", ItemType: "drama", Title: "热度剧"}}}}
 	app := NewTestApp(nil)

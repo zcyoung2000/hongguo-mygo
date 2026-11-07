@@ -735,12 +735,17 @@ def mod_v(c, w):
         ("V06 comment sheet overlay", "#comment-sheet-overlay"),
         ("V07 comment close btn", "#btn-close-comment-sheet"),
         ("V08 comment list", "#comment-list"),
+        ("V09 duplicate player close absent", None),
     ]
     for i, (name, sel) in enumerate(checks):
         if sel is None:
-            # Ambient glow is a JS controller with an offscreen canvas; check the instance.
-            v, e = js(c, w, 'return window.ambientGlow instanceof Object && window.ambientGlow.sampleCanvas !== undefined')
-            record(name, v is True and not e, f"controller={v}, err={e}", m)
+            if name.startswith("V09"):
+                v, e = js(c, w, 'return Boolean(document.getElementById("btn-close-player-right"))')
+                record(name, v is False and not e, f"found={v!r}, err={e}", m)
+            else:
+                # Ambient glow is a JS controller with an offscreen canvas; check the instance.
+                v, e = js(c, w, 'return window.ambientGlow instanceof Object && window.ambientGlow.sampleCanvas !== undefined')
+                record(name, v is True and not e, f"controller={v}, err={e}", m)
         else:
             ok, d = elem(c, w, sel)
             record(name, ok, d, m)
