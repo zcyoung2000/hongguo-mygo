@@ -2,7 +2,6 @@ package uiapp
 
 import (
 	"math"
-	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -125,8 +124,15 @@ func (a *App) renderPlayerDrawerScrim(c *ui.Context) {
 	// The drawer opens on top of the media WebView. A transparent native
 	// layer is the only way to see a click that would otherwise be sent to
 	// the web page, as MyGo routes unclaimed WebView areas to the host.
-	ui.ButtonBase(c).Label("关闭选集背景").Absolute().Top(0).Left(0).Right(playerDrawerMaxWidth).Bottom(0).
-		Background(ui.Transparent).OnClick(a.closePlayerDrawer)
+	scrim := ui.ButtonBase(c).Label("关闭选集背景").Absolute().Top(0).Left(0).Right(playerDrawerMaxWidth).Bottom(0)
+	scrimFade := drawerTransition
+	scrimFade.Position = false
+	scrimFade.Size = false
+	scrimFade.Colors = true
+	scrimFade.Enter = &ui.Motion{Opacity: 0}
+	scrimFade.Exit = &ui.Motion{Opacity: 0}
+	scrim.Transition(scrimFade)
+	scrim.Background(ui.Transparent).OnClick(a.closePlayerDrawer)
 }
 
 func (a *App) nativeControlBox(c *ui.Context, key string, frame ControlFrame) ui.Element {
@@ -190,7 +196,11 @@ func (a *App) renderNativeEpisodeDrawer(c *ui.Context) {
 	drawer := ui.Box(c.Key("native-player-drawer")).Absolute().Top(0).Right(0).
 		Width(drawerWidth).Height(min(windowHeight, 618.5)).
 		Background(ui.RGBA(28, 30, 40, .72)).Border(1, ui.RGBA(255, 255, 255, .16)).Shadow(-8, 0, 32, 0, ui.RGBA(0, 0, 0, .35)).
-		Transition(ui.ElementTransition{Duration: 240 * time.Millisecond, Ease: ui.CubicBezier(.32, .72, 0, 1), Position: true, Colors: true}).OnClick(func() {})
+		OnClick(func() {})
+	slide := drawerTransition
+	slide.Enter = &ui.Motion{X: drawerWidth}
+	slide.Exit = &ui.Motion{X: drawerWidth}
+	drawer.Transition(slide)
 	drawer.Children(func() {
 		ui.Column(c).Fill().Padding(14, 16).Gap(12).Children(func() {
 			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {

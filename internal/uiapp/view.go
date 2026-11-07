@@ -156,12 +156,20 @@ func (a *App) hostedScene() bool {
 }
 
 // Match the frontend's feedback token: short, interruptible, and paint-only.
-var pageTransition = ui.ElementTransition{
-	Duration: 160 * time.Millisecond,
-	Ease:     ui.CubicBezier(0.23, 1, 0.32, 1),
-	Colors:   true,
-	Enter:    &ui.Motion{Opacity: 0},
-}
+var (
+	drawerTransition = ui.ElementTransition{
+		Duration: 240 * time.Millisecond,
+		Ease:     ui.CubicBezier(.32, .72, 0, 1),
+		Position: true,
+		Colors:   true,
+	}
+	pageTransition = ui.ElementTransition{
+		Duration: 160 * time.Millisecond,
+		Ease:     ui.CubicBezier(0.23, 1, 0.32, 1),
+		Colors:   true,
+		Enter:    &ui.Motion{Opacity: 0},
+	}
+)
 
 func (a *App) renderBody(c *ui.Context) {
 	// Keep this parent stable, but give native pages and the media surface distinct
@@ -228,8 +236,8 @@ func (a *App) sidebarItem(c *ui.Context, id, label string, icon *ui.SVG) {
 			To:    ui.Hex("#b81235"),
 			Angle: 135,
 		}).Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.35))
-	} else if row.Hovered() {
-		row.Background(ui.RGBA(255, 255, 255, 0.08))
+	} else {
+		hoverBackground(row, ui.Transparent, ui.RGBA(255, 255, 255, 0.08))
 	}
 
 	if row.Clicked() || row.Shortcut(0, ui.KeyEnter) || row.Shortcut(0, ui.KeySpace) {
@@ -264,9 +272,7 @@ func (a *App) pillChip(c *ui.Context, key, label string, selected bool, onClick 
 		}).Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.35))
 	} else {
 		chip.Material(glass.Glass{Interactive: true}).Border(1, ui.RGBA(255, 255, 255, 0.08))
-		if chip.Hovered() {
-			chip.Border(1, ui.RGBA(255, 255, 255, 0.18))
-		}
+		hoverBackground(chip, ui.Transparent, ui.Transparent)
 	}
 	if chip.Clicked() || chip.Shortcut(0, ui.KeyEnter) || chip.Shortcut(0, ui.KeySpace) {
 		if onClick != nil {
@@ -303,8 +309,8 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 			selected := selectedKey == tKey
 			chip := ui.Row(c.Key(key+":"+tKey)).Height(28).Padding(0, 16).Radius(7).
 				Role(ui.RoleButton).Label(tLabel).AlignItems(ui.Center).Justify(ui.Center)
-			if !selected && chip.Hovered() {
-				chip.Background(ui.RGBA(255, 255, 255, 0.08))
+			if !selected {
+				hoverBackground(chip, ui.Transparent, ui.RGBA(255, 255, 255, 0.08))
 			}
 			if chip.Clicked() {
 				if onSelect != nil {
@@ -621,12 +627,9 @@ func (a *App) renderSearchBar(c *ui.Context) {
 			OnSubmit(func() { a.SetQuery(query); go a.SearchSubmitted() })
 		if query != "" {
 			clearBtn := ui.Row(c.Key("search-clear-btn")).Size(20, 20).Radius(10).
-				Background(ui.RGBA(255, 255, 255, 0.12)).
 				AlignItems(ui.Center).Justify(ui.Center).
 				Role(ui.RoleButton).Label("清空搜索")
-			if clearBtn.Hovered() {
-				clearBtn.Background(ui.RGBA(255, 255, 255, 0.22))
-			}
+			hoverBackground(clearBtn, ui.RGBA(255, 255, 255, 0.12), ui.RGBA(255, 255, 255, 0.22))
 			if clearBtn.Clicked() {
 				a.query = ""
 				a.generation++ // Discard an in-flight search response after clearing.
@@ -645,11 +648,9 @@ func (a *App) renderSearchBar(c *ui.Context) {
 			for _, suggestion := range a.suggestions {
 				s := suggestion
 				chip := ui.Row(c.Key("sug:"+s)).Height(26).Padding(3, 12).Radius(13).
-					Background(ui.RGBA(255, 255, 255, 0.06)).Border(1, ui.RGBA(255, 255, 255, 0.09)).
+					Border(1, ui.RGBA(255, 255, 255, 0.09)).
 					Role(ui.RoleButton).Label(s)
-				if chip.Hovered() {
-					chip.Background(ui.RGBA(255, 255, 255, 0.12))
-				}
+				hoverBackground(chip, ui.RGBA(255, 255, 255, 0.06), ui.RGBA(255, 255, 255, 0.12))
 				if chip.Clicked() {
 					a.query = s
 					go a.SearchSubmitted()
@@ -1065,11 +1066,8 @@ func (a *App) renderDetail(c *ui.Context) {
 							Angle: 135,
 						}).Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 6, 0, ui.RGBA(0, 0, 0, 0.35))
 					} else {
-						epBtn.Background(ui.RGBA(255, 255, 255, 0.05)).
-							Border(1, ui.RGBA(255, 255, 255, 0.08))
-						if epBtn.Hovered() {
-							epBtn.Background(ui.RGBA(255, 255, 255, 0.12)).Border(1, ui.RGBA(255, 255, 255, 0.16))
-						}
+						hoverBackground(epBtn, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
+						epBtn.Border(1, ui.RGBA(255, 255, 255, 0.08))
 					}
 					if epBtn.Clicked() {
 						go a.ChooseEpisode(ep.EpisodeCount)
@@ -1091,13 +1089,10 @@ func (a *App) renderDetail(c *ui.Context) {
 					toggleLabel = "收起"
 				}
 				toggle := ui.Row(c.Key("detail-episode-toggle")).Height(32).Padding(0, 14).Radius(8).
-					Background(ui.RGBA(255, 255, 255, 0.05)).
 					Border(1, ui.RGBA(255, 255, 255, 0.08)).
 					AlignItems(ui.Center).Justify(ui.Center).Gap(6).
 					Role(ui.RoleButton).Label(toggleLabel)
-				if toggle.Hovered() {
-					toggle.Background(ui.RGBA(255, 255, 255, 0.12)).Border(1, ui.RGBA(255, 255, 255, 0.16))
-				}
+				hoverBackground(toggle, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
 				if toggle.Clicked() {
 					a.detailEpisodesExpanded = !a.detailEpisodesExpanded
 				}
@@ -1263,6 +1258,11 @@ func (a *App) image(c *ui.Context, source string, width, height float32) {
 	if a.player != nil {
 		bitmap = a.player.Artwork(source)
 	}
+	artworkOpacity := float32(0)
+	if bitmap != nil {
+		artworkOpacity = 1
+	}
+	host.AnimateTo("artwork-fade", artworkOpacity, artworkFade)
 	if bitmap != nil {
 		host.Children(func() {
 			ui.Image(c, bitmap).Size(width, height).Fit(ui.Cover).Radius(10)
