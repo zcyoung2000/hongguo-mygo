@@ -849,8 +849,8 @@ func (a *App) renderDetail(c *ui.Context) {
 	}
 	scroll := ui.Scroll(c).Grow(1).Gap(14)
 	scroll.Children(func() {
-		// Top Bar with back and close buttons
-		ui.Row(c.Key("detail-top-bar")).Justify(ui.SpaceBetween).AlignItems(ui.Center).Padding(0, 0, 4, 0).Children(func() {
+		// Top Bar with a single back navigation entry.
+		ui.Row(c.Key("detail-top-bar")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).Children(func() {
 			ui.Row(c.Key("detail-top-bar-left")).AlignItems(ui.Center).Gap(12).Children(func() {
 				backBtn := ui.Row(c.Key("detail-nav-back")).Height(30).Padding(0, 14).Radius(7).
 					Material(glass.Glass{Interactive: true}).
@@ -866,20 +866,6 @@ func (a *App) renderDetail(c *ui.Context) {
 					ui.Text(c, "← 返回").FontSize(13).TextColor(ui.Hex("#ffffff")).Bold()
 				})
 				ui.Text(c, "短剧详情").FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.50))
-			})
-			closeBtn := ui.Row(c.Key("detail-nav-close")).Height(30).Padding(0, 12).Radius(7).
-				Material(glass.Glass{Interactive: true}).
-				Border(1, ui.RGBA(255, 255, 255, 0.12)).
-				AlignItems(ui.Center).Gap(4).Role(ui.RoleButton).Label("关闭详情").Focusable()
-			if closeBtn.Hovered() {
-				closeBtn.Background(ui.RGBA(255, 255, 255, 0.10))
-			}
-			if closeBtn.Clicked() || closeBtn.Shortcut(0, ui.KeyEnter) || closeBtn.Shortcut(0, ui.KeySpace) {
-				go a.NavigateHistory(-1)
-			}
-			closeBtn.Children(func() {
-				ui.Icon(c, closeIcon).Size(12, 12).TextColor(ui.RGBA(255, 255, 255, 0.85))
-				ui.Text(c, "关闭").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.85))
 			})
 		})
 
