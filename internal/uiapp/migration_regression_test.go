@@ -229,9 +229,17 @@ func TestNativeCollectionActionsFitTheMinimumWindow(t *testing.T) {
 			}
 			tt := ui.NewTester(app.Render, 1000, 640)
 			tt.SetDark(true)
-			r, ok := tt.Find(action)
-			if !ok || r.Y < 0 || r.Y+r.H > 640 || r.X < 0 || r.X+r.W > 1000 {
-				t.Fatalf("%s is clipped at the minimum window size: %+v (found=%v)", action, r, ok)
+			if view == "history" {
+				for _, label := range []string{"删除记录", "清空全部"} {
+					if _, ok := tt.Find(label); ok {
+						t.Fatalf("history still exposes %s", label)
+					}
+				}
+			} else {
+				r, ok := tt.Find(action)
+				if !ok || r.Y < 0 || r.Y+r.H > 640 || r.X < 0 || r.X+r.W > 1000 {
+					t.Fatalf("%s is clipped at the minimum window size: %+v (found=%v)", action, r, ok)
+				}
 			}
 			if dir := os.Getenv("MYGUO_NATIVE_SCREENSHOT_DIR"); dir != "" {
 				if err := os.MkdirAll(dir, 0755); err != nil {

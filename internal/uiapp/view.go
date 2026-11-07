@@ -744,19 +744,6 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 						})
 					}
 				})
-				clearBtn := ui.Row(c.Key("hist-clear-all")).Height(32).Padding(0, 14).Radius(8).
-					Background(ui.RGBA(255, 255, 255, 0.06)).
-					Border(1, ui.RGBA(255, 255, 255, 0.08)).
-					AlignItems(ui.Center).Gap(6).Role(ui.RoleButton).Label("清空全部")
-				if clearBtn.Hovered() {
-					clearBtn.Background(ui.RGBA(255, 255, 255, 0.12))
-				}
-				if clearBtn.Clicked() {
-					go a.ClearHistory()
-				}
-				clearBtn.Children(func() {
-					ui.Text(c, "清空全部").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.85))
-				})
 			})
 		})
 	}
@@ -838,7 +825,10 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 	a.library.Grids[grid].Key = func(item int) any { return library.Items[item].ID + "|" + library.Items[item].EpisodeID }
 	a.library.Grids[grid].Label = func(item int) string { return library.Items[item].Title }
 	a.cardGrid(c, "library-grid", a.library.Grids[grid], nil, library.Items, 40, func(item CatalogItem) {
-		label := map[LibraryTab]string{libraryHistory: "删除记录", libraryFavorites: "取消收藏", libraryLikes: "取消点赞", libraryReservations: "取消预约"}[tab]
+		if tab == libraryHistory {
+			return
+		}
+		label := map[LibraryTab]string{libraryFavorites: "取消收藏", libraryLikes: "取消点赞", libraryReservations: "取消预约"}[tab]
 		actBtn := ui.Row(c.Key("act:"+item.ID+"|"+label)).Height(28).Padding(0, 10).Radius(6).
 			Background(ui.RGBA(255, 255, 255, 0.05)).
 			Border(1, ui.RGBA(255, 255, 255, 0.08)).

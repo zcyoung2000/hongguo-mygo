@@ -37,7 +37,7 @@ func (s *Store) importJSONTransaction(data UserData) error {
 	}
 	now := time.Now().Unix()
 	for _, item := range data.History {
-		if item.SeriesID == "" || item.ContentType == 1 {
+		if item.SeriesID == "" {
 			continue
 		}
 		if item.UpdatedAt <= 0 {

@@ -511,10 +511,9 @@ def mod_q(c, w):
     record("Q19 WarmupFeed callable", ok, d, m)
     v, e = js(c, w, "return window.mygo.call('HongguoService.PlayEpisode', '999', '', 1, '720p').then(() => false).catch(e => typeof e === 'object' || typeof e === 'string')", timeout=25)
     record("Q20 PlayEpisode invalid rejects", v is True, f"got {v!r}", m)
-    ok, d = js_ok(c, w, "window.mygo.call('HongguoService.DeleteHistory', '999999999999').catch(() => 'rejected')")
-    record("Q21 DeleteHistory callable", ok, d, m)
-    ok, d = js_ok(c, w, "window.mygo.call('HongguoService.ClearHistory').catch(() => 'rejected')")
-    record("Q22 ClearHistory callable", ok, d, m)
+    for case, method in [("Q21", "DeleteHistory"), ("Q22", "ClearHistory")]:
+        v, e = js(c, w, f"return window.mygo.call('HongguoService.{method}').then(() => false).catch(() => true)")
+        record(f"{case} {method} unavailable", v is True, f"got {v!r}", m)
     v, e = js(c, w, "return window.mygo.call('HongguoService.ClearCache').then(r => typeof r === 'number').catch(() => false)", timeout=20)
     record("Q23 ClearCache returns number", v is True, f"got {v!r}", m)
     ok, d = js_ok(c, w, "window.mygo.call('HongguoService.ResetDevice').catch(() => 'rejected')")

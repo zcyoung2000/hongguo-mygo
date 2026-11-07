@@ -474,13 +474,15 @@ func dedupeCards(items []CatalogItem) []CatalogItem {
 
 // Existing library mutations use existing exported services and authentic rows.
 type libraryMutations interface {
-	DeleteHistory(context.Context, string) error
 	ToggleLike(context.Context, string, string, string, string, int) (bool, error)
 	ToggleFavorite(context.Context, string, string, string, string, int) (bool, error)
 	ToggleReservation(context.Context, string, string, string, string, string) (bool, error)
 }
 
 func (a *App) RemoveLibraryItem(tab LibraryTab, item CatalogItem) {
+	if tab == libraryHistory {
+		return
+	}
 	a.mu.Lock()
 	kind := map[LibraryTab]string{libraryHistory: "history", libraryFavorites: "favorite", libraryLikes: "like", libraryReservations: "reservation"}[tab]
 	key := kind + ":" + item.ID
@@ -501,8 +503,6 @@ func (a *App) RemoveLibraryItem(tab LibraryTab, item CatalogItem) {
 	}
 	var err error
 	switch tab {
-	case libraryHistory:
-		err = provider.DeleteHistory(ctx, item.ID)
 	case libraryFavorites:
 		_, err = provider.ToggleFavorite(ctx, item.ID, item.Title, item.CoverURL, item.Description, item.EpisodeCount)
 	case libraryLikes:

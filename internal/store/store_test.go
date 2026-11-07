@@ -34,9 +34,9 @@ func TestSQLiteMigrationAndStore(t *testing.T) {
       "updatedAt": 1700000000,
       "contentType": 1004
     },
-    "novel_1": {
-      "seriesId": "novel_1",
-      "title": "测试小说被过滤",
+    "short_series_1": {
+      "seriesId": "short_series_1",
+      "title": "测试真人短剧",
       "coverUrl": "http://example.com/n1.jpg",
       "episodeNum": 1,
       "contentType": 1
@@ -82,12 +82,12 @@ func TestSQLiteMigrationAndStore(t *testing.T) {
 		t.Errorf("Profile mismatch: %+v", prof)
 	}
 
-	// 3. Check history: novel filtered, drama_1 kept
+	// 3. Both motion comics and SDK content_type=1 short series survive migration.
 	hist, err := store.GetHistory()
 	if err != nil {
 		t.Fatalf("GetHistory failed: %v", err)
 	}
-	if len(hist) != 1 || hist[0].SeriesID != "drama_1" {
+	if len(hist) != 2 {
 		t.Errorf("History mismatch: len=%d, %+v", len(hist), hist)
 	}
 

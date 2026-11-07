@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"io"
 	"log"
@@ -30,10 +31,6 @@ func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, 
 		return fmt.Errorf("历史 ID 无效")
 	}
 	s.historyMu.Lock()
-	s.cachedHistory = nil
-	s.historyCachedAt = time.Time{}
-	s.historyGeneration++
-	s.historyMu.Unlock()
 	item := HistoryItem{
 		SeriesID:      seriesID,
 		Title:         title,
@@ -45,16 +42,26 @@ func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, 
 		TotalEpisodes: totalEpisodes,
 		ContentType:   1004,
 	}
+	if existing, ok := s.store.GetHistoryItem(seriesID); ok && existing.ContentType != 0 {
+		item.ContentType = existing.ContentType
+	}
 	if err := s.store.SaveHistory(item, session.scope); err != nil {
+		s.historyMu.Unlock()
 		return err
 	}
+	s.cachedHistory = nil
+	s.historyCachedAt = time.Time{}
+	s.historyGeneration++
 	stored, ok := s.store.GetHistoryItem(seriesID)
 	if !ok {
 		stored = item
 	}
 	if err := s.store.QueueHistoryUpload(stored, episodeID, session.scope); err != nil {
+		s.historyMu.Unlock()
 		return err
 	}
+	s.historyMu.Unlock()
+
 	s.touchHistoryMutation()
 	s.triggerPendingHistorySync()
 	return nil
@@ -197,7 +204,8 @@ func (s *Service) fetchRemoteHistoryPage(ctx context.Context, offset int64) (*re
 	}
 
 	var histResp struct {
-		Data struct {
+		Code int `json:"code"`
+		Data *struct {
 			VideoData  []remoteHistoryRow `json:"data_list"`
 			NextOffset int64              `json:"next_offset"`
 			HasMore    bool               `json:"has_more"`
@@ -205,6 +213,9 @@ func (s *Service) fetchRemoteHistoryPage(ctx context.Context, offset int64) (*re
 	}
 	if err := json.Unmarshal(body, &histResp); err != nil {
 		return nil, err
+	}
+	if histResp.Code != 0 || histResp.Data == nil || histResp.Data.VideoData == nil {
+		return nil, fmt.Errorf("历史同步响应无效 (code=%d)", histResp.Code)
 	}
 	page := &remoteHistoryPage{
 		Items:      histResp.Data.VideoData,
@@ -314,7 +325,6 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 	var histBatch []HistoryItem
 	remoteSnapshot := make([]HistoryItem, 0, len(latestByID))
 	resolvedRemote := 0
-	queuedNovelDeletes := 0
 	for _, it := range latestByID {
 		id := it.SeriesID
 		title := ""
@@ -325,13 +335,6 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 		durationSec := 0.0
 
 		if detail, ok := detailsMap[id]; ok {
-			if detail.Series.ContentType == 1 {
-				if err := s.store.DeleteHistory(id); err == nil {
-					queuedNovelDeletes++
-				}
-				resolvedRemote++
-				continue
-			}
 			contentType = int(detail.Series.ContentType)
 			if detail.Series.Title != "" {
 				title = detail.Series.Title
@@ -340,27 +343,46 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 			epCount = detail.Series.EpisodeCount
 			intro = detail.Series.Description
 		} else if exist, ok := s.store.GetHistoryItem(id); ok {
-			if exist.ContentType == 1 {
-				if err := s.store.DeleteHistory(id); err == nil {
-					queuedNovelDeletes++
-				}
-				resolvedRemote++
-				continue
-			}
 			contentType = exist.ContentType
 			title = exist.Title
 			cover = exist.CoverURL
 			epCount = exist.TotalEpisodes
 			intro = exist.Intro
-			durationSec = exist.DurationSec
+			if exist.EpisodeNum == it.VidIndex+1 {
+				durationSec = exist.DurationSec
+			}
 		} else {
 			// Never synthesize placeholder metadata or progress values.
 			continue
 		}
 
+		if it.EpisodeCount > 0 {
+			epCount = it.EpisodeCount
+		}
 		epNum := it.VidIndex + 1
 		if epNum <= 0 {
 			epNum = 1
+		}
+		// The remote list has no reliable duration. Resolve the watched final
+		// episode through the existing SDK episode provider, never a guessed value.
+		if local, ok := s.store.GetHistoryItem(id); ok && local.EpisodeNum == epNum && local.DurationSec > 0 {
+			durationSec = local.DurationSec
+		}
+		if durationSec <= 0 && epCount > 0 && epNum == epCount {
+			if episodes, err := s.episodes(ctx, id); err == nil && episodes != nil {
+				for _, episode := range episodes.Items {
+					if episode.Number != epNum {
+						continue
+					}
+					durationSec = episode.Duration.Seconds()
+					if durationSec <= 0 && s.client != nil {
+						if playback, err := s.client.ResolvePlayback(ctx, episode.ID, sdk.PlaybackOptions{}); err == nil && playback != nil {
+							durationSec = float64(playback.DurationSeconds)
+						}
+					}
+					break
+				}
+			}
 		}
 		posSec := float64(it.CurrentPlayTime) / 1000
 		updatedAt := it.LastWatchTime / 1000
@@ -383,15 +405,19 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 		}
 		if hasLocal && exist.UpdatedAt >= updatedAt {
 			current = exist
+			// Metadata enrichment must not roll back a newer local position.
+			if current.EpisodeNum == epNum && current.DurationSec <= 0 {
+				current.DurationSec = durationSec
+			}
+			if current.TotalEpisodes <= 0 {
+				current.TotalEpisodes = epCount
+			}
 		}
 		remoteSnapshot = append(remoteSnapshot, current)
-		if hasLocal && exist.UpdatedAt >= updatedAt {
-			continue
-		}
 
 		histBatch = append(histBatch, current)
 	}
-	// Every non-novel remote row is represented in remoteSnapshot: either as a
+	// Every remote row is represented in remoteSnapshot: either as a
 	// newly merged row or as the newer local row retained above.
 	resolvedRemote += len(remoteSnapshot)
 
@@ -428,39 +454,6 @@ func (s *Service) syncRemoteHistory(ctx context.Context, generation uint64) erro
 	s.cachedHistory = list
 	s.historyCachedAt = time.Now()
 	s.historyMu.Unlock()
-	if queuedNovelDeletes > 0 {
-		s.touchHistoryMutation()
-		s.triggerPendingHistorySync()
-	}
-	return nil
-}
-func (s *Service) DeleteHistory(ctx context.Context, seriesID string) error {
-	session := s.currentSyncSession()
-	s.historyMu.Lock()
-	s.cachedHistory = nil
-	s.historyCachedAt = time.Time{}
-	s.historyGeneration++
-	s.historyMu.Unlock()
-	if err := s.store.DeleteHistory(seriesID, session.scope); err != nil {
-		return err
-	}
-	s.touchHistoryMutation()
-	s.triggerPendingHistorySync()
-	return nil
-}
-
-func (s *Service) ClearHistory(ctx context.Context) error {
-	session := s.currentSyncSession()
-	s.historyMu.Lock()
-	s.cachedHistory = nil
-	s.historyCachedAt = time.Time{}
-	s.historyGeneration++
-	s.historyMu.Unlock()
-	if err := s.store.ClearHistory(session.scope); err != nil {
-		return err
-	}
-	s.touchHistoryMutation()
-	s.triggerPendingHistorySync()
 	return nil
 }
 

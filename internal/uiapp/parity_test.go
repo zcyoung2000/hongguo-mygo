@@ -229,10 +229,6 @@ type mutationProvider struct {
 }
 
 func (p *mutationProvider) add(s string) { p.mu.Lock(); p.calls = append(p.calls, s); p.mu.Unlock() }
-func (p *mutationProvider) DeleteHistory(_ context.Context, id string) error {
-	p.add("delete:" + id)
-	return nil
-}
 func (p *mutationProvider) ToggleFavorite(_ context.Context, id, _, _, _ string, _ int) (bool, error) {
 	p.add("favorite:" + id)
 	return false, nil

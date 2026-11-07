@@ -130,17 +130,6 @@ func TestFavoriteProviderUpdatesState(t *testing.T) {
 	}
 }
 
-func TestHistoryClearUsesProvider(t *testing.T) {
-	clearer := &fakeHistoryClear{}
-	app := NewTestApp(nil)
-	app.historyClear = clearer
-	app.ClearHistory()
-	waitFor(time.Second, func() bool { return clearer.calls.Load() == 1 })
-	if clearer.calls.Load() != 1 {
-		t.Fatalf("clear calls=%d", clearer.calls.Load())
-	}
-}
-
 func TestPlayerBridgeUsesPlaybackProvider(t *testing.T) {
 	source := &fakePlayback{playback: &ipc.PlaybackDTO{
 		SeriesID: "123456", EpisodeID: "654321", EpisodeNum: 2, Title: "第2集",
