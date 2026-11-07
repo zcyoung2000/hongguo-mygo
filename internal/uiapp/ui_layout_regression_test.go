@@ -1,13 +1,43 @@
 package uiapp
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
 )
+
+func TestNativeCardInteractionUsesSpringAndExplicitArtworkFade(t *testing.T) {
+	if artworkFade.Duration != 320*time.Millisecond || !artworkFade.NonMotion {
+		t.Fatal("artwork reveal must be paint-only and reduced-motion safe")
+	}
+}
+
+func TestCatalogFrameBudget(t *testing.T) {
+	items := make([]CatalogItem, 240)
+	for index := range items {
+		items[index] = CatalogItem{
+			ID: fmt.Sprintf("series-%d", index), EpisodeID: "1",
+			Title: fmt.Sprintf("性能样本 %d", index), CoverURL: fmt.Sprintf("perf:%d", index),
+		}
+	}
+	app := NewTestApp(nil)
+	app.catalog.Items = items
+	app.OpenView("discover")
+	tester := ui.NewTester(app.Render, 1200, 800)
+	tester.Frame()
+	if tester.FramePending() {
+		tester.Advance(320 * time.Millisecond)
+		tester.Frame()
+		if tester.FramePending() {
+			t.Fatal("loaded catalog requested continuous rebuild frames")
+		}
+	}
+}
 
 func TestResponsiveDramaGeometryMatchesAcrossNativePages(t *testing.T) {
 	items := []CatalogItem{

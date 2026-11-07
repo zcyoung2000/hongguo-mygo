@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/beilunyang/openhongguo v0.1.2-0.20261031062445-b587ef33068e
 	github.com/ebitengine/purego v0.11.1
-	github.com/egoist/mygo v0.7.4-0.20261031023127-afdd70dfc0c8
+	github.com/egoist/mygo v0.8.4-0.20261107092838-4219d257423d
 	modernc.org/sqlite v1.61.0
 )
 

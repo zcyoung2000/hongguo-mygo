@@ -2,6 +2,7 @@ package uiapp
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -10,6 +11,12 @@ const (
 	posterAspectRatio float32 = float32(4) / float32(3)
 	dramaMinCardWidth float32 = 160
 	dramaCardGap      float32 = 14
+)
+
+var (
+	artworkFade             = ui.Animation{Duration: 320 * time.Millisecond, NonMotion: true}
+	cardSpring              = ui.Snappy
+	feedbackAnimationValues = ui.Animation{Duration: 120 * time.Millisecond}
 )
 
 func stableDramaKey(item CatalogItem, fallback int) any {

@@ -184,6 +184,19 @@ var drawerTransition = ui.ElementTransition{
 	Colors:   true,
 }
 
+func hoverBackground(element ui.Element, idle, hovered ui.Color) ui.Element {
+	element.Background(element.AnimateColor("background", idle, feedbackAnimationValues))
+	if element.Hovered() {
+		element.Background(element.AnimateColor("background", hovered, feedbackAnimationValues))
+	}
+	pose := ui.Pose{}
+	if element.Pressed() {
+		pose.Scale = 0.98
+	}
+	element.AnimatePose(pose, cardSpring)
+	return element
+}
+
 // Match the frontend's feedback token: short, interruptible, and paint-only.
 var pageTransition = ui.ElementTransition{
 	Duration: 160 * time.Millisecond,
@@ -258,7 +271,7 @@ func (a *App) sidebarItem(c *ui.Context, id, label string, icon *ui.SVG) {
 			Angle: 135,
 		}).Shadow(0, 2, 8, 0, ui.RGBA(0, 0, 0, 0.35))
 	} else if row.Hovered() {
-		row.Background(ui.RGBA(255, 255, 255, 0.08))
+		hoverBackground(row, ui.Transparent, ui.RGBA(255, 255, 255, 0.08))
 	}
 
 	if row.Clicked() || row.Shortcut(0, ui.KeyEnter) || row.Shortcut(0, ui.KeySpace) {
@@ -508,7 +521,7 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 		Width(width).MinWidth(width).MaxWidth(width).Gap(6)
 	shouldOpen := item.Kind != "source_novel" && (a.view != "reservations" || !item.Upcoming)
 	if shouldOpen && card.Hovered() {
-		card.Background(ui.RGBA(255, 255, 255, 0.04))
+		hoverBackground(card, ui.Transparent, ui.RGBA(255, 255, 255, 0.04))
 	}
 	if shouldOpen && (card.Clicked() || card.Shortcut(0, ui.KeyEnter) || card.Shortcut(0, ui.KeySpace)) {
 		go a.OpenItem(item)
@@ -1289,8 +1302,11 @@ func (a *App) image(c *ui.Context, source string, width, height float32) {
 	}
 	if bitmap != nil {
 		host.Children(func() {
-			ui.Image(c, bitmap).Size(width, height).Fit(ui.Cover).Radius(10)
+			loaded := host.AnimateTo("artwork", 1, artworkFade)
+			ui.Image(c, bitmap).Size(width, height).Fit(ui.Cover).Radius(10).Opacity(loaded)
 		})
+	} else {
+		host.AnimateTo("artwork", 0, artworkFade)
 	}
 }
 
