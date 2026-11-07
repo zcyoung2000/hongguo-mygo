@@ -64,6 +64,9 @@ var (
 func (a *App) Render(c *ui.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.player != nil {
+		a.player.beginArtworkFrame()
+	}
 	theme := hongguoTheme(c)
 	c.SetTheme(&theme)
 	width := a.sidebarWidth
@@ -1241,15 +1244,29 @@ func (a *App) errorView(c *ui.Context, message string, retry func()) {
 }
 
 func (a *App) image(c *ui.Context, source string, width, height float32) {
+	// Always retain the same sized host, whether loading, failed or decoded.
+	// Bounds are from the previous layout, so wait one frame for new hosts.
+	host := ui.Box(c).Size(width, height).Radius(10).Clip().Background(c.Theme().SurfaceHover)
+	bounds := host.Bounds()
+	if bounds.W <= 0 || bounds.H <= 0 {
+		c.Invalidate()
+		return
+	}
+	windowWidth, windowHeight := c.Size()
+	const preload = float32(300)
+	if bounds.Y+bounds.H < -preload || bounds.Y > windowHeight+preload ||
+		bounds.X+bounds.W < 0 || bounds.X > windowWidth {
+		return
+	}
 	var bitmap ui.ImageSource
 	if a.player != nil {
 		bitmap = a.player.Artwork(source)
 	}
-	if bitmap == nil {
-		ui.Box(c).Size(width, height).Radius(10).Background(c.Theme().SurfaceHover)
-		return
+	if bitmap != nil {
+		host.Children(func() {
+			ui.Image(c, bitmap).Size(width, height).Fit(ui.Cover).Radius(10)
+		})
 	}
-	ui.Image(c, bitmap).Size(width, height).Fit(ui.Cover).Radius(10)
 }
 
 func formatEpisode(number int) string {
