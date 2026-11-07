@@ -13,7 +13,7 @@ func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *u
 	width := host.Bounds().W
 	baseTheme := *c.Theme()
 	gridTheme := baseTheme
-	gridTheme.Spacing = 8 // GridView derives its column and row gaps from Space(2).
+	gridTheme.Spacing = 11 // Keep the visible card gap near 14 DIPs; GridView uses Space(2).
 	gap := gridTheme.Space(2)
 	columns := max(1, int((width+gap)/(dramaMinCardWidth+gap)))
 	cardWidth := max(150, (width-float32(columns-1)*gap)/float32(columns)-4)

@@ -162,6 +162,10 @@ type App struct {
 	rank                        RankingState
 	releases                    ReleaseState
 	actor                       ActorState
+	searchGrid                  *ui.GridState
+	catalogGrid                 *ui.GridState
+	releaseGrid                 *ui.GridState
+	actorWorksGrid              *ui.GridState
 	suggestions                 []string
 	suggestionVersion           uint64
 	suggestionIndex             int

@@ -372,81 +372,74 @@ func (a *App) renderCatalog(c *ui.Context) {
 	catalog := a.catalog
 	a.maybeLoadMore(a.catalogScroll.Y, a.catalogScroll.MaxY, catalog.HasMore, catalog.Loading || catalog.LoadingMore, a.LoadMoreCatalog)
 
-	scroll := ui.Scroll(c.Key("catalog-page-scroll")).Grow(1).Gap(14).TrackScroll(&a.catalogScroll)
-	scroll.Children(func() {
-		a.renderSearchBar(c)
-		pageHeader(c, "发现短剧", "按体裁和筛选条件浏览真实目录")
-
-		ui.Column(c.Key("catalog-filter-card")).Padding(14, 18).Gap(10).Radius(14).
-			Material(glass.Glass{Clarity: 0.15}).
-			Border(1, ui.RGBA(255, 255, 255, 0.08)).Children(func() {
-			ui.Row(c.Key("genre-row")).Gap(12).AlignItems(ui.Start).Children(func() {
-				ui.Text(c, "体裁").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
-				ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
-					for index, genre := range catalog.Genre {
-						gIndex := index
-						selected := gIndex == catalog.GenreIndex
-						a.pillChip(c, "genre:"+genre, genre, selected, func() {
-							go a.SelectGenre(gIndex)
-						})
-					}
-				})
-			})
-			if len(catalog.Filters) > 0 {
-				for rowIndex, row := range catalog.Filters {
-					rIdx := rowIndex
-					rTitle := row.Title
-					rOptions := row.Options
-					selected := 0
-					if rIdx < len(catalog.Selection) {
-						selected = catalog.Selection[rIdx]
-					}
-					ui.Row(c.Key(fmt.Sprintf("filter-row-%d", rIdx))).Gap(12).AlignItems(ui.Start).Children(func() {
-						ui.Text(c, rTitle).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
-						ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
-							for optIndex, opt := range rOptions {
-								oIdx := optIndex
-								oLabel := opt.Label
-								a.pillChip(c, fmt.Sprintf("opt-%d-%d", rIdx, oIdx), oLabel, oIdx == selected, func() {
-									go a.SelectFilter(rIdx, oIdx)
-								})
-							}
-						})
-					})
-				}
-			}
-		})
-
-		if catalog.Loading && len(catalog.Items) == 0 {
+	a.renderCatalogControls(c, catalog)
+	if catalog.Loading && len(catalog.Items) == 0 {
+		ui.Column(c.Key("discover-loading")).Grow(1).Gap(14).Children(func() {
 			ui.Text(c, "正在加载目录...").TextColor(c.Theme().TextMuted)
 			a.filterSkeleton(c)
 			a.gridSkeleton(c, 12, gridContentWidth(c))
-			return
-		}
-		if catalog.Error != "" {
-			a.errorView(c, catalog.Error, func() { go a.loadCatalog(len(catalog.Items) > 0) })
-			if len(catalog.Items) == 0 {
-				return
-			}
-		}
-		if len(catalog.Items) == 0 {
-			a.emptyView(c, "暂无短剧", "换个筛选条件试试")
-			return
-		}
-
-		availWidth := scroll.LayoutBounds().W
-		if availWidth <= 0 {
-			availWidth = 980
-		}
-		cols := dramaColumns(availWidth)
-		cardWidth := dramaCardWidth(availWidth)
-		ui.Grid(c.Key("catalog-grid-flow")).Columns(cols).Gap(dramaCardGap).Children(func() {
-			for index, item := range catalog.Items {
-				c.Key(stableDramaKey(item, index))
-				a.catalogCardSized(c, item, cardWidth)
-			}
 		})
-		a.scrollLoading(c, catalog.LoadingMore)
+		return
+	}
+	if catalog.Error != "" {
+		a.errorView(c, catalog.Error, func() { go a.loadCatalog(len(catalog.Items) > 0) })
+		if len(catalog.Items) == 0 {
+			return
+		}
+	}
+	if len(catalog.Items) == 0 {
+		a.emptyView(c, "暂无短剧", "换个筛选条件试试")
+		return
+	}
+	if a.catalogGrid == nil {
+		a.catalogGrid = &ui.GridState{}
+	}
+	configureDramaGrid(a.catalogGrid, catalog.Items)
+	a.cardGrid(c, "catalog-grid", a.catalogGrid, &a.catalogScroll, catalog.Items, catalogFooterHeight, nil).Grow(1)
+	a.scrollLoading(c, catalog.LoadingMore)
+}
+
+func (a *App) renderCatalogControls(c *ui.Context, catalog Catalog) {
+	pageHeader(c, "发现短剧", "按体裁和筛选条件浏览真实目录")
+	a.renderSearchBar(c)
+	ui.Column(c.Key("catalog-filter-card")).Padding(14, 18).Gap(10).Radius(14).
+		Material(glass.Glass{Clarity: 0.15}).
+		Border(1, ui.RGBA(255, 255, 255, 0.08)).Children(func() {
+		ui.Row(c.Key("genre-row")).Gap(12).AlignItems(ui.Start).Children(func() {
+			ui.Text(c, "体裁").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
+			ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
+				for index, genre := range catalog.Genre {
+					gIndex := index
+					selected := gIndex == catalog.GenreIndex
+					a.pillChip(c, "genre:"+genre, genre, selected, func() {
+						go a.SelectGenre(gIndex)
+					})
+				}
+			})
+		})
+		if len(catalog.Filters) > 0 {
+			for rowIndex, row := range catalog.Filters {
+				rIdx := rowIndex
+				rTitle := row.Title
+				rOptions := row.Options
+				selected := 0
+				if rIdx < len(catalog.Selection) {
+					selected = catalog.Selection[rIdx]
+				}
+				ui.Row(c.Key(fmt.Sprintf("filter-row-%d", rIdx))).Gap(12).AlignItems(ui.Start).Children(func() {
+					ui.Text(c, rTitle).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
+					ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
+						for optIndex, opt := range rOptions {
+							oIdx := optIndex
+							oLabel := opt.Label
+							a.pillChip(c, fmt.Sprintf("opt-%d-%d", rIdx, oIdx), oLabel, oIdx == selected, func() {
+								go a.SelectFilter(rIdx, oIdx)
+							})
+						}
+					})
+				})
+			}
+		}
 	})
 }
 
@@ -699,7 +692,10 @@ func (a *App) renderSearch(c *ui.Context) {
 		a.emptyView(c, "暂无搜索结果", "请尝试其他关键词")
 		return
 	}
-	a.cardGrid(c, "search-grid", nil, nil, search.Items, 0, nil).Grow(1)
+	if a.searchGrid == nil {
+		a.searchGrid = &ui.GridState{}
+	}
+	a.cardGrid(c, "search-grid", a.searchGrid, nil, search.Items, 0, nil).Grow(1)
 }
 
 func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
@@ -715,10 +711,20 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		library, grid = state.Reserved, 3
 	}
 
+	switch tab {
+	case libraryHistory:
+		pageHeader(c, "观看历史", "真实本地播放记录")
+	case libraryFavorites:
+		pageHeader(c, "我的收藏", "保存在本机的短剧")
+	case libraryLikes:
+		pageHeader(c, "我的点赞", "真实点赞记录")
+	case libraryReservations:
+		pageHeader(c, "我的预约", "新剧上线提醒")
+	}
+
 	if tab == libraryHistory {
 		ui.Row(c.Key("history-header")).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Gap(14).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "观看历史").FontSize(20).Bold().TextColor(ui.Hex("#ffffff"))
 				a.renderSlidingTabs(c, "hist-tabs", "history-filter", []slidingTabItem{
 					{"", "全部"},
 					{"unwatched", "未看完"},
@@ -757,13 +763,8 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 	if tab == libraryFavorites || tab == libraryLikes {
 		favCount := libraryCountLabel(state.Favorites)
 		likeCount := libraryCountLabel(state.Likes)
-		title := "我的收藏"
-		if tab == libraryLikes {
-			title = "我的点赞"
-		}
 		ui.Row(c.Key("fav-header")).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, title).FontSize(20).Bold().TextColor(ui.Hex("#ffffff"))
 				ui.Row(c).Padding(3, 10).Radius(12).Background(ui.RGBA(255, 255, 255, 0.06)).Children(func() {
 					ui.Textf(c, "共 %s 部收藏 · %s 个点赞", favCount, likeCount).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
 				})
@@ -788,7 +789,6 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		total := len(library.Items)
 		ui.Row(c.Key("res-header")).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, "我的预约").FontSize(20).Bold().TextColor(ui.Hex("#ffffff"))
 				ui.Row(c).Padding(3, 10).Radius(12).Background(ui.RGBA(255, 255, 255, 0.06)).Children(func() {
 					ui.Textf(c, "新剧预约 · 共 %d 部 · 已上线 %d · 待上线 %d", total, online, pending).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
 				})
@@ -870,6 +870,7 @@ func (a *App) renderDetail(c *ui.Context) {
 		a.errorView(c, detail.Error, func() { go a.OpenDetail(detail.ID) })
 		return
 	}
+	pageHeader(c, "短剧详情", "真实剧集信息")
 	scroll := ui.Scroll(c.Key("detail-page-scroll")).Grow(1).Gap(c.Theme().Space(2) + 2).TrackScroll(&a.detailScroll)
 	scroll.Children(func() {
 		// Top Bar with a single back navigation entry.

@@ -24,7 +24,7 @@ type RankingState struct {
 	Contents               []model.RankContent
 	Content, Board, Cursor string
 	Items                  []ipc.RankItemDTO
-	Grid                   *ui.GridState
+	List                   *ui.ListState
 	Loading, HasMore       bool
 	Error                  string
 	version                uint64
@@ -35,6 +35,7 @@ type ReleaseState struct {
 	Date     string
 	Dates    []string
 	Items    []CatalogItem
+	Grid     *ui.GridState
 	Loading  bool
 	Error    string
 	version  uint64
@@ -44,6 +45,7 @@ type ActorState struct {
 	Profile          *ipc.ActorProfileDTO
 	Works            []CatalogItem
 	Cursor           string
+	WorksGrid        *ui.GridState
 	HasMore, Loading bool
 	Error            string
 	version          uint64

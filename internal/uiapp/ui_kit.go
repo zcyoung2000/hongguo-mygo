@@ -8,9 +8,12 @@ import (
 )
 
 const (
-	posterAspectRatio float32 = float32(4) / float32(3)
-	dramaMinCardWidth float32 = 160
-	dramaCardGap      float32 = 14
+	posterAspectRatio    float32 = float32(4) / float32(3)
+	dramaMinCardWidth    float32 = 160
+	dramaCardGap         float32 = 14
+	catalogFooterHeight  float32 = 40
+	pageContentTopSpace  float32 = 14
+	pageContentBottomPad float32 = 12
 )
 
 var (
@@ -97,6 +100,15 @@ func pageHeader(c *ui.Context, title, subtitle string) {
 		ui.Text(c, title).FontSize(20).Bold().LetterSpacing(-0.4).TextColor(c.Theme().Text).SingleLine()
 		if subtitle != "" {
 			ui.Text(c, subtitle).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
+		}
+	})
+}
+
+func sectionHeader(c *ui.Context, title, detail string) {
+	ui.Row(c.Key("section-header:" + title)).AlignItems(ui.Baseline).Gap(10).Children(func() {
+		ui.Text(c, title).FontSize(17).Bold().TextColor(c.Theme().Text)
+		if detail != "" {
+			ui.Text(c, detail).FontSize(12).TextColor(c.Theme().TextMuted)
 		}
 	})
 }

@@ -13,6 +13,7 @@ import (
 func (a *App) renderRank(c *ui.Context) {
 	rank := a.rank
 	pageHeader(c, "排行榜", "真实热度榜单")
+	sectionHeader(c, "榜单", "按内容类型和榜单切换")
 	a.maybeLoadMore(a.rankScroll.Y, a.rankScroll.MaxY, rank.HasMore, rank.Loading, func() { a.LoadRank(true) })
 
 	// Top Category Switcher Track: [全部] [系列剧] [漫剧] [真人剧] [AI剧] [演员]
@@ -66,12 +67,21 @@ func (a *App) renderRank(c *ui.Context) {
 		a.emptyView(c, "暂无上榜短剧", "可以选择其他榜单")
 		return
 	}
-	ui.Scroll(c.Key("rank-scroll")).TrackScroll(&a.rankScroll).Grow(1).Gap(10).Children(func() {
-		for index, item := range rank.Items {
-			a.rankItem(c, index, item)
-		}
+	if a.rank.List == nil {
+		a.rank.List = &ui.ListState{}
+	}
+	a.rank.List.Key = func(row int) any {
+		item := rank.Items[row]
+		return fmt.Sprintf("%s|%s|%d", item.SeriesID, item.UserID, row)
+	}
+	a.rank.List.Label = func(row int) string { return rank.Items[row].Title }
+	ui.List(c, a.rank.List, len(rank.Items), func(row int) {
+		item := rank.Items[row]
+		a.rankItem(c, row, item)
+	}).Grow(1).TrackScroll(&a.rankScroll)
+	if rank.Loading {
 		a.scrollLoading(c, rank.Loading)
-	})
+	}
 }
 
 func (a *App) rankItem(c *ui.Context, index int, item ipc.RankItemDTO) {
@@ -195,6 +205,7 @@ func rankPositionColor(position int, promoted bool) ui.Color {
 func (a *App) renderReleases(c *ui.Context) {
 	value := a.releases
 	pageHeader(c, "新剧", "热播剧集和上线日历")
+	sectionHeader(c, "上新", "热播剧与新剧日历")
 	a.renderSlidingTabs(c, "releases-track", "releases-kind", []slidingTabItem{
 		{"hot", "热播新剧"},
 		{"calendar", "新剧日历"},
@@ -253,11 +264,15 @@ func (a *App) renderReleases(c *ui.Context) {
 		a.emptyView(c, "暂无新剧", "可以选择其他日期")
 		return
 	}
-	a.cardGrid(c, "releases-grid", nil, nil, value.Items, 0, nil).Grow(1)
+	if a.releaseGrid == nil {
+		a.releaseGrid = &ui.GridState{}
+	}
+	a.cardGrid(c, "releases-grid", a.releaseGrid, nil, value.Items, 0, nil).Grow(1)
 }
 func (a *App) renderActor(c *ui.Context) {
 	actor := a.actor
 	pageHeader(c, "演员主页", "个人资料和参演短剧")
+	sectionHeader(c, "作品", "参演短剧")
 	a.maybeLoadMore(a.actorScroll.Y, a.actorScroll.MaxY, actor.HasMore, actor.Loading || actor.Profile == nil, func() { a.loadActor(true) })
 
 	// Top Bar with back button
@@ -309,7 +324,10 @@ func (a *App) renderActor(c *ui.Context) {
 		a.gridSkeleton(c, 12, gridContentWidth(c))
 		return
 	}
-	a.cardGrid(c, "actor-grid", nil, &a.actorScroll, actor.Works, 0, nil).Grow(1)
+	if a.actorWorksGrid == nil {
+		a.actorWorksGrid = &ui.GridState{}
+	}
+	a.cardGrid(c, "actor-grid", a.actorWorksGrid, &a.actorScroll, actor.Works, 0, nil).Grow(1)
 	a.scrollLoading(c, actor.Loading)
 }
 func (a *App) renderCollection(c *ui.Context, label string, value DetailCollection, retry func()) {
