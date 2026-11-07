@@ -183,7 +183,7 @@ html, body {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out), box-shadow var(--motion-feedback) var(--ease-out);
   position: relative;
   min-width: 0;
 }
@@ -327,7 +327,7 @@ body.is-resizing-sidebar * {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out);
   --app-region: no-drag;
   -webkit-app-region: no-drag;
 }
@@ -371,7 +371,7 @@ body.is-resizing-sidebar * {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: 6px 12px;
-  transition: all 0.2s;
+  transition: background-color var(--motion-surface) var(--ease-out), border-color var(--motion-surface) var(--ease-out), color var(--motion-surface) var(--ease-out), transform var(--motion-surface) var(--ease-out);
 }
 
 .search-input-wrap:focus-within {
@@ -662,7 +662,7 @@ body.is-resizing-sidebar * {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out), box-shadow var(--motion-feedback) var(--ease-out);
 }
 
 .cat-chip:hover {
@@ -823,7 +823,7 @@ body.is-resizing-sidebar * {
   align-items: center;
   justify-content: center;
   color: #fff;
-  transition: all 0.2s ease;
+  transition: background-color var(--motion-surface) var(--ease-out), border-color var(--motion-surface) var(--ease-out), color var(--motion-surface) var(--ease-out), box-shadow var(--motion-surface) var(--ease-out), transform var(--motion-surface) var(--ease-out);
 }
 
 .rail-icon svg {
@@ -1319,7 +1319,7 @@ body.is-resizing-sidebar * {
   border-radius: var(--radius-sm);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out);
 }
 
 .btn-subtle:hover {
@@ -1369,11 +1369,13 @@ body.is-resizing-sidebar * {
   position: relative;
   width: 100%;
   aspect-ratio: 3 / 4;
+  contain: layout paint;
   background: #1c1d27;
   overflow: hidden;
 }
 
 .card-poster {
+  contain: strict;
   transition: transform var(--motion-feedback) ease;
   width: 100%;
   height: 100%;
@@ -1857,7 +1859,7 @@ body.is-resizing-sidebar * {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out);
 }
 
 .filter-chip:hover {
@@ -1898,7 +1900,7 @@ body.is-resizing-sidebar * {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out);
 }
 
 .rank-content-tab:hover {
@@ -1928,7 +1930,7 @@ body.is-resizing-sidebar * {
   color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out);
 }
 
 .rank-board-chip:hover {
@@ -1958,7 +1960,7 @@ body.is-resizing-sidebar * {
   border-radius: var(--radius-md);
   padding: 12px 18px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--motion-surface) var(--ease-out), border-color var(--motion-surface) var(--ease-out), color var(--motion-surface) var(--ease-out), transform var(--motion-surface) var(--ease-out);
 }
 
 .rank-item-card:hover {
@@ -2100,7 +2102,7 @@ body.is-resizing-sidebar * {
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: all 0.2s;
+  transition: background-color var(--motion-surface) var(--ease-out), border-color var(--motion-surface) var(--ease-out), color var(--motion-surface) var(--ease-out), transform var(--motion-surface) var(--ease-out);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -2136,7 +2138,7 @@ body.is-resizing-sidebar * {
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background-color var(--motion-surface) var(--ease-out), border-color var(--motion-surface) var(--ease-out), color var(--motion-surface) var(--ease-out), transform var(--motion-surface) var(--ease-out);
 }
 
 .actor-back-btn:hover {
@@ -2333,7 +2335,7 @@ body.is-resizing-sidebar * {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out);
   color: var(--text-secondary);
 }
 
@@ -2446,7 +2448,7 @@ body.is-resizing-sidebar * {
   justify-content: center;
   cursor: pointer;
   opacity: 0;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity var(--motion-surface) var(--ease-out), background-color var(--motion-surface) var(--ease-out);
   z-index: 5;
 }
 
@@ -2584,7 +2586,7 @@ body.is-resizing-sidebar * {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out), box-shadow var(--motion-feedback) var(--ease-out);
   --app-region: no-drag;
   -webkit-app-region: no-drag;
   user-select: none;
@@ -3245,7 +3247,7 @@ body.comments-open .video-container > video {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out);
 }
 
 .ep-btn:hover {
@@ -3486,7 +3488,7 @@ body.comments-open .video-container > video {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out), box-shadow var(--motion-feedback) var(--ease-out);
   border: 1px solid transparent;
   outline: none;
 }
@@ -4083,7 +4085,7 @@ body.comments-open .video-container > video {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: background-color var(--motion-feedback) var(--ease-out), border-color var(--motion-feedback) var(--ease-out), color var(--motion-feedback) var(--ease-out), box-shadow var(--motion-feedback) var(--ease-out);
 }
 
 .detail-heading-toggle:hover {

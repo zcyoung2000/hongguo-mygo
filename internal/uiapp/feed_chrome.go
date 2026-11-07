@@ -137,14 +137,14 @@ func (a *App) renderFeedChannels(c *ui.Context) {
 					// 3. Stationary text label: stays in place over the glider, only cross-fading color
 					ui.Row(c.Key("feed-label:" + ch.value)).Absolute().Fill().
 						AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-							txt := ui.Text(c, ch.label).FontSize(13).SingleLine().
-								Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Colors: true})
-							if isSelected {
-								txt.Bold().TextColor(ui.Hex("#ffffff"))
-							} else {
-								txt.TextColor(ui.RGBA(255, 255, 255, 0.75))
-							}
-						})
+						txt := ui.Text(c, ch.label).FontSize(13).SingleLine().
+							Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Colors: true})
+						if isSelected {
+							txt.Bold().TextColor(ui.Hex("#ffffff"))
+						} else {
+							txt.TextColor(ui.RGBA(255, 255, 255, 0.75))
+						}
+					})
 				})
 			}
 		})

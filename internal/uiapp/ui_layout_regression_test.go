@@ -1,0 +1,143 @@
+package uiapp
+
+import (
+	"os"
+	"regexp"
+	"testing"
+
+	"github.com/egoist/mygo/ui"
+	"myguo/internal/ipc"
+)
+
+func TestResponsiveDramaGeometryMatchesAcrossNativePages(t *testing.T) {
+	items := []CatalogItem{
+		{ID: "one", EpisodeID: "e1", Title: "几何一"},
+		{ID: "two", EpisodeID: "e2", Title: "几何二"},
+	}
+	app := NewTestApp(nil)
+	app.view = "search"
+	app.search.Items = items
+	app.OpenView("search")
+	tt := ui.NewTester(app.Render, 1000, 800)
+	first, firstOK := tt.Find("几何一")
+	second, secondOK := tt.Find("几何二")
+	if !firstOK || !secondOK {
+		t.Fatal("responsive search grid omitted cards")
+	}
+	step := float64(second.X - first.X)
+	width := float64(first.W)
+	if width < 150 || step-width < 20 || step-width > 22 {
+		t.Fatalf("responsive cards do not share stable columns: width=%.1f step=%.1f", width, step)
+	}
+	if posterAspectRatio != float32(4)/float32(3) {
+		t.Fatalf("poster aspect ratio changed: %v", posterAspectRatio)
+	}
+}
+
+func TestNativePagesShareHeaderRhythm(t *testing.T) {
+	tests := []struct {
+		view     string
+		subtitle string
+		prepare  func(*App)
+	}{
+		{"rank", "真实热度榜单", func(a *App) { a.rank.Items = []ipc.RankItemDTO{{Position: 1, Title: "榜单剧", SeriesID: "123456"}} }},
+		{"new", "热播剧集和上线日历", func(a *App) { a.releases.Items = []CatalogItem{{ID: "123456", Title: "新剧样本"}} }},
+		{"search", "短剧、角色和演员", func(a *App) { a.search.Items = []CatalogItem{{ID: "123456", Title: "搜索样本"}} }},
+	}
+	for _, test := range tests {
+		t.Run(test.view, func(t *testing.T) {
+			app := NewTestApp(nil)
+			test.prepare(app)
+			app.OpenView(test.view)
+			tt := ui.NewTester(app.Render, 1200, 800)
+			header, headerOK := tt.Find(test.subtitle)
+			cardTitle := map[string]string{"rank": "榜单剧", "new": "新剧样本", "search": "搜索样本"}[test.view]
+			card, cardOK := tt.Find(cardTitle)
+			if !headerOK || !cardOK {
+				t.Fatalf("page header or representative card missing: %v", tt.Texts())
+			}
+			cardTop := map[string]func() float32{
+				"rank": func() float32 { return card.Y + 37.57813 },
+				"new":  func() float32 { return card.Y + 48 },
+			}[test.view]
+			if header.Y > card.Y || (cardTop != nil && header.Y > cardTop()) {
+				t.Fatalf("header rhythm drifted: header=%+v card=%+v", header, card)
+			}
+		})
+	}
+}
+
+func TestMotionTokensUseMyGoTransitionsWithExplicitChannels(t *testing.T) {
+	if feedbackTransition.Duration > 120*1000*1000 || feedbackTransition.Position || feedbackTransition.Size {
+		t.Fatal("feedback transition is not short and paint-only")
+	}
+	if selectionTransition.Duration != 160*1000*1000 || !selectionTransition.Colors || selectionTransition.Position || selectionTransition.Size {
+		t.Fatal("selection transition has unstable timing or channels")
+	}
+	if !layoutTransition.Position || !layoutTransition.Size || !layoutTransition.Colors {
+		t.Fatal("layout transition does not declare layout channels")
+	}
+	if drawerTransition.Duration != 240*1000*1000 || !drawerTransition.Position || drawerTransition.Size {
+		t.Fatal("drawer transition uses the wrong surface timing")
+	}
+}
+
+func TestVirtualGridsUseStableItemKeys(t *testing.T) {
+	state := ui.GridState{}
+	items := []CatalogItem{
+		{ID: "series-1", EpisodeID: "episode-1", Title: "第一部"},
+		{ID: "series-2", EpisodeID: "episode-2", Title: "第二部"},
+	}
+	app := NewTestApp(nil)
+	app.view = "search"
+	ui.NewTester(app.Render, 1000, 800).Frame()
+	configureDramaGrid(&state, items)
+	for index, item := range items {
+		if state.Key(index) != item.ID+"|"+item.EpisodeID || state.Label(index) != item.Title {
+			t.Fatalf("grid key/label drifted at %d: %v %v", index, state.Key(index), state.Label(index))
+		}
+	}
+}
+
+func TestFrontendPerformanceAndHardRuleInvariants(t *testing.T) {
+	app := readFile(t, "../../frontend/app.js")
+	css := readFile(t, "../../frontend/styles.css")
+	liquid := readFile(t, "../../frontend/liquid-controls.css")
+	for _, pattern := range []string{
+		`loading="lazy" decoding="async" onerror="handleImgError[(]this[)]"`,
+		`rootMargin: '160px 0px'`,
+		`contain: layout paint`,
+		`contain: strict`,
+	} {
+		source := app
+		if pattern[0] != 'l' && pattern[0] != 'r' {
+			source = css + liquid
+		}
+		if !containsRegexp(source, pattern) {
+			t.Fatalf("frontend invariant missing: %s", pattern)
+		}
+	}
+	if containsRegexp(css+liquid, `transition:\s*all`) {
+		t.Fatal("frontend still animates every property")
+	}
+}
+
+func absDiff(a, b float64) float64 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func containsRegexp(source, pattern string) bool {
+	return regexp.MustCompile(pattern).MatchString(source)
+}

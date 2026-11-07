@@ -143,6 +143,7 @@ type App struct {
 	playerChrome                PlayerChrome
 	playerChromeKnown           bool
 	playerDrawerOpen            bool
+	playerDrawerGrid            ui.GridState
 	detailEpisodesExpanded      bool
 	detailScroll                ui.ScrollState
 	sidebarWidth                float32
