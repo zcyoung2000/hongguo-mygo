@@ -1281,6 +1281,10 @@ body.is-resizing-sidebar * {
   align-items: start;
 }
 
+#new-drama-grid {
+  row-gap: 16px;
+}
+
 .discover-load-more {
   display: flex;
   justify-content: center;
