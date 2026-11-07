@@ -7,7 +7,8 @@ import (
 )
 
 const (
-	shimmerPeriod       = 1600 * time.Millisecond
+	shimmerPeriod = 1600 * time.Millisecond
+
 	shimmerSweep        = 1100 * time.Millisecond
 	shimmerBand         = float32(260)
 	shimmerFrameRate    = float32(30)
@@ -42,9 +43,10 @@ func (s shimmer) paint(p *ui.Painter, r ui.Rect, radius float32) {
 	at := time.Duration(p.Now().UnixNano() % int64(shimmerPeriod))
 	if at >= shimmerSweep {
 		p.Fill(r, s.base, radius)
-		p.After(shimmerPeriod - at + 100*time.Millisecond)
+		p.After(shimmerPeriod - at)
 		return
 	}
+	p.After(shimmerPeriod - at)
 	p.AnimationFrameRate(shimmerFrameRate)
 	t := float32(at) / float32(shimmerSweep)
 	x := -shimmerBand/2 + t*(s.span+shimmerBand)

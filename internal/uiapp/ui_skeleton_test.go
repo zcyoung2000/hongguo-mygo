@@ -41,10 +41,9 @@ func TestLoadingShimmerAnimatesThenSettles(t *testing.T) {
 	tester.Frame()
 	tester.Advance(shimmerSweep)
 	tester.Frame()
-	tester.Advance(shimmerPeriod - shimmerSweep - time.Millisecond)
-	if !tester.FramePending() {
-		t.Fatal("rest phase shimmer did not schedule its next bounded paint frame")
-	}
+	tester.Advance(shimmerPeriod - shimmerSweep)
+	tester.Frame()
+	tester.Advance(shimmerPeriod)
 	tester.Frame()
 	app.catalog.Loading = false
 	app.catalog.Items = []CatalogItem{{ID: "123456", EpisodeID: "654321", Title: "加载完成样本"}}

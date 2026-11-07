@@ -611,7 +611,22 @@ func TestNativePageScreens(t *testing.T) {
 			item := libraryItem
 			item.Upcoming = true
 			item.PublishAt = "20261106"
-			app.library.Reserved = Library{Title: "新剧预约", Items: []CatalogItem{item}}
+			second := libraryItem
+			second.ID = "223456"
+			second.Title = "我能看到别人的情绪第三季"
+			second.Upcoming = false
+			second.PublishAt = "20261107"
+			third := libraryItem
+			third.ID = "323456"
+			third.Title = "我就是丧尸之王第二季"
+			third.Upcoming = false
+			third.PublishAt = "20261025"
+			fourth := libraryItem
+			fourth.ID = "423456"
+			fourth.Title = "十八岁的二次回响第二季"
+			fourth.Upcoming = false
+			fourth.PublishAt = "20261025"
+			app.library.Reserved = Library{Title: "新剧预约", Items: []CatalogItem{second, third, fourth, item}}
 		}},
 		{name: "detail-loading", view: "detail", prepare: func(app *App) { app.detail.Loading = true }},
 		{name: "detail-ready", view: "detail", prepare: func(app *App) { app.detail = detail }},

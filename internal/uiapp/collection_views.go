@@ -18,7 +18,7 @@ func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *u
 	columns := max(1, int((width+gap)/(dramaMinCardWidth+gap)))
 	cardWidth := max(150, (width-float32(columns-1)*gap)/float32(columns)-4)
 	configureDramaGrid(state, items)
-	height := collectionRowHeight(a.view, items) + (cardWidth-150)*4/3 + extra
+	height := collectionRowHeight(a.view, items) + cardWidth*posterAspectRatio + extra
 	host.Children(func() {
 		c.SetTheme(&gridTheme)
 		defer c.SetTheme(&baseTheme)
