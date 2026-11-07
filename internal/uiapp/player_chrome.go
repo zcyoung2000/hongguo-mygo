@@ -49,7 +49,22 @@ func (s *NativeShell) SelectPlayerEpisode(value int)   { s.App.playerControl("ep
 func (a *App) playerControl(command string, value any) {
 	a.mu.Lock()
 	host := a.media
+	player := a.player
 	a.mu.Unlock()
+	if player != nil {
+		switch command {
+		case "quality":
+			if id, ok := value.(string); ok {
+				player.SelectQuality(id)
+				return
+			}
+		case "speed":
+			if speed, ok := value.(float64); ok {
+				player.SelectSpeed(speed)
+				return
+			}
+		}
+	}
 	if host != nil {
 		host.PlayerControl(command, value)
 	}
@@ -107,26 +122,23 @@ func (a *App) renderNativePlayerControls(c *ui.Context) {
 	if !chrome.Visible {
 		return
 	}
+	if chrome.ControlsVisible {
+		a.renderNativeQualityControl(c, chrome)
+		a.renderNativeSpeedControl(c, chrome)
+		a.renderNativeEpisodeButton(c, chrome)
+	}
 	if a.playerDrawerOpen {
-		a.renderNativeEpisodeDrawer(c)
 		a.renderPlayerDrawerScrim(c)
+		a.renderNativeEpisodeDrawer(c)
 	}
 }
 
 const playerDrawerMaxWidth = 248
 
 func (a *App) renderPlayerDrawerScrim(c *ui.Context) {
-	// The drawer opens on top of the media WebView. A transparent native
-	// layer is the only way to see a click that would otherwise be sent to
-	// the web page, as MyGo routes unclaimed WebView areas to the host.
-	scrim := ui.ButtonBase(c).Label("关闭选集背景").Absolute().Top(0).Left(0).Right(playerDrawerMaxWidth).Bottom(0)
-	scrimFade := drawerTransition
-	scrimFade.Position = false
-	scrimFade.Size = false
-	scrimFade.Colors = true
-	scrimFade.Enter = &ui.Motion{Opacity: 0}
-	scrimFade.Exit = &ui.Motion{Opacity: 0}
-	scrim.Transition(scrimFade)
+	width, _ := c.Size()
+	scrim := ui.ButtonBase(c).Label("关闭选集背景").Absolute().Top(0).Left(0).
+		Width(max(0, width-playerDrawerMaxWidth)).Bottom(0)
 	scrim.Background(ui.Transparent).OnClick(a.closePlayerDrawer)
 }
 
@@ -134,23 +146,79 @@ func (a *App) nativeControlBox(c *ui.Context, key string, frame ControlFrame) ui
 	return ui.Box(c.Key(key)).Absolute().Top(frame.Y).Left(frame.X).Width(frame.W).Height(frame.H)
 }
 
+func (a *App) renderNativeQualityControl(c *ui.Context, chrome PlayerChrome) {
+	a.nativeControlBox(c, "native-player-quality", chrome.Quality).Children(func() {
+		button := ui.ButtonBase(c).Fill().Focusable().TextColor(c.Theme().Text).
+			Background(ui.RGBA(30, 32, 42, .58)).Border(1, ui.RGBA(255, 255, 255, .16)).Radius(7).Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, .28))
+		button.PopoverMenuButton(func(m *ui.Menu) {
+			for _, option := range chrome.QualityOptions {
+				item := m.Item(option.Label).Disabled(!option.Available).Radio(option.Active)
+				if item.Chosen() {
+					quality := option.ID
+					go func() {
+						a.playerControl("quality", quality)
+					}()
+				}
+			}
+		})
+		button.Label("清晰度")
+		button.Children(func() { ui.Text(c, chrome.QualityLabel).FontSize(12).Bold().SingleLine() })
+	})
+}
+
+func (a *App) renderNativeSpeedControl(c *ui.Context, chrome PlayerChrome) {
+	a.nativeControlBox(c, "native-player-speed", chrome.Speed).Children(func() {
+		button := ui.ButtonBase(c).Fill().Focusable().TextColor(c.Theme().Text).
+			Background(ui.RGBA(30, 32, 42, .58)).Border(1, ui.RGBA(255, 255, 255, .16)).Radius(7).Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, .28))
+		button.PopoverMenuButton(func(m *ui.Menu) {
+			for _, speed := range []float64{.75, 1, 1.25, 1.5, 2} {
+				item := m.Item(formatPlayerSpeed(speed)).Radio(speed == chrome.SpeedValue)
+				if item.Chosen() {
+					selected := speed
+					go func() {
+						a.playerControl("speed", selected)
+					}()
+				}
+			}
+		})
+		button.Label("倍速")
+		button.Children(func() { ui.Text(c, formatPlayerSpeed(chrome.SpeedValue)).FontSize(12).Bold().SingleLine() })
+	})
+}
+
+func (a *App) renderNativeEpisodeButton(c *ui.Context, chrome PlayerChrome) {
+	a.nativeControlBox(c, "native-player-episodes", chrome.Drawer).Children(func() {
+		button := ui.ButtonBase(c).Fill().Focusable().TextColor(c.Theme().Text).
+			Background(ui.RGBA(30, 32, 42, .58)).Border(1, ui.RGBA(255, 255, 255, .16)).Radius(7).Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, .28))
+		button.OnClick(func() {
+			a.mu.Lock()
+			a.playerDrawerOpen = !a.playerDrawerOpen
+			a.mu.Unlock()
+			a.focusMediaAfterPointer()
+			a.invalidate()
+		})
+		button.Label("选集")
+		button.Children(func() {
+			ui.Icon(c, episodesIcon).Size(18, 18)
+			ui.Text(c, "选集").FontSize(12).Bold().SingleLine()
+		})
+	})
+}
+
 func (a *App) renderNativeEpisodeDrawer(c *ui.Context) {
 	chrome := a.playerChrome
-	windowWidth, windowHeight := c.Size()
-	drawerWidth := min(float32(playerDrawerMaxWidth), max(220, windowWidth*.28))
+	_, windowHeight := c.Size()
+	drawerWidth := float32(playerDrawerMaxWidth)
+	selection := a.playerDrawerSelection
 	drawer := ui.Box(c.Key("native-player-drawer")).Absolute().Top(0).Right(0).
 		Width(drawerWidth).Height(windowHeight).
 		Background(ui.RGBA(28, 30, 40, .72)).Border(1, ui.RGBA(255, 255, 255, .16)).Shadow(-8, 0, 32, 0, ui.RGBA(0, 0, 0, .35)).
-		OnClick(func() {})
-	slide := drawerTransition
-	slide.Enter = &ui.Motion{X: drawerWidth}
-	slide.Exit = &ui.Motion{X: drawerWidth}
-	drawer.Transition(slide)
+		OnClick(a.closePlayerDrawer)
 	drawer.Children(func() {
 		ui.Column(c).Fill().Padding(14, 16).Gap(12).Children(func() {
 			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
 				ui.Column(c).Gap(2).Children(func() {
-					ui.Text(c, "选集播放").Bold()
+					ui.Text(c, "选集播放").SingleLine()
 					ui.Textf(c, "共 %d 集", chrome.TotalEpisodes).TextColor(c.Theme().TextMuted)
 				})
 				close := ui.ButtonBase(c).Label("关闭选集").Focusable().Radius(14).Padding(3, 3).
@@ -162,19 +230,15 @@ func (a *App) renderNativeEpisodeDrawer(c *ui.Context) {
 			} else {
 				a.playerDrawerGrid.Key = func(index int) any { return index + 1 }
 				a.playerDrawerGrid.Label = func(index int) string { return formatEpisode(index + 1) }
-				ui.GridView(c, &a.playerDrawerGrid, chrome.TotalEpisodes, 55, 28, func(index int) {
+				a.playerDrawerGrid.Selected = &selection
+				ui.GridView(c, &a.playerDrawerGrid, chrome.TotalEpisodes, 162, 28, func(index int) {
 					number := index + 1
-					button := ui.ButtonBase(c).Label(formatEpisode(number)).Fill().Radius(8)
-					if number == chrome.Episode {
-						button.Background(c.Theme().Accent).TextColor(c.Theme().AccentText)
-					} else {
-						button.Background(ui.RGBA(255, 255, 255, .07)).TextColor(ui.RGBA(255, 255, 255, .72))
-					}
-					button.OnClick(func() {
-						go a.playerControl("episode", number)
+					ui.ButtonBase(c).Label(formatEpisode(number)).Fill().Height(28).Radius(8).Children(func() {
+						ui.Textf(c, "%d", number).FontSize(13).Bold().SingleLine()
+					}).OnClick(func() {
+						a.playerControl("episode", number)
 						a.closePlayerDrawer()
 					})
-					button.Children(func() { ui.Textf(c, "%d", number).Bold() })
 				}).Grow(1)
 			}
 		})

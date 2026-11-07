@@ -150,21 +150,9 @@
           if (payload.seriesId) { state.detail.id = payload.seriesId; loadSeriesDetail(payload.seriesId); }
           break;
         case 'command': handleMediaCommand(payload); break;
-        case 'quality': if (typeof payload.value === 'string') changePlaybackQuality(payload.value); break;
-        case 'speed': {
-          const speed = Number(payload.value);
-          if ([0.75, 1, 1.25, 1.5, 2].includes(speed)) {
-            state.player.playbackSpeed = speed;
-            video.playbackRate = speed;
-            window.__syncPlayerChromeState?.();
-          }
-          break;
-        }
-        case 'episode': {
-          const episode = Number(payload.value);
-          if (Number.isInteger(episode) && episode >= 1 && episode <= state.player.totalEpisodes) playEpisodeNumber(episode);
-          break;
-        }
+        case 'quality': applyPlayerControlPayload(payload); break;
+        case 'speed': applyPlayerControlPayload(payload); break;
+        case 'episode': applyPlayerControlPayload(payload); break;
       }
     } catch (error) {
       changingScene = false;
@@ -173,3 +161,33 @@
     }
   };
 })();
+
+function applyPlayerControlPayload(payload) {
+  if (payload.event === 'command') {
+    switch (payload.command) {
+      case 'quality':
+        if (typeof payload.value === 'string') changePlaybackQuality(payload.value);
+        return;
+      case 'speed': {
+        const speed = Number(payload.value);
+        if ([0.75, 1, 1.25, 1.5, 2].includes(speed)) {
+          state.player.playbackSpeed = speed;
+          video.playbackRate = speed;
+          window.__syncPlayerChromeState?.();
+        }
+        return;
+      }
+      case 'episode': {
+        const episode = Number(payload.value);
+        if (Number.isInteger(episode) && episode >= 1 && episode <= state.player.totalEpisodes) playEpisodeNumber(episode);
+        return;
+      }
+      default:
+        handleMediaCommand(payload);
+    }
+    return;
+  }
+  if (payload.event === 'quality') changePlaybackQuality(payload.value);
+  if (payload.event === 'speed') applyPlayerControlPayload({event: 'command', command: 'speed', value: payload.value});
+  if (payload.event === 'episode') applyPlayerControlPayload({event: 'command', command: 'episode', value: payload.value});
+}

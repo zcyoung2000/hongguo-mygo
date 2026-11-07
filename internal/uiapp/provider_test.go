@@ -56,10 +56,12 @@ func (f *fakeFavorite) ToggleReservation(context.Context, string, string, string
 type fakePlayback struct {
 	playback *ipc.PlaybackDTO
 	calls    atomic.Int64
+	quality  string
 }
 
-func (f *fakePlayback) PlayEpisode(_ context.Context, _, _ string, num int, _ string, _ bool) (*ipc.PlaybackDTO, error) {
+func (f *fakePlayback) PlayEpisode(_ context.Context, _, _ string, num int, quality string, _ bool) (*ipc.PlaybackDTO, error) {
 	f.calls.Add(1)
+	f.quality = quality
 	if f.playback == nil {
 		return nil, nil
 	}

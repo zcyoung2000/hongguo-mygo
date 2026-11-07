@@ -144,6 +144,7 @@ type App struct {
 	playerChromeKnown           bool
 	playerFixture               bool
 	playerDrawerOpen            bool
+	playerDrawerSelection       int
 	playerDrawerGrid            ui.GridState
 	detailEpisodesExpanded      bool
 	detailScroll                ui.ScrollState

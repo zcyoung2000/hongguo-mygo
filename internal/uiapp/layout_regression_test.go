@@ -156,7 +156,7 @@ func TestCollectionRowsFitRenderedMetadata(t *testing.T) {
 		bottomText string
 		nextGapMin float64
 	}{
-		{view: "history", item: CatalogItem{ID: "1", Title: "历史剧", ResumeEpisode: 3, UpdatedAt: 1760000000}, bottomText: "看到第3集", nextGapMin: 4},
+		{view: "history", item: CatalogItem{ID: "1", Title: "历史剧", ResumeEpisode: 3, EpisodeCount: 8, UpdatedAt: 1760000000}, bottomText: "3 / 8 集", nextGapMin: 4},
 		{view: "favorites", item: CatalogItem{ID: "2", Title: "收藏剧", EpisodeCount: 8}, bottomText: "取消收藏", nextGapMin: 4},
 		{view: "likes", item: CatalogItem{ID: "3", Title: "点赞剧", EpisodeCount: 9}, bottomText: "取消点赞", nextGapMin: 4},
 		{view: "reservations", item: CatalogItem{ID: "4", Title: "预约剧", PublishAt: "2026-12-01"}, bottomText: "取消预约", nextGapMin: 4},
@@ -205,10 +205,10 @@ func TestHistoryRowsFitMultiLineTitlesAcrossRows(t *testing.T) {
 	tt := ui.NewTester(app.Render, 1280, 1200)
 	tt.Frame()
 	title, titleOK := tt.Find("谁说纨绔不能出状元：这一世我要亲手改命")
-	progress, progressOK := tt.Find("看到第1集")
+	progress, progressOK := tt.Find("1 / 80 集")
 	timeText, timeOK := tt.Find("3分钟前")
 	nextTitle, nextTitleOK := tt.Find("深海来客：红色进化纪元")
-	nextProgress, nextProgressOK := tt.Find("看到第23集")
+	nextProgress, nextProgressOK := tt.Find("23 / 88 集")
 	if !titleOK || !progressOK || !timeOK || !nextTitleOK || !nextProgressOK {
 		t.Fatalf("history metadata missing: title=%v progress=%v time=%v nextTitle=%v nextProgress=%v texts=%v", titleOK, progressOK, timeOK, nextTitleOK, nextProgressOK, tt.Texts())
 	}

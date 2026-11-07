@@ -170,16 +170,46 @@ test('native quality, speed and episode controls reuse existing player behavior'
   assert.equal(h.context.video.playbackRate, 1.5);
 });
 
+test('native command events never fall through to the media-key handler', () => {
+  const h = host();
+  h.context.state.player.qualityOptions = [
+    {id: '1080p', label: '1080P', available: true, active: false},
+    {id: '720p', label: '720P', available: true, active: true}
+  ];
+  h.send({event: 'quality', value: '1080p'});
+  h.send({event: 'speed', value: 1.25});
+  h.send({event: 'episode', value: 5});
+  assert.deepEqual(h.calls.filter(call => ['quality', 'episode', 'command'].includes(call[0])), [
+    ['quality', '1080p'],
+    ['episode', 5]
+  ]);
+  assert.equal(h.context.video.playbackRate, 1.25);
+  assert.equal(h.calls.some(call => call[0] === 'command'), false, 'player controls must not be forwarded as system media commands');
+});
+
 test('native layer never duplicates player quality, speed or episode controls', () => {
   const playerChrome = fs.readFileSync('internal/uiapp/player_chrome.go', 'utf8');
+  const css = fs.readFileSync('frontend/styles.css', 'utf8');
+  const controls = ['player-quality', 'player-speed', 'player-drawer-toggle'];
+  for (const control of controls) {
+    assert.match(css, new RegExp(`body\\.native-media #${control.replace(/[-]/g, '\\-')}[^}]*pointer-events:\\s*none`, 'm'), `${control} must not receive WebView clicks under native controls`);
+  }
   const render = playerChrome.match(/func \(a \*App\) renderNativePlayerControls[\s\S]*?\n}/)?.[0] || '';
   assert.ok(render, 'player chrome render function must remain discoverable');
-  assert.equal(render.includes('renderNativeQualityControl'), false, 'native quality button duplicates WebView');
-  assert.equal(render.includes('renderNativeSpeedControl'), false, 'native speed button duplicates WebView');
-  assert.equal(render.includes('renderNativeEpisodeButton'), false, 'native episode button duplicates WebView');
-  assert.equal(playerChrome.includes('renderNativeQualityControl'), false);
-  assert.equal(playerChrome.includes('renderNativeSpeedControl'), false);
-  assert.equal(playerChrome.includes('renderNativeEpisodeButton'), false);
+  for (const control of ['renderNativeQualityControl', 'renderNativeSpeedControl', 'renderNativeEpisodeButton']) {
+    assert.ok(render.includes(control), `native ${control} must be restored`);
+  }
+});
+
+test('native player control commands use the single embedded media dispatcher', () => {
+  const source = fs.readFileSync('frontend/native-media.js', 'utf8');
+  assert.match(source, /case 'quality': applyPlayerControlPayload\(payload\); break;/);
+  assert.match(source, /case 'speed': applyPlayerControlPayload\(payload\); break;/);
+  assert.match(source, /case 'episode': applyPlayerControlPayload\(payload\); break;/);
+  assert.match(source, /function applyPlayerControlPayload/);
+  assert.match(source, /case 'quality':\s*\n\s*if \(typeof payload\.value === 'string'\) changePlaybackQuality/);
+  assert.match(source, /case 'speed': \{\s*\n\s*const speed = Number\(payload\.value\);/);
+  assert.match(source, /case 'episode': \{\s*\n\s*const episode = Number\(payload\.value\);/);
 });
 
 test('selected player quality and speed reach the document and refresh native chrome', () => {
