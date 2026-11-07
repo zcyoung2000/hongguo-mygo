@@ -15,11 +15,15 @@ import (
 type artworkEntry struct {
 	bitmap  ui.ImageSource
 	retryAt time.Time
+	used    uint64
 }
 type artworkLoader struct {
 	mu         sync.Mutex
 	entries    map[string]artworkEntry
 	pending    map[string]bool
+	visible    map[string]bool
+	frame      map[string]bool
+	clock      uint64
 	slots      chan struct{}
 	cacheDir   string
 	proxyURL   func(string) string
@@ -53,7 +57,13 @@ func (b *PlayerBridge) Artwork(source string) ui.ImageSource {
 func (l *artworkLoader) get(source string) ui.ImageSource {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.clock++
 	entry := l.entries[source]
+	entry.used = l.clock
+	if l.frame != nil {
+		l.frame[source] = true
+	}
+	l.entries[source] = entry
 	if entry.bitmap != nil {
 		return entry.bitmap
 	}
@@ -90,17 +100,53 @@ func (l *artworkLoader) load(source string) {
 		}
 	}
 	l.mu.Lock()
-	// Bound decoded memory; evicted images can be reloaded from the disk cache.
-	if len(l.entries) >= 128 {
-		for key := range l.entries {
-			delete(l.entries, key)
-			break
-		}
-	}
-	l.entries[source] = artworkEntry{bitmap: bitmap, retryAt: time.Now().Add(time.Minute)}
+	// Keep the access order recorded when the request began. Completion order
+	// must not turn an old, offscreen request into the newest cache entry.
+	entry := l.entries[source]
+	entry.bitmap, entry.retryAt = bitmap, time.Now().Add(time.Minute)
+	l.entries[source] = entry
 	delete(l.pending, source)
+	l.trimLocked()
 	l.mu.Unlock()
 	if l.invalidate != nil {
 		l.invalidate()
+	}
+}
+
+// The previous and current frame's artwork stays pinned while a frame is
+// being built; asynchronous completions cannot evict posters still on screen.
+func (l *artworkLoader) beginFrame() {
+	l.mu.Lock()
+	l.visible, l.frame = l.frame, make(map[string]bool)
+	l.trimLocked()
+	l.mu.Unlock()
+}
+func (l *artworkLoader) trimLocked() {
+	for len(l.entries) > 128 {
+		oldest := ""
+		var used uint64 = ^uint64(0)
+		for key, entry := range l.entries {
+			if l.visible[key] || l.frame[key] || l.pending[key] {
+				continue
+			}
+			if entry.used < used {
+				oldest, used = key, entry.used
+			}
+		}
+		if oldest == "" {
+			return
+		}
+		delete(l.entries, oldest)
+	}
+}
+
+// GridView builds visible cells during layout, after App.Render returns.
+// Leave the frame open until the next render so these accesses are pinned too.
+func (b *PlayerBridge) beginArtworkFrame() {
+	b.mu.RLock()
+	loader := b.artwork
+	b.mu.RUnlock()
+	if loader != nil {
+		loader.beginFrame()
 	}
 }
