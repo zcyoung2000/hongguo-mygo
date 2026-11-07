@@ -142,6 +142,7 @@ type App struct {
 	actorScroll                 ui.ScrollState
 	playerChrome                PlayerChrome
 	playerChromeKnown           bool
+	playerFixture               bool
 	playerDrawerOpen            bool
 	playerDrawerGrid            ui.GridState
 	detailEpisodesExpanded      bool

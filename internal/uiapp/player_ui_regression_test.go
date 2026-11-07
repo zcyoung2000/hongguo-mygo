@@ -97,6 +97,7 @@ func TestPlayerChromeStaysInsideFittedVideoAndHasNoDuplicateNativeControls(t *te
 	app := NewTestApp(nil)
 	view := &mygo.WebView{}
 	app.SetMediaHost(&MediaHost{view: view})
+	app.TogglePlayerFixture()
 	app.detail = Detail{ID: "123456"}
 	app.mu.Lock()
 	app.view = "detail"
@@ -109,11 +110,15 @@ func TestPlayerChromeStaysInsideFittedVideoAndHasNoDuplicateNativeControls(t *te
 	tt := ui.NewTester(app.Render, 988, 604)
 	tt.SetScale(1)
 	tt.Frame()
-	center := tt.WebViewAt(594, 262)
-	if center == nil || tt.WebViewAt(594, 560) == nil || tt.WebViewAt(260, 560) == nil {
-		t.Fatal("playback surface must own the fitted video and control bar, with no duplicate native layer")
+	if center := tt.WebViewAt(594, 262); center != nil {
+		t.Fatal("headless visual fixture must not retain an invisible WebView hole")
 	}
-	if tt.HasText("清晰度") || tt.HasText("倍速") || tt.HasText("选集") {
+	for _, nativeOnlyControl := range []string{"清晰度", "倍速", "关闭选集"} {
+		if tt.HasText(nativeOnlyControl) {
+			t.Fatalf("native controls duplicate WebView chrome: %v", tt.Texts())
+		}
+	}
+	if !tt.HasText("720P") || !tt.HasText("1.0x") || !tt.HasText("选集") {
 		t.Fatalf("native controls duplicate WebView chrome: %v", tt.Texts())
 	}
 
