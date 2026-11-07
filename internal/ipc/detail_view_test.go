@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -104,30 +105,51 @@ func TestSeasonsToCardsAddsMissingSeasonNumbers(t *testing.T) {
 	}
 }
 
-func TestSourceNovelCardUsesSourceLabel(t *testing.T) {
-	card := sourceNovelCard(&SourceNovelDTO{
-		ID:       "book-1",
-		Title:    "原著小说",
-		Status:   "finished",
-		Reads:    12300,
-		CoverURL: "https://example.com/cover.jpg",
-		Tags:     []string{"都市", "言情"},
-	})
-	if card == nil {
-		t.Fatal("sourceNovelCard() = nil")
+func TestAdaptationsForSourceFiltersSourceAndKeepsFreshCoverFallback(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewStore err = %v", err)
 	}
-	if card.Category != "原著剧本" || card.Kind != "source_novel" {
-		t.Fatalf("card label = %q, kind = %q, want 原著剧本/source_novel", card.Category, card.Kind)
+	defer store.Close()
+
+	batch := map[string]*model.Series{
+		"wanted": {
+			SeriesSummary: model.SeriesSummary{
+				ID: "wanted", Title: "同一剧本",
+			},
+			RelatedNovelBookID: "book-1",
+		},
 	}
-	if card.BadgeText != "已完结" {
-		t.Fatalf("card.BadgeText = %q, want 已完结", card.BadgeText)
+	service := &HongguoService{
+		store: store,
+		media: &MediaServer{},
+		seriesBatch: func(context.Context, []string) ([]model.SeriesDetail, error) {
+			details := make([]model.SeriesDetail, 0, len(batch))
+			for _, detail := range batch {
+				details = append(details, model.SeriesDetail{Series: detail})
+			}
+			return details, nil
+		},
 	}
-	if card.EpisodeCount != 0 {
-		t.Fatalf("card.EpisodeCount = %d, want 0", card.EpisodeCount)
+	source := &SourceNovelDTO{ID: "book-1", Title: "原著小说"}
+	candidates := []model.SeriesSummary{
+		{ID: "source-1", Title: "同一剧本", CoverURL: "https://example.com/source-candidate.jpg"},
+		{ID: "wanted", Title: "同一剧本", CoverURL: "https://example.com/search.jpg"},
+	}
+	excludes := map[string]bool{"different": true}
+
+	cards := service.adaptationsForSource(context.Background(), "current", source, candidates, excludes)
+	if len(cards) != 1 || cards[0].ID != "wanted" {
+		t.Fatalf("cards = %+v, want only the adapted candidate", cards)
+	}
+	if service.media.ImageURL("https://example.com/search.jpg") != cards[0].CoverURL {
+		t.Fatalf("empty batch cover did not use fresh search cover through MediaServer: %q", cards[0].CoverURL)
 	}
 
-	if sourceNovelCard(nil) != nil {
-		t.Fatal("sourceNovelCard(nil) != nil")
+	batch["wanted"].CoverURL = "https://images.example/batch.jpg"
+	cards = service.adaptationsForSource(context.Background(), "current", source, candidates, excludes)
+	if len(cards) != 1 || service.media.ImageURL("https://images.example/batch.jpg") != cards[0].CoverURL {
+		t.Fatalf("present batch cover was not preferred: %+v", cards)
 	}
 }
 

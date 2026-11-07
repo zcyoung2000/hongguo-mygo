@@ -136,6 +136,7 @@ type HongguoService struct {
 	client               *sdk.Client
 	discover             func(context.Context, sdk.DiscoverOptions) (*sdk.Page[model.SeriesSummary], error)
 	resetDevice          func(context.Context) error
+	seriesBatch          func(context.Context, []string) ([]model.SeriesDetail, error)
 	store                *Store
 	media                *MediaServer
 	appDir               string

@@ -298,7 +298,7 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 		for _, tab := range tabs {
 			tKey, tLabel := tab.Key, tab.Label
 			selected := selectedKey == tKey
-			chip := ui.Row(c.Key(key + ":" + tKey)).Height(28).Padding(0, 16).Radius(7).
+			chip := ui.Row(c.Key(key+":"+tKey)).Height(28).Padding(0, 16).Radius(7).
 				Role(ui.RoleButton).Label(tLabel).AlignItems(ui.Center).Justify(ui.Center)
 			if !selected && chip.Hovered() {
 				chip.Background(ui.RGBA(255, 255, 255, 0.08))
@@ -315,7 +315,7 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 				})
 				// 2. Pure background sliding glider: slides across tabs without moving the text
 				if selected {
-					ui.Box(c.Key("sliding-pill:" + group)).Absolute().Fill().Radius(7).
+					ui.Box(c.Key("sliding-pill:"+group)).Absolute().Fill().Radius(7).
 						LinearGradient(ui.LinearGradient{
 							From:  ui.Hex("#d91b42"),
 							To:    ui.Hex("#b81235"),
@@ -330,14 +330,14 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 				// 3. Stationary text label: stays in place over the glider, only cross-fading color
 				ui.Row(c.Key("tab-label:" + group + ":" + tKey)).Absolute().Fill().
 					AlignItems(ui.Center).Justify(ui.Center).Children(func() {
-						txt := ui.Text(c, tLabel).FontSize(12).SingleLine().
-							Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Colors: true})
-						if selected {
-							txt.Bold().TextColor(ui.Hex("#ffffff"))
-						} else {
-							txt.TextColor(ui.RGBA(255, 255, 255, 0.70))
-						}
-					})
+					txt := ui.Text(c, tLabel).FontSize(12).SingleLine().
+						Transition(ui.ElementTransition{Duration: 180 * time.Millisecond, Colors: true})
+					if selected {
+						txt.Bold().TextColor(ui.Hex("#ffffff"))
+					} else {
+						txt.TextColor(ui.RGBA(255, 255, 255, 0.70))
+					}
+				})
 			})
 		}
 	})
@@ -354,42 +354,42 @@ func (a *App) renderCatalog(c *ui.Context) {
 		ui.Column(c.Key("catalog-filter-card")).Padding(14, 18).Gap(10).Radius(14).
 			Material(glass.Glass{Clarity: 0.15}).
 			Border(1, ui.RGBA(255, 255, 255, 0.08)).Children(func() {
-				ui.Row(c.Key("genre-row")).Gap(12).AlignItems(ui.Start).Children(func() {
-					ui.Text(c, "体裁").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
-					ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
-						for index, genre := range catalog.Genre {
-							gIndex := index
-							selected := gIndex == catalog.GenreIndex
-							a.pillChip(c, "genre:"+genre, genre, selected, func() {
-								go a.SelectGenre(gIndex)
-							})
-						}
-					})
-				})
-				if len(catalog.Filters) > 0 {
-					for rowIndex, row := range catalog.Filters {
-						rIdx := rowIndex
-						rTitle := row.Title
-						rOptions := row.Options
-						selected := 0
-						if rIdx < len(catalog.Selection) {
-							selected = catalog.Selection[rIdx]
-						}
-						ui.Row(c.Key(fmt.Sprintf("filter-row-%d", rIdx))).Gap(12).AlignItems(ui.Start).Children(func() {
-							ui.Text(c, rTitle).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
-							ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
-								for optIndex, opt := range rOptions {
-									oIdx := optIndex
-									oLabel := opt.Label
-									a.pillChip(c, fmt.Sprintf("opt-%d-%d", rIdx, oIdx), oLabel, oIdx == selected, func() {
-										go a.SelectFilter(rIdx, oIdx)
-									})
-								}
-							})
+			ui.Row(c.Key("genre-row")).Gap(12).AlignItems(ui.Start).Children(func() {
+				ui.Text(c, "体裁").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
+				ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
+					for index, genre := range catalog.Genre {
+						gIndex := index
+						selected := gIndex == catalog.GenreIndex
+						a.pillChip(c, "genre:"+genre, genre, selected, func() {
+							go a.SelectGenre(gIndex)
 						})
 					}
-				}
+				})
 			})
+			if len(catalog.Filters) > 0 {
+				for rowIndex, row := range catalog.Filters {
+					rIdx := rowIndex
+					rTitle := row.Title
+					rOptions := row.Options
+					selected := 0
+					if rIdx < len(catalog.Selection) {
+						selected = catalog.Selection[rIdx]
+					}
+					ui.Row(c.Key(fmt.Sprintf("filter-row-%d", rIdx))).Gap(12).AlignItems(ui.Start).Children(func() {
+						ui.Text(c, rTitle).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
+						ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
+							for optIndex, opt := range rOptions {
+								oIdx := optIndex
+								oLabel := opt.Label
+								a.pillChip(c, fmt.Sprintf("opt-%d-%d", rIdx, oIdx), oLabel, oIdx == selected, func() {
+									go a.SelectFilter(rIdx, oIdx)
+								})
+							}
+						})
+					})
+				}
+			}
+		})
 
 		if catalog.Loading && len(catalog.Items) == 0 {
 			ui.Text(c, "正在加载目录...").TextColor(c.Theme().TextMuted)
@@ -472,10 +472,11 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 	t := c.Theme()
 	card := ui.Column(c.Key(item.ID + "|" + item.EpisodeID)).Role(ui.RoleButton).Label(item.Title).Focusable().
 		Width(width).MinWidth(width).MaxWidth(width).Gap(6)
-	if card.Hovered() {
+	shouldOpen := item.Kind != "source_novel" && (a.view != "reservations" || !item.Upcoming)
+	if shouldOpen && card.Hovered() {
 		card.Background(ui.RGBA(255, 255, 255, 0.04))
 	}
-	if item.Kind != "source_novel" && (card.Clicked() || card.Shortcut(0, ui.KeyEnter) || card.Shortcut(0, ui.KeySpace)) {
+	if shouldOpen && (card.Clicked() || card.Shortcut(0, ui.KeyEnter) || card.Shortcut(0, ui.KeySpace)) {
 		go a.OpenItem(item)
 	}
 
@@ -847,7 +848,7 @@ func (a *App) renderDetail(c *ui.Context) {
 		a.errorView(c, detail.Error, func() { go a.OpenDetail(detail.ID) })
 		return
 	}
-	scroll := ui.Scroll(c).Grow(1).Gap(14)
+	scroll := ui.Scroll(c).Grow(1).Gap(c.Theme().Space(3))
 	scroll.Children(func() {
 		// Top Bar with back and close buttons
 		ui.Row(c.Key("detail-top-bar")).Justify(ui.SpaceBetween).AlignItems(ui.Center).Padding(0, 0, 4, 0).Children(func() {
@@ -884,7 +885,7 @@ func (a *App) renderDetail(c *ui.Context) {
 		})
 
 		// Hero Info Row
-		ui.Row(c.Key("detail-hero-row")).Gap(18).AlignItems(ui.Start).Children(func() {
+		ui.Row(c.Key("detail-hero-row")).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
 			a.image(c, detail.CoverURL, 160, 220)
 			header := ui.Column(c.Key("detail-hero-info")).Grow(1).Gap(8)
 			header.Children(func() {
@@ -908,8 +909,8 @@ func (a *App) renderDetail(c *ui.Context) {
 					if detail.Upcoming {
 						ui.Row(c).Padding(8, 14).Radius(8).Background(ui.RGBA(255, 255, 255, 0.06)).
 							Border(1, ui.RGBA(255, 255, 255, 0.10)).Children(func() {
-								ui.Text(c, "该剧尚未上线，上线后可继续观看").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
-							})
+							ui.Text(c, "该剧尚未上线，上线后可继续观看").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
+						})
 					} else {
 						playLabel := "播放 / 继续观看"
 						if a.resume.ResumeEpisode > 1 {
@@ -996,22 +997,22 @@ func (a *App) renderDetail(c *ui.Context) {
 		})
 
 		if detail.Source != nil {
-			ui.Row(c.Key("detail-source-card")).Padding(12, 14).Radius(10).
+			ui.Row(c.Key("detail-source-card")).Padding(c.Theme().Space(2), c.Theme().Space(4)).Radius(10).
 				Background(ui.RGBA(255, 255, 255, 0.04)).
 				Border(1, ui.RGBA(255, 255, 255, 0.08)).
-				Gap(14).AlignItems(ui.Center).Children(func() {
-					a.image(c, detail.Source.CoverURL, 54, 72)
-					ui.Column(c).Gap(4).Grow(1).Children(func() {
-						ui.Text(c, "原著小说").FontSize(11).TextColor(ui.Hex("#ff3358"))
-						ui.Text(c, detail.Source.Title).FontSize(14).Bold().TextColor(ui.Hex("#ffffff"))
-						if len(detail.Source.Tags) > 0 {
-							ui.Text(c, strings.Join(detail.Source.Tags, " · ")).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.60))
-						}
-					})
+				Gap(c.Theme().Space(3)).AlignItems(ui.Center).Children(func() {
+				a.image(c, detail.Source.CoverURL, 54, 72)
+				ui.Column(c).Gap(4).Grow(1).Children(func() {
+					ui.Text(c, "原著小说").FontSize(11).TextColor(ui.Hex("#ff3358"))
+					ui.Text(c, detail.Source.Title).FontSize(14).Bold().TextColor(ui.Hex("#ffffff"))
+					if len(detail.Source.Tags) > 0 {
+						ui.Text(c, strings.Join(detail.Source.Tags, " · ")).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.60))
+					}
 				})
+			})
 		}
 		if len(detail.Actors) > 0 {
-			ui.Column(c.Key("detail-actors-card")).Gap(8).Children(func() {
+			ui.Column(c.Key("detail-actors-card")).Gap(c.Theme().Space(2)).Children(func() {
 				ui.Text(c, "演员阵容").FontSize(15).Bold().TextColor(ui.Hex("#ffffff"))
 				ui.Row(c.Key("detail-actors-flow")).Wrap().Gap(8).Children(func() {
 					for _, actor := range detail.Actors {
@@ -1020,11 +1021,11 @@ func (a *App) renderDetail(c *ui.Context) {
 							Background(ui.RGBA(255, 255, 255, 0.06)).
 							Border(1, ui.RGBA(255, 255, 255, 0.08)).
 							AlignItems(ui.Center).Gap(6).Children(func() {
-								ui.Text(c, act.Name).FontSize(12).Bold().TextColor(ui.Hex("#ffffff"))
-								if act.Role != "" {
-									ui.Text(c, act.Role).FontSize(11).TextColor(ui.RGBA(255, 255, 255, 0.60))
-								}
-							})
+							ui.Text(c, act.Name).FontSize(12).Bold().TextColor(ui.Hex("#ffffff"))
+							if act.Role != "" {
+								ui.Text(c, act.Role).FontSize(11).TextColor(ui.RGBA(255, 255, 255, 0.60))
+							}
+						})
 					}
 				})
 			})
@@ -1103,11 +1104,10 @@ func (a *App) loadingView(c *ui.Context, message string) {
 	})
 }
 
-
 func (a *App) detailSkeleton(c *ui.Context) {
-	scroll := ui.Scroll(c).Grow(1).Gap(18)
+	scroll := ui.Scroll(c).Grow(1).Gap(c.Theme().Space(4))
 	scroll.Children(func() {
-		ui.Row(c).Gap(18).AlignItems(ui.Start).Children(func() {
+		ui.Row(c).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
 			ui.Box(c).Size(160, 220).Radius(12).Background(c.Theme().SurfaceHover)
 			ui.Column(c).Grow(1).Gap(12).Children(func() {
 				ui.Box(c).Height(26).Radius(8).Background(c.Theme().SurfaceHover)
@@ -1151,7 +1151,7 @@ func (a *App) detailSkeleton(c *ui.Context) {
 }
 
 func (a *App) gridSkeleton(c *ui.Context, count int) {
-	ui.Row(c).Wrap().Gap(16).Children(func() {
+	ui.Row(c).Wrap().Gap(c.Theme().Space(4)).Children(func() {
 		for range count {
 			ui.Column(c).Size(150, 250).Gap(10).Children(func() {
 				ui.Box(c).Size(150, 200).Radius(10).Background(c.Theme().SurfaceHover)

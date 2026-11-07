@@ -273,9 +273,6 @@ func (s *HongguoService) GetSeriesAdaptations(ctx context.Context, seriesID, sou
 
 	source := &SourceNovelDTO{ID: sourceID, Title: sourceTitle, CoverURL: sourceCoverURL}
 	cards := s.adaptationsForSource(ctx, seriesID, source, pageItems(sourceData), exclude)
-	if sourceCard := sourceNovelCard(source); sourceCard != nil {
-		cards = append([]SeriesCard{*sourceCard}, cards...)
-	}
 	collection := &SeriesCollectionDTO{Items: cards}
 	if len(cards) > 0 {
 		collection.Title = "同一剧本改编"
@@ -469,7 +466,11 @@ func (s *HongguoService) fetchSeriesBatchMap(ctx context.Context, ids []string) 
 		return nil
 	}
 	details, err := retryAnonymous(s, ctx, func(c context.Context) ([]model.SeriesDetail, error) {
-		return s.client.GetSeriesBatch(c, ids)
+		batch := s.client.GetSeriesBatch
+		if s.seriesBatch != nil {
+			batch = s.seriesBatch
+		}
+		return batch(c, ids)
 	})
 	if err != nil || len(details) == 0 {
 		return nil
@@ -634,6 +635,7 @@ func (s *HongguoService) adaptationsForSource(ctx context.Context, currentID str
 	}
 	seasonIDs[currentID] = true
 
+	candidatesByID := make(map[string]model.SeriesSummary, len(candidates))
 	var ids []string
 	seen := make(map[string]bool)
 	for _, candidate := range candidates {
@@ -644,6 +646,7 @@ func (s *HongguoService) adaptationsForSource(ctx context.Context, currentID str
 			continue
 		}
 		seen[candidate.ID] = true
+		candidatesByID[candidate.ID] = candidate
 		ids = append(ids, candidate.ID)
 	}
 	if len(ids) == 0 {
@@ -651,7 +654,11 @@ func (s *HongguoService) adaptationsForSource(ctx context.Context, currentID str
 	}
 
 	details, err := retryAnonymous(s, ctx, func(c context.Context) ([]model.SeriesDetail, error) {
-		return s.client.GetSeriesBatch(c, ids)
+		batch := s.client.GetSeriesBatch
+		if s.seriesBatch != nil {
+			batch = s.seriesBatch
+		}
+		return batch(c, ids)
 	})
 	if err != nil {
 		return nil
@@ -659,7 +666,7 @@ func (s *HongguoService) adaptationsForSource(ctx context.Context, currentID str
 
 	out := make([]SeriesCard, 0, len(details))
 	for _, detail := range details {
-		if detail.Series == nil || detail.Series.ID == currentID {
+		if detail.Series == nil || detail.Series.ID == currentID || detail.Series.ID == source.ID {
 			continue
 		}
 		if !isSameSourceNovel(detail.Series, source) {
@@ -667,6 +674,10 @@ func (s *HongguoService) adaptationsForSource(ctx context.Context, currentID str
 		}
 
 		d := detail.Series
+		coverURL := d.CoverURL
+		if coverURL == "" {
+			coverURL = candidatesByID[d.ID].CoverURL
+		}
 		upcoming := isUpcomingSeries(d.EpisodeCount, d.RightText)
 
 		var (
@@ -703,7 +714,7 @@ func (s *HongguoService) adaptationsForSource(ctx context.Context, currentID str
 			ID:           d.ID,
 			Title:        d.Title,
 			Description:  d.Description,
-			CoverURL:     s.media.ImageURL(d.CoverURL),
+			CoverURL:     s.media.ImageURL(coverURL),
 			EpisodeCount: d.EpisodeCount,
 			Category:     seriesContentTypeLabel(int(d.ContentType)),
 			ContentType:  int(d.ContentType),
@@ -741,38 +752,6 @@ func seriesContentTypeLabel(contentType int) string {
 		return "场景剧"
 	default:
 		return "短剧"
-	}
-}
-
-func sourceNovelCard(source *SourceNovelDTO) *SeriesCard {
-	if source == nil || source.ID == "" || source.Title == "" {
-		return nil
-	}
-
-	badgeText := "小说"
-	switch source.Status {
-	case "finished":
-		badgeText = "已完结"
-	case "ongoing":
-		badgeText = "连载中"
-	case "updated today":
-		badgeText = "今日更新"
-	}
-
-	heat := "原著剧本"
-	if source.Reads > 0 {
-		heat = formatHeatScore(source.Reads) + "阅读"
-	}
-
-	return &SeriesCard{
-		ID:          source.ID,
-		Title:       source.Title,
-		Description: strings.Join(source.Tags, " · "),
-		CoverURL:    source.CoverURL,
-		Category:    "原著剧本",
-		Kind:        "source_novel",
-		BadgeText:   badgeText,
-		Heat:        heat,
 	}
 }
 

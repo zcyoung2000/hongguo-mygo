@@ -342,7 +342,7 @@ func (a *App) renderCollection(c *ui.Context, label string, value DetailCollecti
 	}
 	rowHeight := catalogRowHeight(value.Items) + 16
 	ui.ScrollHorizontal(c.Key("col-scroll-" + label)).Height(rowHeight).Children(func() {
-		ui.Row(c.Key("collection-" + label)).Gap(14).Children(func() {
+		ui.Row(c.Key("collection-" + label)).Gap(c.Theme().Space(3)).Children(func() {
 			for _, item := range value.Items {
 				a.catalogCard(c, item)
 			}

@@ -275,6 +275,7 @@ func (a *App) SearchState() CatalogPage  { a.mu.Lock(); defer a.mu.Unlock(); ret
 func (a *App) CatalogState() Catalog     { a.mu.Lock(); defer a.mu.Unlock(); return a.catalog }
 func (a *App) LibraryState() LibraryView { a.mu.Lock(); defer a.mu.Unlock(); return a.library }
 func (a *App) DetailState() Detail       { a.mu.Lock(); defer a.mu.Unlock(); return a.detail }
+func (a *App) SeriesID() string          { a.mu.Lock(); defer a.mu.Unlock(); return a.seriesID }
 
 // Called under mu, including by Render. Published slices are replaced, never edited.
 func (a *App) catalogGenre() string {
