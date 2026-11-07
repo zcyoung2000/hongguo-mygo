@@ -81,3 +81,25 @@ func TestLoadLibraryShowsErrorWithoutSyntheticRecords(t *testing.T) {
 		t.Fatalf("error history = %+v", app.library.History)
 	}
 }
+
+func TestCompletedHistoryRequiresRealFinalEpisodeProgress(t *testing.T) {
+	rows, err := convertHistory([]ipc.HistoryItem{
+		{SeriesID: "710000000000001", ContentType: 1, EpisodeNum: 2, TotalEpisodes: 2, PositionSec: 96, DurationSec: 100},
+		{SeriesID: "710000000000002", EpisodeNum: 2, TotalEpisodes: 2, PositionSec: 96},
+		{SeriesID: "710000000000003", EpisodeNum: 1, TotalEpisodes: 2, PositionSec: 100, DurationSec: 100},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewTestApp(nil)
+	app.library.History = Library{Items: rows}
+	app.SetLibraryFilter("completed", "")
+	completed := app.visibleLibrary(libraryHistory)
+	if len(completed) != 1 || completed[0].ID != "710000000000001" {
+		t.Fatalf("incorrect completed classification: %+v", completed)
+	}
+	app.SetLibraryFilter("unwatched", "")
+	if len(app.visibleLibrary(libraryHistory)) != 2 {
+		t.Fatal("unknown duration or intermediate episode classified as completed")
+	}
+}

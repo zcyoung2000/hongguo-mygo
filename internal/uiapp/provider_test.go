@@ -53,10 +53,6 @@ func (f *fakeFavorite) ToggleReservation(context.Context, string, string, string
 	return f.reserved, nil
 }
 
-type fakeHistoryClear struct{ calls atomic.Int64 }
-
-func (f *fakeHistoryClear) ClearHistory(context.Context) error { f.calls.Add(1); return nil }
-
 type fakePlayback struct {
 	playback *ipc.PlaybackDTO
 	calls    atomic.Int64

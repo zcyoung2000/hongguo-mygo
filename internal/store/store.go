@@ -898,7 +898,7 @@ func (s *Store) SaveHistory(item HistoryItem, scopes ...string) error {
 			episode_num = excluded.episode_num,
 			episode_title = CASE WHEN excluded.episode_title != '' THEN excluded.episode_title ELSE history.episode_title END,
 			position_sec = excluded.position_sec,
-			duration_sec = CASE WHEN excluded.duration_sec > 0 THEN excluded.duration_sec ELSE history.duration_sec END,
+			duration_sec = CASE WHEN excluded.duration_sec > 0 THEN excluded.duration_sec WHEN excluded.episode_num = history.episode_num THEN history.duration_sec ELSE 0 END,
 			total_episodes = CASE WHEN excluded.total_episodes > 0 THEN excluded.total_episodes ELSE history.total_episodes END,
 			updated_at = excluded.updated_at,
 			intro = CASE WHEN excluded.intro != '' THEN excluded.intro ELSE history.intro END,
@@ -980,7 +980,7 @@ func (s *Store) saveHistoryBatchTx(tx *sql.Tx, items []HistoryItem, scope string
 			episode_num = excluded.episode_num,
 			episode_title = CASE WHEN excluded.episode_title != '' THEN excluded.episode_title ELSE history.episode_title END,
 			position_sec = excluded.position_sec,
-			duration_sec = CASE WHEN excluded.duration_sec > 0 THEN excluded.duration_sec ELSE history.duration_sec END,
+			duration_sec = CASE WHEN excluded.duration_sec > 0 THEN excluded.duration_sec WHEN excluded.episode_num = history.episode_num THEN history.duration_sec ELSE 0 END,
 			total_episodes = CASE WHEN excluded.total_episodes > 0 THEN excluded.total_episodes ELSE history.total_episodes END,
 			updated_at = excluded.updated_at,
 			intro = CASE WHEN excluded.intro != '' THEN excluded.intro ELSE history.intro END,
@@ -997,9 +997,6 @@ func (s *Store) saveHistoryBatchTx(tx *sql.Tx, items []HistoryItem, scope string
 	}
 
 	for _, item := range items {
-		if item.ContentType == 1 {
-			continue // Skip novels
-		}
 		if item.UpdatedAt <= 0 {
 			item.UpdatedAt = time.Now().Unix()
 		}
@@ -1057,7 +1054,6 @@ func (s *Store) GetHistory() ([]HistoryItem, error) {
 		SELECT series_id, title, cover_url, episode_num, episode_title,
 		       position_sec, duration_sec, total_episodes, updated_at, intro, content_type
 		FROM history
-		WHERE content_type != 1
 		ORDER BY updated_at DESC
 	`)
 	if err != nil {

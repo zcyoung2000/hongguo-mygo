@@ -222,8 +222,8 @@
 | Q18 | UpdateNowPlaying 可调 | IPC | 传测试数据 | 不崩溃 |
 | Q19 | WarmupFeed 可调 | IPC | 调用 | 不崩溃 |
 | Q20 | PlayEpisode 无效 ID 返回错误 | IPC | 传 `"999"` | 被捕获（不 panic） |
-| Q21 | DeleteHistory 不存在 ID | IPC | 传 `"999999999"` | 不崩溃 |
-| Q22 | ClearHistory 可调 | IPC | 调用 | 不崩溃 |
+| Q21 | DeleteHistory 已移除 | IPC | 调用 | 拒绝调用 |
+| Q22 | ClearHistory 已移除 | IPC | 调用 | 拒绝调用 |
 | Q23 | ClearCache 可调 | IPC | 调用 | 返回 number |
 | Q24 | ResetDevice 可调 | IPC | 调用（重建设备指纹） | 不崩溃 |
 

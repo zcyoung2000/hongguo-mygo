@@ -7181,9 +7181,6 @@ function renderHistoryRows() {
       <div class="card-poster-wrap">
         <img class="card-poster" src="${safeImageSrc(it.coverUrl)}" alt="${escapeHtml(it.title || '')}" loading="lazy" decoding="async" onerror="handleImgError(this)">
         <span class="card-badge-top ${isCompleted ? 'badge-completed' : ''}">${badgeText}</span>
-        <button class="card-badge-delete" title="删除记录">
-          <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
-        </button>
         <div class="card-progress-bar">
           <div class="card-progress-fill" style="width: ${pct}%;"></div>
         </div>
@@ -7197,17 +7194,6 @@ function renderHistoryRows() {
         </div>
       </div>
     `;
-
-    const delBtn = card.querySelector('.card-badge-delete');
-    if (delBtn) {
-      delBtn.onclick = async (e) => {
-        e.stopPropagation();
-        await apiCall('DeleteHistory', it.seriesId);
-        state.historyView.list = state.historyView.list.filter(x => x.seriesId !== it.seriesId);
-        renderHistoryRows();
-        showToast('已删除记录');
-      };
-    }
 
     fragment.appendChild(card);
   });
@@ -7270,15 +7256,6 @@ document.addEventListener('DOMContentLoaded', () => {
       state.historyView.search = e.target.value;
       renderHistoryRows();
     });
-  }
-});
-
-document.getElementById('btn-clear-all-history').addEventListener('click', async () => {
-  if (await nativeConfirm('确认清空所有播放记录？', '清空后将无法恢复之前的播放进度。', '清空记录', true)) {
-    await apiCall('ClearHistory');
-    state.historyView.list = [];
-    renderHistoryRows();
-    showToast('已清空全部播放记录');
   }
 });
 

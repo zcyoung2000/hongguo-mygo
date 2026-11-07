@@ -178,7 +178,6 @@ type App struct {
 	favorite                    favoriteProvider
 	detailSource                detailProvider
 	playerSource                playbackProvider
-	historyClear                historyClearer
 
 	view     string
 	seriesID string
@@ -224,10 +223,6 @@ type detailProvider interface {
 	GetSeriesRelated(ctx context.Context, seriesID string) (*ipc.SeriesCollectionDTO, error)
 	GetFilterPanel(ctx context.Context, genre string) ([]ipc.FilterRowDTO, error)
 	GetDiscover(ctx context.Context, genre string, selections map[string]string, cursor string) (ipc.DiscoverResponse, error)
-}
-
-type historyClearer interface {
-	ClearHistory(ctx context.Context) error
 }
 
 func NewTestApp(player *PlayerBridge) *App {
@@ -504,45 +499,6 @@ func (a *App) PlayerPictureInPicture() {
 	if a.player != nil {
 		a.player.PictureInPicture()
 	}
-}
-func (a *App) ClearHistory() {
-	a.mu.Lock()
-	if !a.beginMutationLocked("clear-history") {
-		a.mu.Unlock()
-		return
-	}
-	confirm := a.confirm
-	a.mu.Unlock()
-	go func() {
-		if confirm != nil && !confirm("确认清空全部观看历史？") {
-			a.mu.Lock()
-			a.endMutationLocked("clear-history")
-			a.mu.Unlock()
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
-		defer cancel()
-		err := a.historyClearProvider().ClearHistory(ctx)
-		a.mu.Lock()
-		a.endMutationLocked("clear-history")
-		if err != nil {
-			a.fail("清空历史失败：", err)
-		} else {
-			a.library.History.Items = nil
-			a.library.History.Empty = true
-			a.setNotice("观看历史已清空")
-		}
-		a.mu.Unlock()
-		if err == nil && !a.testMode {
-			a.loadLibrary(libraryHistory)
-		}
-	}()
-}
-func (a *App) historyClearProvider() historyClearer {
-	if a.historyClear != nil {
-		return a.historyClear
-	}
-	return a.service
 }
 func (a *App) loadFilters() {
 	a.mu.Lock()

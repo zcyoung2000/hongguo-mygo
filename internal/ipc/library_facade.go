@@ -64,14 +64,6 @@ func (s *HongguoService) RefreshHistory(ctx context.Context) ([]HistoryItem, err
 	return s.libraryService().RefreshHistory(ctx)
 }
 
-func (s *HongguoService) DeleteHistory(ctx context.Context, seriesID string) error {
-	return s.libraryService().DeleteHistory(ctx, seriesID)
-}
-
-func (s *HongguoService) ClearHistory(ctx context.Context) error {
-	return s.libraryService().ClearHistory(ctx)
-}
-
 func (s *HongguoService) ToggleFavorite(ctx context.Context, seriesID, title, coverURL, desc string, totalEpisodes int) (bool, error) {
 	return s.libraryService().ToggleFavorite(ctx, seriesID, title, coverURL, desc, totalEpisodes)
 }
