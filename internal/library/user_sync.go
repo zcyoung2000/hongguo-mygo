@@ -29,6 +29,17 @@ const (
 
 var errParameterInvalid = errors.New("parameter invalid")
 
+type historyUploadRetry struct {
+	attempt int
+	nextAt  time.Time
+}
+
+const (
+	historyUploadBaseBackoff = 5 * time.Second
+	historyUploadMaxBackoff  = 10 * time.Minute
+	invalidHistoryMaxBackoff = 30 * time.Minute
+)
+
 func contentInt(value string) (int64, error) {
 	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil || parsed <= 0 {
@@ -448,6 +459,41 @@ func (s *Service) syncPendingHistoryMutations() (int, error) {
 	}
 }
 
+func historyUploadKey(item userstore.PendingHistoryUpload) string {
+	return fmt.Sprintf("%s\x00%s\x00%d", item.Scope, item.SeriesID, item.Revision)
+}
+
+func (s *Service) markHistoryUploadFailed(items []userstore.PendingHistoryUpload, err error) {
+	if s.historyUploadRetries == nil {
+		s.historyUploadRetries = make(map[string]historyUploadRetry)
+	}
+	base := historyUploadBaseBackoff
+	if errors.Is(err, errParameterInvalid) {
+		base = time.Minute
+	}
+	for _, item := range items {
+		key := historyUploadKey(item)
+		retry := s.historyUploadRetries[key]
+		retry.attempt++
+		delay := base << min(retry.attempt-1, 5)
+		if delay < historyUploadBaseBackoff {
+			delay = historyUploadBaseBackoff
+		}
+		if errors.Is(err, errParameterInvalid) {
+			delay = min(delay, invalidHistoryMaxBackoff)
+		} else {
+			delay = min(delay, historyUploadMaxBackoff)
+		}
+		retry.nextAt = time.Now().Add(delay)
+		s.historyUploadRetries[key] = retry
+	}
+}
+
+func (s *Service) historyUploadReady(item userstore.PendingHistoryUpload) bool {
+	retry, ok := s.historyUploadRetries[historyUploadKey(item)]
+	return !ok || !time.Now().Before(retry.nextAt)
+}
+
 func (s *Service) processPendingHistoryUploads() (int, error) {
 	ctx := s.bindSyncSession(s.background.Context())
 	session, err := s.sessionForRequest(ctx)
@@ -459,10 +505,20 @@ func (s *Service) processPendingHistoryUploads() (int, error) {
 		return 0, err
 	}
 
-	valid := make([]HistoryItem, 0, len(items))
-	ack := make([]userstore.PendingHistoryUpload, 0, len(items))
-	validEpisodeIDs := make([]string, 0, len(items))
+	due := make([]userstore.PendingHistoryUpload, 0, len(items))
 	for _, pending := range items {
+		if s.historyUploadReady(pending) {
+			due = append(due, pending)
+		}
+	}
+	if len(due) == 0 {
+		return 0, nil
+	}
+
+	valid := make([]HistoryItem, 0, len(items))
+	ack := make([]userstore.PendingHistoryUpload, 0, len(due))
+	validEpisodeIDs := make([]string, 0, len(items))
+	for _, pending := range due {
 		if s.store.HistoryDeleted(pending.SeriesID) {
 			if err := s.store.AckHistoryUploads([]userstore.PendingHistoryUpload{pending}); err != nil {
 				return 0, err
@@ -488,9 +544,16 @@ func (s *Service) processPendingHistoryUploads() (int, error) {
 		return 0, nil
 	}
 	if err := s.reportPlaybackProgress(ctx, valid, validEpisodeIDs); err != nil {
+		s.markHistoryUploadFailed(ack, err)
 		return 0, err
 	}
 	acknowledged := len(ack)
+	if s.historyUploadRetries == nil {
+		s.historyUploadRetries = make(map[string]historyUploadRetry)
+	}
+	for _, item := range ack {
+		delete(s.historyUploadRetries, historyUploadKey(item))
+	}
 	return acknowledged, s.store.AckHistoryUploads(ack)
 }
 
