@@ -11,7 +11,7 @@ function harness(view, names) {
   const nodes = new Map();
   class Element {
     constructor(id) {
-      this.id = id; this.children = []; this.style = {}; this.dataset = {};
+      this.id = id; this.children = []; this.style = { setProperty() {} }; this.dataset = {};
       this.listeners = {}; this.textContent = ''; this.disabled = false;
       const classes = new Set();
       this.classList = {
@@ -74,7 +74,7 @@ function harness(view, names) {
     renderViewEmpty: options => Object.assign(new Element('empty'), { options, type: 'empty' }),
     createDramaCard: item => Object.assign(new Element('card'), { item, className: 'drama-card' }),
     clearDetailSupplements() {}, renderSeriesDetail: detail => renders.push(detail),
-    disconnectDiscoverObserver() {}, renderDiscoverLoadMore() {}, observeDiscoverLoadMore() {},
+    disconnectDiscoverObserver() {}, renderDiscoverLoadMore() {}, observeDiscoverLoadMore() {}, syncActorLoadMore() {},
     discoverVisibleCapacity: () => 100,
     safeImageSrc: String, escapeHtml: String, formatStatsNumber: String,
     showToast: value => toasts.push(value),
@@ -222,7 +222,7 @@ test('old actor pagination cannot append cards or clear the next actor loader', 
   assert.equal(c.state.actor.loading, true);
   requests[1].resolve({ name: 'B', works: [{ id: 'B-work' }], cursor: 'B-page', hasMore: true }); await profile;
   assert.deepEqual(element('actor-drama-grid').children.map(card => card.item.id), ['B-work']);
-  assert.equal(element('btn-actor-load-more').textContent, '加载更多作品');
+  assert.equal(c.state.actor.hasMore, true);
   assert.equal(c.state.actor.loading, false);
 });
 

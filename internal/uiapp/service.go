@@ -2,6 +2,7 @@ package uiapp
 
 import (
 	"context"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,17 +16,25 @@ import (
 const serviceTimeout = 15 * time.Second
 
 type CatalogItem struct {
-	ResumeEpisode  int
-	ResumePosition float64
-	ID             string
-	Title          string
-	Description    string
-	CoverURL       string
-	EpisodeCount   int
-	Category       string
-	Rank           int
-	Heat           string
-	Subtitles      []string
+	Kind                          string
+	BadgeText, Author, Status     string
+	EpisodeID                     string
+	ActorID                       string
+	Upcoming, Reserved, Completed bool
+	PublishAt                     string
+	UpdatedAt                     int64
+	Progress                      float64
+	ResumeEpisode                 int
+	ResumePosition                float64
+	ID                            string
+	Title                         string
+	Description                   string
+	CoverURL                      string
+	EpisodeCount                  int
+	Category                      string
+	Rank                          int
+	Heat                          string
+	Subtitles                     []string
 }
 
 type CatalogPage struct {
@@ -37,23 +46,32 @@ type CatalogPage struct {
 }
 
 type Detail struct {
-	ID             string
-	Title          string
-	Description    string
-	CoverURL       string
-	Tags           []string
-	StatusText     string
-	Category       string
-	PlayCount      int64
-	EpisodeCount   int
-	Episodes       []CatalogItem
-	Favorite       bool
-	Reserved       bool
-	Related        []CatalogItem
-	RelatedTitle   string
-	RelatedLoading bool
-	Loading        bool
-	Error          string
+	Source               *ipc.SourceNovelDTO
+	Actors               []ipc.ActorInfo
+	Upcoming             bool
+	Heat                 string
+	FollowCount          int64
+	LikeCount            int64
+	PublishText          string
+	RelatedError         string
+	Seasons, Adaptations DetailCollection
+	ID                   string
+	Title                string
+	Description          string
+	CoverURL             string
+	Tags                 []string
+	StatusText           string
+	Category             string
+	PlayCount            int64
+	EpisodeCount         int
+	Episodes             []CatalogItem
+	Favorite             bool
+	Reserved             bool
+	Related              []CatalogItem
+	RelatedTitle         string
+	RelatedLoading       bool
+	Loading              bool
+	Error                string
 }
 
 type FilterOption struct {
@@ -86,6 +104,7 @@ type Catalog struct {
 	Error       string
 	HasMore     bool
 	Cursor      string
+	seenCursors map[string]bool
 	Items       []CatalogItem
 }
 
@@ -111,20 +130,55 @@ type LibraryView struct {
 
 // App state and all render snapshots are protected by mu. Network work never holds it.
 type App struct {
-	mu                sync.Mutex
-	generation        uint64
-	catalogGeneration uint64
-	libraryGeneration [4]uint64
-	started           bool
-	resume            CatalogItem
-	service           *ipc.HongguoService
-	player            *PlayerBridge
-	invalidateFn      func()
-	testMode          bool
-	favorite          favoriteProvider
-	detailSource      detailProvider
-	playerSource      playbackProvider
-	historyClear      historyClearer
+	ambientActive               bool
+	ambientLeft                 ui.Color
+	ambientTop                  ui.Color
+	feedChannel                 string
+	feedChrome                  FeedChrome
+	feedChromeKnown             bool
+	catalogScroll               ui.ScrollState
+	rankScroll                  ui.ScrollState
+	actorScroll                 ui.ScrollState
+	playerChrome                PlayerChrome
+	playerChromeKnown           bool
+	playerDrawerOpen            bool
+	sidebarWidth                float32
+	preferencesPath             string
+	preferencesLoaded           bool
+	preferencesPending          sync.WaitGroup
+	preferencesMu               sync.Mutex
+	media                       *MediaHost
+	mediaOn                     bool
+	mediaSession                int64
+	featuresSource              featureProvider
+	libraryMutations            libraryMutations
+	confirm                     func(string) bool
+	mutations                   map[string]bool
+	detailRevisions             map[string]uint64
+	rank                        RankingState
+	releases                    ReleaseState
+	actor                       ActorState
+	suggestions                 []string
+	suggestionVersion           uint64
+	suggestionIndex             int
+	historyFilter, historyQuery string
+	reservationsPending         bool
+	navigation                  []navigationEntry
+	navIndex                    int
+	mu                          sync.Mutex
+	generation                  uint64
+	catalogGeneration           uint64
+	libraryGeneration           [4]uint64
+	started                     bool
+	resume                      CatalogItem
+	service                     *ipc.HongguoService
+	player                      *PlayerBridge
+	invalidateFn                func()
+	testMode                    bool
+	favorite                    favoriteProvider
+	detailSource                detailProvider
+	playerSource                playbackProvider
+	historyClear                historyClearer
 
 	view     string
 	seriesID string
@@ -143,10 +197,13 @@ type App struct {
 
 func NewApp(service *ipc.HongguoService, player *PlayerBridge) *App {
 	return &App{
-		service: service,
-		player:  player,
-		view:    "discover",
-		catalog: Catalog{Genre: []string{"真人剧", "漫剧", "AI剧"}, HasMore: true},
+		service:    service,
+		player:     player,
+		view:       "discover",
+		catalog:    Catalog{Genre: []string{"真人剧", "漫剧", "AI剧"}, HasMore: true},
+		rank:       RankingState{Content: "all", Board: "ranklist_hot_sc", HasMore: true},
+		navigation: []navigationEntry{{View: "discover"}},
+		navIndex:   0,
 	}
 }
 
@@ -174,7 +231,13 @@ type historyClearer interface {
 }
 
 func NewTestApp(player *PlayerBridge) *App {
-	return &App{player: player, view: "discover", catalog: Catalog{Genre: []string{"真人剧", "漫剧", "AI剧"}, HasMore: true}, testMode: true}
+	return &App{
+		player:   player,
+		view:     "discover",
+		catalog:  Catalog{Genre: []string{"真人剧", "漫剧", "AI剧"}, HasMore: true},
+		rank:     RankingState{Content: "all", Board: "ranklist_hot_sc", HasMore: true},
+		testMode: true,
+	}
 }
 
 func NewLibraryGrids() [4]*ui.GridState {
@@ -194,11 +257,24 @@ func (a *App) SetLibraryGrids(grids [4]*ui.GridState) {
 	defer a.mu.Unlock()
 	a.library.Grids = grids
 }
+func (a *App) SetAmbientGlow(active bool, left, top [3]uint8) {
+	a.mu.Lock()
+	a.ambientActive = active
+	if active {
+		a.ambientLeft = ui.RGB(left[0], left[1], left[2])
+		a.ambientTop = ui.RGB(top[0], top[1], top[2])
+	}
+	invalidate := a.invalidateFn
+	a.mu.Unlock()
+	if invalidate != nil {
+		invalidate()
+	}
+}
 func (a *App) View() string              { a.mu.Lock(); defer a.mu.Unlock(); return a.view }
 func (a *App) Query() string             { a.mu.Lock(); defer a.mu.Unlock(); return a.query }
 func (a *App) GlobalError() string       { a.mu.Lock(); defer a.mu.Unlock(); return a.error }
 func (a *App) Notice() string            { a.mu.Lock(); defer a.mu.Unlock(); return a.notice }
-func (a *App) PlayerVisible() bool       { a.mu.Lock(); defer a.mu.Unlock(); return a.playerOn }
+func (a *App) PlayerVisible() bool       { a.mu.Lock(); defer a.mu.Unlock(); return a.mediaOn }
 func (a *App) SearchState() CatalogPage  { a.mu.Lock(); defer a.mu.Unlock(); return a.search }
 func (a *App) CatalogState() Catalog     { a.mu.Lock(); defer a.mu.Unlock(); return a.catalog }
 func (a *App) LibraryState() LibraryView { a.mu.Lock(); defer a.mu.Unlock(); return a.library }
@@ -241,6 +317,7 @@ func (a *App) resetCatalog() {
 	a.catalogGeneration++
 	a.catalog.Items, a.catalog.Cursor, a.catalog.Error = nil, "", ""
 	a.catalog.HasMore, a.catalog.Loading, a.catalog.LoadingMore = true, false, false
+	a.catalog.seenCursors = nil
 	a.invalidate()
 }
 func (a *App) SelectFilter(rowIndex, optionIndex int) {
@@ -270,7 +347,9 @@ func (a *App) SearchSubmitted() bool {
 	if term == "" {
 		return false
 	}
-	a.open("search", "")
+	a.navigateLocked(navigationEntry{View: "search"}, true)
+	a.suggestions = nil
+	a.suggestionVersion++
 	a.search = CatalogPage{Loading: true}
 	generation := a.generation
 	if !a.testMode {
@@ -292,59 +371,67 @@ func (a *App) SearchSubmitted() bool {
 	}
 	return true
 }
-func (a *App) SearchChanged() bool   { return false }
-func (a *App) SetQuery(value string) { a.mu.Lock(); defer a.mu.Unlock(); a.query = value }
+func (a *App) SearchChanged() bool { return false }
+func (a *App) SetQuery(value string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if value == a.query {
+		return
+	}
+	a.query = value
+	a.suggestionVersion++
+	a.suggestions = nil
+	a.suggestionIndex = -1
+	if strings.TrimSpace(value) != "" && !a.testMode {
+		go a.suggest(value, a.suggestionVersion)
+	}
+	a.invalidate()
+}
 func (a *App) OpenView(view string) {
+	log.Printf("[uiapp] OpenView target=%s current=%s", view, a.view)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.view == view && a.started {
 		return
 	}
-	a.started = true
-	a.open(view, "")
-	if a.testMode {
-		return
-	}
-	switch view {
-	case "discover":
-		go a.loadFilters()
-		go a.loadCatalog(false)
-	case "history":
-		go a.loadLibrary(libraryHistory)
-	case "favorites":
-		go a.loadLibrary(libraryFavorites)
-	case "likes":
-		go a.loadLibrary(libraryLikes)
-	case "reservations":
-		go a.loadLibrary(libraryReservations)
-	}
+	a.navigateLocked(navigationEntry{View: view}, true)
 }
 func (a *App) OpenDetail(seriesID string) { a.OpenItem(CatalogItem{ID: seriesID}) }
 func (a *App) OpenItem(item CatalogItem) {
-	if item.ID == "" {
+	if item.ActorID != "" {
+		a.OpenActor(item.ActorID)
+		return
+	}
+	if item.ID == "" || item.Kind == "source_novel" {
 		return
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.open("detail", item.ID)
-	a.resume = item
-	a.detail = Detail{ID: item.ID, Loading: true, RelatedLoading: true}
-	a.invalidate()
-	generation := a.generation
-	if !a.testMode {
-		go a.loadDetailAt(item.ID, generation)
-	}
+	a.navigateLocked(navigationEntry{View: "detail", Item: item}, true)
 }
 func (a *App) ToggleDetailFavorite()    { a.toggleDetail(false) }
 func (a *App) ToggleDetailReservation() { a.toggleDetail(true) }
 func (a *App) toggleDetail(reservation bool) {
 	a.mu.Lock()
 	detail, generation, provider := a.detail, a.generation, a.favoriteProvider()
-	a.mu.Unlock()
-	if detail.ID == "" || detail.Loading {
+	kind := "favorite"
+	if reservation {
+		kind = "reservation"
+	}
+	key := kind + ":" + detail.ID
+	if detail.ID == "" || detail.Loading || !a.beginMutationLocked(key) {
+		a.mu.Unlock()
 		return
 	}
+	confirm := a.confirm
+	a.mu.Unlock()
 	go func() {
+		if reservation && detail.Reserved && confirm != nil && !confirm("确认取消预约《"+detail.Title+"》？") {
+			a.mu.Lock()
+			a.endMutationLocked(key)
+			a.mu.Unlock()
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
 		defer cancel()
 		var enabled bool
@@ -356,16 +443,16 @@ func (a *App) toggleDetail(reservation bool) {
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		if a.generation != generation {
-			return
-		}
+		a.endMutationLocked(key)
 		if err != nil {
-			a.fail("更新失败：", err)
+			if a.generation == generation {
+				a.fail("更新失败：", err)
+			}
 			return
 		}
 		if reservation {
-			a.detail.Reserved = enabled
-		} else {
+			a.applyReservationLocked(detail.ID, enabled)
+		} else if a.detail.ID == detail.ID {
 			a.detail.Favorite = enabled
 		}
 		a.invalidate()
@@ -380,17 +467,17 @@ func (a *App) favoriteProvider() favoriteProvider {
 func (a *App) ChooseEpisode(num int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if num <= 0 || a.player == nil || a.detail.Loading || a.detail.ID == "" {
+	if num <= 0 || (a.player == nil && a.media == nil) || a.detail.Loading || a.detail.ID == "" || a.detail.Upcoming {
 		return
 	}
-	a.player.Play(a.detail.ID, "", num, 0, true)
+	a.playLocked(num, -1)
 }
 func (a *App) OpenRelated(seriesID string) { a.OpenDetail(seriesID) }
 func (a *App) LoadMoreCatalog()            { a.loadCatalog(true) }
 func (a *App) LoadMoreSearch() bool        { return false }
 func (a *App) RefreshLibrary(tab LibraryTab) {
 	if !a.testMode {
-		go a.loadLibrary(tab)
+		go a.loadLibraryWithRefresh(tab, true)
 	}
 }
 func (a *App) PlayerResume() {
@@ -419,14 +506,30 @@ func (a *App) PlayerPictureInPicture() {
 	}
 }
 func (a *App) ClearHistory() {
+	a.mu.Lock()
+	if !a.beginMutationLocked("clear-history") {
+		a.mu.Unlock()
+		return
+	}
+	confirm := a.confirm
+	a.mu.Unlock()
 	go func() {
+		if confirm != nil && !confirm("确认清空全部观看历史？") {
+			a.mu.Lock()
+			a.endMutationLocked("clear-history")
+			a.mu.Unlock()
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
 		defer cancel()
 		err := a.historyClearProvider().ClearHistory(ctx)
 		a.mu.Lock()
+		a.endMutationLocked("clear-history")
 		if err != nil {
 			a.fail("清空历史失败：", err)
 		} else {
+			a.library.History.Items = nil
+			a.library.History.Empty = true
 			a.setNotice("观看历史已清空")
 		}
 		a.mu.Unlock()
@@ -458,6 +561,7 @@ func (a *App) loadFilters() {
 		return
 	}
 	a.catalog.Filters = convertFilters(rows)
+	a.error = ""
 	a.invalidate()
 }
 func (a *App) loadCatalog(more bool) {
@@ -493,7 +597,8 @@ func (a *App) loadCatalog(more bool) {
 	if more {
 		items = append(append([]CatalogItem(nil), a.catalog.Items...), items...)
 	}
-	a.catalog.Items, a.catalog.Cursor, a.catalog.HasMore, a.catalog.Error = items, page.Cursor, page.HasMore, ""
+	a.error = ""
+	a.catalog.Items, a.catalog.Cursor, a.catalog.HasMore, a.catalog.Error = dedupeCards(items), page.Cursor, nextCursor(&a.catalog.seenCursors, cursor, page.Cursor, page.HasMore, more), ""
 	a.invalidate()
 }
 func (a *App) loadDetail(seriesID string) {
@@ -503,12 +608,20 @@ func (a *App) loadDetail(seriesID string) {
 	a.loadDetailAt(seriesID, generation)
 }
 func (a *App) loadDetailAt(seriesID string, generation uint64) {
+	a.mu.Lock()
+	revision := a.detailRevisions[seriesID]
+	a.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
 	defer cancel()
 	page, err := a.detailProvider().GetSeriesPage(ctx, seriesID)
 	a.mu.Lock()
 	if generation != a.generation {
 		a.mu.Unlock()
+		return
+	}
+	if revision != a.detailRevisions[seriesID] {
+		a.mu.Unlock()
+		go a.loadDetailAt(seriesID, generation)
 		return
 	}
 	if err != nil || page == nil {
@@ -525,10 +638,15 @@ func (a *App) loadDetailAt(seriesID string, generation uint64) {
 		if a.resume.ID == seriesID && a.resume.ResumeEpisode > 0 {
 			num, position = a.resume.ResumeEpisode, a.resume.ResumePosition
 		}
-		a.player.Play(seriesID, "", num, position, true)
+		if a.media == nil {
+			a.player.Play(seriesID, "", num, position, true)
+		}
 	}
 	a.invalidate()
 	a.mu.Unlock()
+	if a.featuresSource != nil || a.service != nil {
+		go a.loadSupplement(seriesID, generation, false)
+	}
 	a.loadRelatedAt(seriesID, generation)
 }
 func (a *App) loadRelatedAt(seriesID string, generation uint64) {
@@ -541,8 +659,9 @@ func (a *App) loadRelatedAt(seriesID string, generation uint64) {
 		return
 	}
 	a.detail.RelatedLoading = false
+	a.detail.RelatedError = ""
 	if err != nil || collection == nil {
-		a.detail.RelatedTitle = "相关推荐加载失败"
+		a.detail.RelatedError = "相关推荐加载失败"
 	} else {
 		a.detail.Related, a.detail.RelatedTitle = convertCards(collection.Items), collection.Title
 	}
@@ -567,6 +686,12 @@ func (a *App) libraryAt(tab LibraryTab) *Library {
 	}
 }
 func (a *App) loadLibrary(tab LibraryTab) {
+	a.loadLibraryWithRefresh(tab, false)
+	if !a.testMode && a.service != nil {
+		a.loadLibraryWithRefresh(tab, true)
+	}
+}
+func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	a.mu.Lock()
 	a.libraryGeneration[tab]++
 	generation := a.libraryGeneration[tab]
@@ -579,15 +704,28 @@ func (a *App) loadLibrary(tab LibraryTab) {
 	defer cancel()
 	var items []CatalogItem
 	var err error
-	switch tab {
-	case libraryHistory:
-		items, err = convertHistory(provider.GetHistory(ctx))
-	case libraryFavorites:
-		items, err = convertFavorites(provider.GetFavorites(ctx))
-	case libraryLikes:
-		items, err = convertLikes(provider.GetLikes(ctx))
-	default:
-		items, err = convertReservations(provider.GetReservations(ctx))
+	if refresher, ok := provider.(libraryRefresher); refresh && ok {
+		switch tab {
+		case libraryHistory:
+			items, err = convertHistory(refresher.RefreshHistory(ctx))
+		case libraryFavorites:
+			items, err = convertFavorites(refresher.RefreshFavorites(ctx))
+		case libraryLikes:
+			items, err = convertLikes(refresher.RefreshLikes(ctx))
+		default:
+			items, err = convertReservations(refresher.RefreshReservations(ctx))
+		}
+	} else {
+		switch tab {
+		case libraryHistory:
+			items, err = convertHistory(provider.GetHistory(ctx))
+		case libraryFavorites:
+			items, err = convertFavorites(provider.GetFavorites(ctx))
+		case libraryLikes:
+			items, err = convertLikes(provider.GetLikes(ctx))
+		default:
+			items, err = convertReservations(provider.GetReservations(ctx))
+		}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -601,7 +739,13 @@ func (a *App) loadLibrary(tab LibraryTab) {
 		a.fail("资料库加载失败：", err)
 		return
 	}
-	sort.SliceStable(items, func(i, j int) bool { return items[i].Rank < items[j].Rank })
+	sort.SliceStable(items, func(i, j int) bool {
+		if tab == libraryReservations {
+			return reservationBefore(items[i].PublishAt, items[j].PublishAt)
+		}
+		return items[i].Rank < items[j].Rank
+	})
+	a.error = ""
 	library.Items, library.Empty = items, len(items) == 0
 	library.Title = map[LibraryTab]string{libraryHistory: "观看历史", libraryFavorites: "我的收藏", libraryLikes: "我的点赞", libraryReservations: "新剧预约"}[tab]
 	a.invalidate()
@@ -616,10 +760,15 @@ func (a *App) libraryProvider() libraryProvider {
 // open, fail, setNotice and invalidate require mu. Player commands enqueue work and never wait for the UI thread.
 func (a *App) open(view, seriesID string) {
 	a.generation++
-	a.view, a.seriesID, a.error, a.loading, a.playerOn = view, seriesID, "", false, view == "detail"
+	a.view, a.seriesID, a.error, a.loading, a.playerOn = view, seriesID, "", false, false
+	a.notice = ""
 	a.resume = CatalogItem{}
+	a.mediaOn = false
+	if a.media != nil {
+		a.media.Stop()
+	}
 	a.detail = Detail{}
-	if a.player != nil {
+	if a.player != nil && a.media == nil {
 		a.player.Stop()
 	}
 	a.invalidate()
@@ -636,8 +785,8 @@ func convertCards(cards []ipc.SeriesCard) []CatalogItem {
 	items := make([]CatalogItem, 0, len(cards))
 	for _, card := range cards {
 		items = append(items, CatalogItem{
-			ID: card.ID, Title: card.Title, Description: card.Description, CoverURL: card.CoverURL,
-			EpisodeCount: card.EpisodeCount, Category: card.Category, Heat: card.Heat, Subtitles: card.Tags,
+			Kind: card.Kind, BadgeText: card.BadgeText, Author: card.Author, Status: card.Status, ID: card.ID, Title: card.Title, Description: card.Description, CoverURL: card.CoverURL,
+			EpisodeCount: card.EpisodeCount, Category: card.Category, Heat: card.Heat, Subtitles: card.Tags, Upcoming: card.Upcoming, Reserved: card.Reserved, ActorID: actorCardID(card),
 		})
 	}
 	return items
@@ -646,11 +795,14 @@ func convertCards(cards []ipc.SeriesCard) []CatalogItem {
 func convertFilters(rows []ipc.FilterRowDTO) []FilterRow {
 	out := make([]FilterRow, 0, len(rows))
 	for _, row := range rows {
+		if row.Key == "genre" || len(row.Options) == 0 {
+			continue
+		}
 		options := []FilterOption{{Label: "全部", Value: ""}}
 		for _, option := range row.Options {
 			options = append(options, FilterOption{Label: option.Name, Value: option.Value})
 		}
-		out = append(out, FilterRow{Title: row.Name, Key: row.Key, Options: options})
+		out = append(out, FilterRow{Title: strings.TrimPrefix(row.Name, "全部"), Key: row.Key, Options: options})
 	}
 	return out
 }
@@ -665,14 +817,11 @@ func convertHistory(items []ipc.HistoryItem, err error) ([]CatalogItem, error) {
 		if title == "" {
 			title = "第" + strconv.Itoa(item.EpisodeNum) + "集"
 		}
-		progress := ""
-		if item.DurationSec > 0 {
-			progress = strconv.Itoa(int(item.PositionSec*100/float64(item.DurationSec))) + "%"
-		}
 		out = append(out, CatalogItem{
-			ID: item.SeriesID, Title: title, Description: "看到第" + strconv.Itoa(item.EpisodeNum) + "集 · " + progress,
+			ID: item.SeriesID, Title: title,
 			CoverURL: item.CoverURL, EpisodeCount: item.TotalEpisodes, Rank: index,
 			ResumeEpisode: item.EpisodeNum, ResumePosition: item.PositionSec,
+			UpdatedAt: item.UpdatedAt, Progress: historyPercent(item.PositionSec, float64(item.DurationSec)), Completed: item.TotalEpisodes > 0 && item.EpisodeNum == item.TotalEpisodes && historyPercent(item.PositionSec, float64(item.DurationSec)) >= 95,
 		})
 	}
 	return out, nil
@@ -700,7 +849,7 @@ func convertReservations(items []ipc.ReservationItem, err error) ([]CatalogItem,
 	for index, item := range items {
 		out = append(out, CatalogItem{
 			ID: item.SeriesID, Title: item.Title, Description: item.Note, CoverURL: item.CoverURL,
-			Heat: item.PublishAt, Rank: index,
+			PublishAt: item.PublishAt, Upcoming: !item.IsOnline, Reserved: true, Rank: index,
 		})
 	}
 	return out, nil
@@ -713,7 +862,7 @@ func convertLikes(items []ipc.LikeItem, err error) ([]CatalogItem, error) {
 	out := make([]CatalogItem, 0, len(items))
 	for index, item := range items {
 		out = append(out, CatalogItem{
-			ID: item.SeriesID, Title: item.Title, Description: item.Description, CoverURL: item.CoverURL,
+			ID: item.SeriesID, EpisodeID: item.EpisodeID, ResumeEpisode: item.EpisodeNum, ResumePosition: -1, Title: item.Title, Description: item.Description, CoverURL: item.CoverURL,
 			EpisodeCount: item.TotalEpisodes, Rank: index,
 		})
 	}
@@ -730,8 +879,29 @@ func convertDetail(seriesID string, page *ipc.SeriesDetailPageDTO) Detail {
 	}
 	return Detail{
 		ID: seriesID, Title: page.Title, Description: page.Description, CoverURL: page.CoverURL,
+		Source: page.Source, Actors: page.Actors, Upcoming: page.Upcoming || page.EpisodeCount == 0, Heat: page.Heat, FollowCount: page.FollowCount, LikeCount: page.LikeCount, PublishText: page.PublishText, Seasons: DetailCollection{Loading: true}, Adaptations: DetailCollection{Loading: true},
 		Tags: page.Tags, StatusText: page.StatusText, Category: page.Category, PlayCount: page.PlayCount,
 		EpisodeCount: page.EpisodeCount, Episodes: episodes, Favorite: page.IsFavorite, Reserved: page.Reserved,
 		RelatedTitle: "相关推荐",
 	}
+}
+
+func historyPercent(position, duration float64) float64 {
+	if duration <= 0 {
+		return 0
+	}
+	value := position * 100 / duration
+	if value > 100 {
+		return 100
+	}
+	if value < 0 {
+		return 0
+	}
+	return value
+}
+func actorCardID(card ipc.SeriesCard) string {
+	if card.Kind == "actor" {
+		return card.ID
+	}
+	return ""
 }

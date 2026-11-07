@@ -9,6 +9,7 @@ import (
 
 type fakeDetail struct {
 	page      *ipc.SeriesDetailPageDTO
+	delay     chan struct{}
 	pages     atomic.Int64
 	filters   atomic.Int64
 	discovers atomic.Int64
@@ -25,8 +26,14 @@ func (f *fakeDetail) GetFilterPanel(context.Context, string) ([]ipc.FilterRowDTO
 	f.filters.Add(1)
 	return nil, nil
 }
-func (f *fakeDetail) GetDiscover(context.Context, string, map[string]string, string) (ipc.DiscoverResponse, error) {
+func (f *fakeDetail) GetDiscover(ctx context.Context, genre string, values map[string]string, cursor string) (ipc.DiscoverResponse, error) {
 	f.discovers.Add(1)
+	if f.delay != nil {
+		select {
+		case <-f.delay:
+		case <-ctx.Done():
+		}
+	}
 	return ipc.DiscoverResponse{}, nil
 }
 

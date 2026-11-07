@@ -81,6 +81,6 @@ func handleNativeScrollEvent(phase, momentumPhase int, rawDeltaY float64, precis
 
 	direction := scrollState.consume(phase, momentumPhase, rawDeltaY, precise, time.Now())
 	if direction != "" && window != nil {
-		_ = scrollGestureEvent.Emit(window, ScrollGesturePayload{Direction: direction})
+		emitScrollGesture(ScrollGesturePayload{Direction: direction})
 	}
 }

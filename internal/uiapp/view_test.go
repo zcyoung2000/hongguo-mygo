@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/beilunyang/openhongguo/sdk/model"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -17,7 +18,7 @@ func TestRenderDiscoverShowsAsyncLoadingState(t *testing.T) {
 	}
 }
 
-func TestRenderCatalogShowsItemsAndLoadMore(t *testing.T) {
+func TestRenderCatalogShowsItems(t *testing.T) {
 	app := NewTestApp(nil)
 	app.catalog.Items = []CatalogItem{
 		{ID: "123456", Title: "第一剧", EpisodeCount: 12, Heat: "热播"},
@@ -25,7 +26,7 @@ func TestRenderCatalogShowsItemsAndLoadMore(t *testing.T) {
 	}
 	app.catalog.HasMore = true
 	tt := ui.NewTester(app.Render, 1200, 800)
-	if !tt.HasText("第一剧") || !tt.HasText("第二剧") || !tt.HasText("加载更多") {
+	if !tt.HasText("第一剧") || !tt.HasText("第二剧") {
 		t.Fatalf("catalog texts = %v", tt.Texts())
 	}
 }
@@ -54,7 +55,7 @@ func TestRenderSidebarUsesSVGNavigation(t *testing.T) {
 	app := NewTestApp(nil)
 	tt := ui.NewTester(app.Render, 1200, 800)
 	texts := tt.Texts()
-	for _, label := range []string{"找剧", "搜索", "历史", "收藏", "点赞", "预约"} {
+	for _, label := range []string{"推荐", "找剧", "排行榜", "新剧", "历史", "收藏", "预约", "设置"} {
 		found := false
 		for _, text := range texts {
 			if strings.Contains(text, label) {
@@ -92,7 +93,27 @@ func TestRenderDetailShowsEpisodesAndRelatedState(t *testing.T) {
 	app.playerOn = true
 	app.view = "detail"
 	tt := ui.NewTester(app.Render, 1200, 800)
-	if !tt.HasText("详情剧") || !tt.HasText("完结 · 321次播放") || !tt.HasText("第1集") || !tt.HasText("相关剧") || !tt.HasText("播放器") {
+	if !tt.HasText("详情剧") || !tt.HasText("完结 · 321次播放") || !tt.HasText("第1集") || !tt.HasText("相关剧") || !tt.HasText("播放 / 继续观看") {
 		t.Fatalf("detail texts = %v", tt.Texts())
+	}
+}
+
+func TestSlidingTabsSelectedPillDoesNotCollapseWidth(t *testing.T) {
+	app := NewTestApp(nil)
+	app.rank.Contents = []model.RankContent{
+		{ID: "all", Name: "全部"},
+		{ID: "series", Name: "系列剧"},
+		{ID: "real", Name: "真人剧"},
+	}
+	app.rank.Content = "real"
+	app.view = "rank"
+	tt := ui.NewTester(app.Render, 1200, 800)
+	tt.Frame()
+	elem, ok := tt.Find("真人剧")
+	if !ok {
+		t.Fatal("expected 真人剧 tab to be found")
+	}
+	if elem.W < 50 {
+		t.Fatalf("selected tab width collapsed: width=%v", elem.W)
 	}
 }

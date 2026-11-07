@@ -43,7 +43,7 @@ func TestLoadHistoryMapsOnlyRealLocalRecords(t *testing.T) {
 		t.Fatalf("history state = %+v", app.library.History)
 	}
 	item := app.library.History.Items[0]
-	if item.ID != "123456" || item.Title != "真实历史" || item.Description == "" || item.Rank != 0 {
+	if item.ID != "123456" || item.Title != "真实历史" || item.ResumeEpisode != 4 || item.Progress != 35 || item.Rank != 0 {
 		t.Fatalf("history item = %+v", item)
 	}
 }

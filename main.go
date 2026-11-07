@@ -106,7 +106,14 @@ func main() {
 
 	player := uiapp.NewPlayerBridge(service, mediaServer)
 	app := uiapp.NewApp(service, player)
-	mygo.BindAs("PlayerBridge", player.Callbacks())
+	host := &uiapp.MediaHost{}
+	app.SetMediaHost(host)
+	app.LoadPreferences(filepath.Join(appDir, "native-ui.json"))
+	app.SetConfirmation(func(message string) bool {
+		ok, err := native.ShowConfirmDialog(native.ConfirmDialogArgs{Message: message, ConfirmText: "确认", Destructive: true})
+		return err == nil && ok
+	})
+	mygo.BindAs("NativeShell", &uiapp.NativeShell{App: app})
 
 	// Set the app-wide source before Run so the initial sidebar material is
 	// already dark; MyGo applies this setting when the app starts.
@@ -131,19 +138,21 @@ func main() {
 			Content:         ui.View(app.Render),
 		})
 		playerView, err := win.NewWebView(mygo.WebViewOptions{
-			URL: "/native-player.html",
+			URL: "/",
 			Page: mygo.PageOptions{
 				PictureInPicture: true,
-				PreloadScript:    nativePlayerPreload,
+				PreloadScript:    `window.myguoNativeMedia = true;`,
 			},
 		})
 		if err != nil {
 			log.Fatalf("failed to create player webview: %v", err)
 		}
-		player.Attach(win, playerView)
+		host.Attach(playerView)
+		native.SetScrollPage(playerView.Page())
+		native.SetPictureInPictureHandler(func() { playerView.Page().TogglePictureInPicture() })
 		app.SetLibraryGrids(uiapp.NewLibraryGrids())
 		app.SetInvalidator(win.Invalidate)
-		native.SetMediaCommandHandler(player.MediaCommandPayload)
+		native.SetMediaCommandHandler(app.MediaCommand)
 		native.SetNavigateHandler(func(payload native.NavigatePayload) {
 			if payload.SeriesID != "" {
 				go app.OpenDetail(payload.SeriesID)
@@ -153,10 +162,14 @@ func main() {
 		})
 		native.SetWindow(win)
 		log.Printf("[startup] stage=native-window-created elapsedMs=%d", time.Since(started).Milliseconds())
-		go app.OpenView("discover")
+		win.Show()
+		win.Focus()
+		native.StartScrollGestureMonitor()
+		go app.OpenView("recommend")
 		win.Invalidate()
 		win.OnClosed(func() {
 			fmt.Println("Main window closed")
+			app.FlushPreferences()
 			native.Cleanup()
 		})
 	})
@@ -165,11 +178,3 @@ func main() {
 		log.Fatalf("app run error: %v", err)
 	}
 }
-
-const nativePlayerPreload = `
-window.nativePlayer = {
-  progress(payload) { window.mygo.call('PlayerBridge.Progress', payload).catch(error => console.error("[native-player] IPC failed", error)); },
-  saveProgress(payload) { window.mygo.call('PlayerBridge.SaveProgress', payload).catch(error => console.error("[native-player] IPC failed", error)); },
-  next(payload) { window.mygo.call('PlayerBridge.Next', payload).catch(error => console.error("[native-player] IPC failed", error)); },
-};
-`

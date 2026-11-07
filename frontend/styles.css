@@ -1319,6 +1319,23 @@ body.is-resizing-sidebar * {
   object-fit: cover;
 }
 
+.card-enter {
+  animation: cardEnter var(--motion-surface) var(--ease-out) both;
+  animation-delay: calc(var(--card-index, 0) * 36ms);
+}
+
+@keyframes cardEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .card-badge-top {
   position: absolute;
   top: 8px;
@@ -2201,27 +2218,36 @@ body.is-resizing-sidebar * {
   margin: 0;
 }
 
+.inline-load-indicator {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, .18);
+  border-top-color: var(--accent);
+  animation: inline-load-spin .8s linear infinite;
+}
+
+@keyframes inline-load-spin {
+  to { transform: rotate(360deg); }
+}
+
 .actor-load-more-wrap {
   display: flex;
   justify-content: center;
-  margin: 32px 0 16px;
+  margin: 32px 0 8px;
 }
 
-.btn-actor-load-more {
-  padding: 10px 28px;
-  border-radius: 20px;
-  font-size: 13px;
-  font-weight: 600;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-primary);
-  cursor: pointer;
-  transition: all 0.2s;
+.inline-load-indicator {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.18);
+  border-top-color: var(--accent);
+  animation: inline-load-spin 0.8s linear infinite;
 }
 
-.btn-actor-load-more:hover {
-  border-color: var(--border-active);
-  background: var(--bg-card-hover);
+@keyframes inline-load-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ==========================================================================
@@ -2435,6 +2461,16 @@ body.is-resizing-sidebar * {
   -webkit-app-region: no-drag;
 }
 
+.player-overlay {
+  transition: opacity var(--motion-surface) var(--ease-out),
+    transform var(--motion-surface) var(--ease-out);
+}
+
+.player-overlay.is-opening {
+  opacity: 0;
+  transform: scale(0.97);
+}
+
 .player-overlay.controls-hidden {
   cursor: none;
 }
@@ -2494,6 +2530,10 @@ body.is-resizing-sidebar * {
   width: max-content;
 }
 
+.player-close-right-btn {
+  justify-self: end;
+}
+
 .player-back-btn:hover {
   background: rgba(255, 255, 255, 0.22);
   border-color: rgba(255, 255, 255, 0.35);
@@ -2544,14 +2584,20 @@ body.is-resizing-sidebar * {
 }
 
 .player-stage-wrap:fullscreen,
-.player-stage-wrap.player-fullscreen {
-  position: fixed;
-  inset: 0;
-  z-index: 10000;
-  width: 100vw;
-  height: 100vh;
-  max-width: none;
-  background: #000;
+.player-stage-wrap.player-fullscreen,
+.feed-container:fullscreen,
+.feed-container.feed-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10000 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  background: #000 !important;
+}
+
+.player-overlay.player-is-fullscreen .player-topbar {
+  display: none !important;
 }
 
 .video-container {
@@ -2733,6 +2779,7 @@ video {
 .ctrl-btn svg {
   width: 20px;
   height: 20px;
+  pointer-events: none;
 }
 
 .time-display {
@@ -4650,8 +4697,14 @@ body.comments-open .video-container > video {
 @media (prefers-reduced-motion: reduce) {
   .skeleton-box,
   .skeleton-line,
-  .video-top-loader-bar {
+  .video-top-loader-bar,
+  .card-enter {
     animation: none !important;
+  }
+
+  .player-overlay {
+    transition-property: opacity;
+    transform: none;
   }
 }
 

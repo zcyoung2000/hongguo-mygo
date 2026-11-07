@@ -1,0 +1,13 @@
+/* The native shell owns navigation; this document hosts the established media scenes. */
+body.native-media .sidebar,
+body.native-media .sidebar-resizer,
+body.native-media .main-drag-bar { display: none !important; }
+body.native-media .main-content { margin: 0; width: 100%; min-width: 0; }
+body.native-media .app-container { padding: 0; }
+body.native-media .view-viewport { padding: 0; }
+body.native-media .player-overlay { inset: 0; }
+
+body.native-media #feed-cat-bar {
+  opacity: 0.01;
+  pointer-events: none;
+}

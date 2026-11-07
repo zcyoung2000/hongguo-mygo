@@ -59,13 +59,28 @@
       const playerModal = document.getElementById('player-modal');
       const isModalOpen = playerModal && playerModal.style.display !== 'none';
 
-      // 1. Ambient glow is strictly restricted to recommend feed view when player modal is closed.
-      if (!isRecommend || isModalOpen) {
+      // Ambient glow works in recommend feed and during player modal playback
+      if (!isRecommend && !isModalOpen) {
         return false;
       }
 
-      // 2. Video must be actively playing (not paused, not ended, not buffering)
-      const v = this.video;
+      let v = this.video;
+      if (isModalOpen) {
+        const mv = document.getElementById('main-video');
+        if (mv) {
+          v = mv;
+          this.video = mv;
+        }
+      } else if (isRecommend) {
+        const fv = typeof getFeedVideo === 'function'
+          ? getFeedVideo()
+          : (document.getElementById('feed-video-0') || document.querySelector('.feed-video'));
+        if (fv) {
+          v = fv;
+          this.video = fv;
+        }
+      }
+
       if (!v) return false;
       if (v.paused || v.ended || v.seeking || v.readyState < 2) {
         return false;
@@ -95,8 +110,15 @@
     }
 
     activate() {
-      document.body.classList.remove('player-ambient-glowing');
-      document.body.classList.add('feed-ambient-glowing');
+      const playerModal = document.getElementById('player-modal');
+      const isModalOpen = playerModal && playerModal.style.display !== 'none';
+      if (isModalOpen) {
+        document.body.classList.remove('feed-ambient-glowing');
+        document.body.classList.add('player-ambient-glowing');
+      } else {
+        document.body.classList.remove('player-ambient-glowing');
+        document.body.classList.add('feed-ambient-glowing');
+      }
 
       document.documentElement.style.setProperty('--feed-ambient-active', '1');
 
@@ -116,6 +138,10 @@
       // Reset to neutral dark baseline
       this.currentLeft = [20, 22, 32];
       this.currentTop = [20, 22, 32];
+
+      if (window.nativeMediaNotify) {
+        window.nativeMediaNotify('AmbientGlow', { active: false });
+      }
     }
 
     stopLoop() {
@@ -176,8 +202,19 @@
           '--feed-ambient-top',
           `rgba(${this.currentTop[0]}, ${this.currentTop[1]}, ${this.currentTop[2]}, 0.42)`
         );
+
+        if (window.nativeMediaNotify) {
+          window.nativeMediaNotify('AmbientGlow', {
+            active: true,
+            left: this.currentLeft,
+            top: this.currentTop
+          });
+        }
       } catch (err) {
-        // Silent security fallback
+        if (!this._warned) {
+          console.warn('[ambient-glow] sample error:', err);
+          this._warned = true;
+        }
       }
     }
 

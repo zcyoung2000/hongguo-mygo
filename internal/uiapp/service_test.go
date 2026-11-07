@@ -44,7 +44,7 @@ func TestOpenDetailShowsLoadingAndPlayerBridge(t *testing.T) {
 	app := NewTestApp(NewTestPlayerBridge())
 	app.SetInvalidator(func() {})
 	app.OpenDetail("123456")
-	if app.View() != "detail" || !app.PlayerVisible() || !app.DetailState().Loading {
+	if app.View() != "detail" || app.PlayerVisible() || !app.DetailState().Loading {
 		t.Fatalf("detail state = view %q player %t detail %+v", app.View(), app.PlayerVisible(), app.DetailState())
 	}
 	app.OpenView("discover")

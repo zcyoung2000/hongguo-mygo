@@ -2,6 +2,7 @@ package native
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -53,6 +54,7 @@ type NotificationArgs struct {
 
 var (
 	window             *mygo.Window
+	scrollPage         *mygo.Page
 	feedScrollCapture  atomic.Bool
 	scrollMonitorReady atomic.Bool
 	mediaCommandEvent  = mygo.NewEvent[MediaCommandPayload]("mediaCommand")
@@ -62,10 +64,11 @@ var (
 	powerMu      sync.Mutex
 	powerRelease func()
 
-	nowPlayingMu        sync.Mutex
-	lastNowArgs         UpdateNowPlayingArgs
-	mediaCommandHandler func(MediaCommandPayload)
-	navigateHandler     func(NavigatePayload)
+	nowPlayingMu            sync.Mutex
+	lastNowArgs             UpdateNowPlayingArgs
+	mediaCommandHandler     func(MediaCommandPayload)
+	navigateHandler         func(NavigatePayload)
+	pictureInPictureHandler func()
 )
 
 func Init() {
@@ -174,6 +177,20 @@ func setupAppMenu() {
 						emitNavigate("reservations", "")
 					},
 				},
+				{
+					Label: "短剧详情",
+					Click: func(_ *mygo.MenuItem, _ *mygo.Window) {
+						emitNavigate("detail", "7699823871876156441")
+					},
+				},
+				mygo.Separator(),
+				{
+					Label:       "偏好设置",
+					Accelerator: "CmdOrCtrl+,",
+					Click: func(_ *mygo.MenuItem, _ *mygo.Window) {
+						emitNavigate("settings", "")
+					},
+				},
 				mygo.Separator(),
 				{Role: mygo.RoleClose},
 			},
@@ -245,6 +262,7 @@ func emitMediaCommand(cmd string, pos float64) {
 }
 
 func emitNavigate(view, seriesID string) {
+	log.Printf("[navigate] target=%s series=%s", view, seriesID)
 	if window == nil {
 		return
 	}
@@ -382,10 +400,7 @@ func SendNotification(args NotificationArgs) (bool, error) {
 		if window != nil {
 			window.Focus()
 			if args.SeriesID != "" {
-				_ = navigateEvent.Emit(window, NavigatePayload{
-					View:     "detail",
-					SeriesID: args.SeriesID,
-				})
+				emitNavigate("detail", args.SeriesID)
 			}
 		}
 	})
@@ -399,13 +414,38 @@ func TogglePictureInPicture() {
 	if !mygo.App.IsReady() {
 		return
 	}
+	if pictureInPictureHandler != nil {
+		pictureInPictureHandler()
+		return
+	}
 	if window != nil && window.Page() != nil {
 		window.Page().TogglePictureInPicture()
 	}
 }
 
+func SetPictureInPictureHandler(fn func()) { pictureInPictureHandler = fn }
+
+func SetScrollPage(page *mygo.Page) { scrollPage = page }
+func emitScrollGesture(payload ScrollGesturePayload) {
+	if scrollPage != nil {
+		_ = scrollGestureEvent.EmitPage(scrollPage, payload)
+	} else if window != nil {
+		_ = scrollGestureEvent.Emit(window, payload)
+	}
+}
+
 func SetWindow(win *mygo.Window) {
 	window = win
+}
+
+func Window() *mygo.Window {
+	return window
+}
+
+func ToggleWindowFullscreen() {
+	if window != nil {
+		window.ToggleFullScreen()
+	}
 }
 
 func SetMediaCommandHandler(fn func(MediaCommandPayload)) { mediaCommandHandler = fn }

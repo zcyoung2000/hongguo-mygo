@@ -13,13 +13,14 @@ function harness() {
     if (!nodes.has(id)) {
       const classes = new Set();
       nodes.set(id, {
-        style: { display: 'none' }, scrollLeft: 0,
+        style: { display: 'none', setProperty() {} }, scrollLeft: 0,
         classList: {
           add: (...items) => items.forEach(item => classes.add(item)),
           remove: (...items) => items.forEach(item => classes.delete(item)),
           contains: item => classes.has(item), toggle() {}
         },
-        querySelector: () => element('body')
+        querySelector: () => element('body'),
+        addEventListener() {}, removeEventListener() {}
       });
     }
     return nodes.get(id);
@@ -34,7 +35,7 @@ function harness() {
     play() { this.playCount++; this.paused = false; return Promise.resolve(); }
   };
   const c = vm.createContext({
-    console, clearTimeout, video, window: {}, playerRequestToken: 0, playerPlaybackIdentity: null,
+    console, clearTimeout, setTimeout, requestAnimationFrame: callback => callback(), video, window: {}, playerRequestToken: 0, playerPlaybackIdentity: null,
     nativeFeedScrollReady: false, feedLastFallbackScrollAt: -Infinity,
     feedInputSequence: 0, feedLastRepeatAt: -Infinity, recordFeedDiagnostic() {},
     document: { getElementById: element, querySelectorAll: () => [], documentElement: {}, body: element('body') },
@@ -61,7 +62,7 @@ function harness() {
   });
   for (const name of [
     'clearPlayerVideo', 'openPlayer', 'playEpisodeNumber', 'persistProgress', 'closePlayer',
-    'isPlayerRequestCurrent', 'playNextSeason', 'shouldCaptureFeedScroll', 'handleNativeFeedScroll',
+    'isPlayerRequestCurrent', 'formatTime', 'playNextSeason', 'shouldCaptureFeedScroll', 'handleNativeFeedScroll',
     'requestFeedSwitch',
     'clearMediaCache'
   ]) {
@@ -97,6 +98,7 @@ test('closing invalidates a pending playback response and detached metadata call
   requests[1].resolve({ streamUrl: 'local/episode2' });
   assert.equal(await pending, false);
   detachedMetadata();
+  await new Promise(resolve => setTimeout(resolve, 300));
   assert.equal(video.src, '');
   assert.equal(video.playCount, 0);
   assert.equal(element('player-modal').style.display, 'none');
@@ -297,4 +299,21 @@ test('native scroll capture changes serialize and converge after rapid comment t
   requests[2].resolve();
   await syncing;
   assert.equal(c.feedScrollCaptureSync, null);
+});
+
+test('native history positions reach the seek argument without replacing the chosen quality', async () => {
+  for (const resumeAt of [42, 0, null]) {
+    const { c, requests, video } = harness();
+    const opening = c.openPlayer('native-series', 2, resumeAt);
+    requests[0].resolve({id:'native-series',title:'Drama',episodeCount:3,episodes:[{id:'native-episode',number:2}]});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests[1].method, 'PlayEpisode');
+    assert.equal(requests[1].args[2], 2);
+    assert.equal(requests[1].args[3], '720p', 'a saved position must never become the quality');
+    requests[1].resolve({streamUrl:'local/native-episode',episodeId:'native-episode',episodeNum:2,durationSec:100,lastPosition:18});
+    await opening;
+    video.duration = 100;
+    video.onloadedmetadata();
+    assert.equal(video.currentTime, resumeAt ?? 18);
+  }
 });

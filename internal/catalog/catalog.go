@@ -60,20 +60,21 @@ type RankTabDTO struct {
 }
 
 type RankItemDTO struct {
-	Position    int      `json:"position"`
-	SeriesID    string   `json:"seriesId"`
-	Title       string   `json:"title"`
-	CoverURL    string   `json:"coverUrl"`
-	Heat        string   `json:"heat"`
-	Description string   `json:"description"`
-	ItemType    string   `json:"itemType"`
-	Promoted    bool     `json:"promoted,omitempty"`
-	Actor       string   `json:"actor,omitempty"`
-	ActorID     string   `json:"actorId,omitempty"`
-	UserID      string   `json:"userId,omitempty"`
-	AvatarURL   string   `json:"avatarUrl,omitempty"`
-	Intro       string   `json:"intro,omitempty"`
-	Details     []string `json:"details,omitempty"`
+	EpisodeCount int      `json:"episodeCount,omitempty"`
+	Position     int      `json:"position"`
+	SeriesID     string   `json:"seriesId"`
+	Title        string   `json:"title"`
+	CoverURL     string   `json:"coverUrl"`
+	Heat         string   `json:"heat"`
+	Description  string   `json:"description"`
+	ItemType     string   `json:"itemType"`
+	Promoted     bool     `json:"promoted,omitempty"`
+	Actor        string   `json:"actor,omitempty"`
+	ActorID      string   `json:"actorId,omitempty"`
+	UserID       string   `json:"userId,omitempty"`
+	AvatarURL    string   `json:"avatarUrl,omitempty"`
+	Intro        string   `json:"intro,omitempty"`
+	Details      []string `json:"details,omitempty"`
 }
 
 type RankResponse struct {
@@ -526,20 +527,21 @@ func (s *Service) GetRankings(ctx context.Context, contentId, boardId, cursor st
 				desc = strings.Join(it.Details, " · ")
 			}
 			items = append(items, RankItemDTO{
-				Position:    it.Position,
-				SeriesID:    it.SeriesID,
-				Title:       title,
-				CoverURL:    avatar,
-				Heat:        it.Score,
-				Description: desc,
-				ItemType:    "actor",
-				Promoted:    it.Promoted,
-				Actor:       it.Actor,
-				ActorID:     it.ActorID,
-				UserID:      it.UserID,
-				AvatarURL:   avatar,
-				Intro:       it.Intro,
-				Details:     it.Details,
+				Position:     it.Position,
+				SeriesID:     it.SeriesID,
+				EpisodeCount: it.EpisodeCount,
+				Title:        title,
+				CoverURL:     avatar,
+				Heat:         it.Score,
+				Description:  desc,
+				ItemType:     "actor",
+				Promoted:     it.Promoted,
+				Actor:        it.Actor,
+				ActorID:      it.ActorID,
+				UserID:       it.UserID,
+				AvatarURL:    avatar,
+				Intro:        it.Intro,
+				Details:      it.Details,
 			})
 		} else {
 			desc := ""
@@ -549,15 +551,16 @@ func (s *Service) GetRankings(ctx context.Context, contentId, boardId, cursor st
 				desc = it.Actor
 			}
 			items = append(items, RankItemDTO{
-				Position:    it.Position,
-				SeriesID:    it.SeriesID,
-				Title:       it.Title,
-				CoverURL:    s.imageURL(it.CoverURL),
-				Heat:        it.Score,
-				Description: desc,
-				ItemType:    "drama",
-				Promoted:    it.Promoted,
-				Actor:       it.Actor,
+				Position:     it.Position,
+				SeriesID:     it.SeriesID,
+				EpisodeCount: it.EpisodeCount,
+				Title:        it.Title,
+				CoverURL:     s.imageURL(it.CoverURL),
+				Heat:         it.Score,
+				Description:  desc,
+				ItemType:     "drama",
+				Promoted:     it.Promoted,
+				Actor:        it.Actor,
 			})
 		}
 	}

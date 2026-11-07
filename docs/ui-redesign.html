@@ -1,0 +1,1725 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>myguo - macOS Native UI Redesign</title>
+  <style>
+    /* ==========================================================================
+       macOS Native Dark Aesthetic System Tokens (Apple HIG)
+       ========================================================================== */
+    :root {
+      --bg-window: #0c0d12;
+      --bg-sidebar: rgba(18, 19, 25, 0.72);
+      --bg-surface: rgba(255, 255, 255, 0.04);
+      --bg-surface-hover: rgba(255, 255, 255, 0.08);
+      --bg-surface-active: rgba(255, 255, 255, 0.12);
+      --bg-glass: rgba(30, 32, 42, 0.65);
+      
+      --accent: #ff3358;
+      --accent-glow: rgba(255, 51, 88, 0.28);
+      --accent-subtle: rgba(255, 51, 88, 0.12);
+
+      --text-1: #ffffff;
+      --text-2: rgba(255, 255, 255, 0.70);
+      --text-3: rgba(255, 255, 255, 0.40);
+
+      --border-subtle: rgba(255, 255, 255, 0.07);
+      --border-glass: rgba(255, 255, 255, 0.12);
+      --border-focus: rgba(255, 51, 88, 0.5);
+
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-xl: 22px;
+      --radius-full: 9999px;
+
+      --font-system: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+      --ease-apple: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    body {
+      font-family: var(--font-system);
+      font-size: 13px;
+      color: var(--text-1);
+      background: #060709;
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* macOS Window Shell */
+    .macos-window {
+      width: 100%;
+      max-width: 1140px;
+      margin: 0 auto;
+      height: 780px;
+      background: var(--bg-window);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-glass);
+      box-shadow: 0 32px 90px rgba(0, 0, 0, 0.85), 0 0 1px rgba(255, 255, 255, 0.18);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Unified Window Titlebar & Toolbar */
+    .window-titlebar {
+      height: 48px;
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      background: rgba(14, 15, 21, 0.88);
+      backdrop-filter: blur(24px) saturate(190%);
+      -webkit-backdrop-filter: blur(24px) saturate(190%);
+      flex-shrink: 0;
+      z-index: 30;
+    }
+
+    .titlebar-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-shrink: 0;
+    }
+
+    /* Traffic Lights */
+    .traffic-lights {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .traffic-light {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 0.5px solid rgba(0, 0, 0, 0.25);
+      cursor: pointer;
+    }
+
+    .traffic-light.close { background: #ff5f57; }
+    .traffic-light.min { background: #febc2e; }
+    .traffic-light.zoom { background: #28c840; }
+
+    .window-title-badge {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-2);
+      letter-spacing: -0.2px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .titlebar-center {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+    }
+
+    /* macOS Segmented Switcher */
+    .segmented-control {
+      display: inline-flex;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: var(--radius-sm);
+      padding: 2px;
+      border: 1px solid var(--border-subtle);
+      white-space: nowrap;
+    }
+
+    .segment-btn {
+      padding: 4px 16px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-2);
+      background: transparent;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.16s var(--ease-apple);
+    }
+
+    .segment-btn:hover {
+      color: var(--text-1);
+    }
+
+    .segment-btn.active {
+      color: var(--text-1);
+      background: rgba(255, 255, 255, 0.16);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      font-weight: 600;
+    }
+
+    .titlebar-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    /* Search Pill */
+    .search-box {
+      position: relative;
+      width: 170px;
+    }
+
+    .search-box input {
+      width: 100%;
+      height: 28px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-full);
+      padding: 0 10px 0 28px;
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--text-1);
+      outline: none;
+      transition: all 0.2s var(--ease-apple);
+    }
+
+    .search-box input:focus {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: var(--border-focus);
+      width: 200px;
+      box-shadow: 0 0 0 3px var(--accent-subtle);
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 9px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 13px;
+      height: 13px;
+      color: var(--text-3);
+      pointer-events: none;
+    }
+
+    .profile-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 3px 10px 3px 4px;
+      border-radius: var(--radius-full);
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      cursor: pointer;
+      transition: background 0.16s;
+    }
+
+    .profile-pill:hover {
+      background: var(--bg-surface-hover);
+    }
+
+    .profile-avatar {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #ff3358, #ff7a45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .profile-name {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-2);
+      white-space: nowrap;
+    }
+
+    /* Workspace */
+    .window-workspace {
+      display: flex;
+      flex: 1;
+      height: calc(780px - 48px);
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Sidebar (Frosted Vibrancy) */
+    .sidebar {
+      width: 200px;
+      background: var(--bg-sidebar);
+      backdrop-filter: blur(28px) saturate(180%);
+      -webkit-backdrop-filter: blur(28px) saturate(180%);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 14px 10px;
+      flex-shrink: 0;
+    }
+
+    .sidebar-nav-group {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-bottom: 20px;
+    }
+
+    .sidebar-heading {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-3);
+      padding: 6px 12px 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .nav-btn {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 12px;
+      border-radius: var(--radius-md);
+      color: var(--text-2);
+      font-size: 13px;
+      font-weight: 500;
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      transition: all 0.16s var(--ease-apple);
+      text-align: left;
+      width: 100%;
+      white-space: nowrap;
+    }
+
+    .nav-btn svg {
+      width: 16px;
+      height: 16px;
+      color: var(--text-2);
+      flex-shrink: 0;
+      transition: color 0.16s;
+    }
+
+    .nav-btn:hover {
+      background: var(--bg-surface-hover);
+      color: var(--text-1);
+    }
+
+    .nav-btn:hover svg {
+      color: var(--text-1);
+    }
+
+    .nav-btn.active {
+      background: var(--accent-subtle);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .nav-btn.active svg {
+      color: var(--accent);
+    }
+
+    .nav-counter {
+      margin-left: auto;
+      font-size: 11px;
+      color: var(--text-3);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .sidebar-footer {
+      border-top: 1px solid var(--border-subtle);
+      padding-top: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 8px 4px;
+    }
+
+    .storage-stat {
+      font-size: 11px;
+      color: var(--text-3);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .storage-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #34c759;
+    }
+
+    /* Main Viewport */
+    .main-viewport {
+      flex: 1;
+      height: 100%;
+      overflow-y: auto;
+      background: radial-gradient(circle at 65% 15%, rgba(255, 51, 88, 0.05) 0%, transparent 60%),
+                  radial-gradient(circle at 20% 80%, rgba(40, 80, 160, 0.04) 0%, transparent 50%),
+                  var(--bg-window);
+      position: relative;
+    }
+
+    /* View Pages */
+    .view-page {
+      display: none;
+      padding: 24px 30px 40px;
+      height: 100%;
+      box-sizing: border-box;
+      animation: fadeIn 0.22s var(--ease-apple);
+    }
+
+    .view-page.active {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ==========================================================================
+       VIEW 1: RECOMMEND FEED (Short Drama Vertical Stage)
+       ========================================================================== */
+    .feed-layout {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .stage-ambient-glow {
+      position: absolute;
+      width: 380px;
+      height: 620px;
+      border-radius: 40px;
+      background: radial-gradient(circle at center, rgba(255, 51, 88, 0.35), rgba(70, 30, 100, 0.25), transparent 70%);
+      filter: blur(50px);
+      z-index: 1;
+      pointer-events: none;
+      opacity: 0.8;
+      transition: all 0.5s ease;
+    }
+
+    .feed-stage-card {
+      width: 350px;
+      height: 620px;
+      border-radius: 24px;
+      background: #000;
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--border-glass);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Video Frame Simulation */
+    .feed-video-bg {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(0,0,0,0.3) 0%, rgba(0,0,0,0.05) 50%, rgba(0,0,0,0.92) 100%),
+                  radial-gradient(ellipse at 50% 40%, #30173b 0%, #170d24 60%, #07050d 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .video-mock-graphic {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      opacity: 0.2;
+    }
+
+    .video-mock-graphic svg {
+      width: 56px;
+      height: 56px;
+      color: #fff;
+    }
+
+    /* Top Stage Bar */
+    .stage-topbar {
+      position: absolute;
+      top: 14px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: center;
+      gap: 18px;
+      z-index: 10;
+    }
+
+    .channel-tab {
+      background: transparent;
+      border: none;
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      position: relative;
+      padding: 4px 2px;
+      white-space: nowrap;
+      transition: color 0.16s;
+    }
+
+    .channel-tab.active {
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .channel-tab.active::after {
+      content: "";
+      position: absolute;
+      bottom: -2px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 14px;
+      height: 2.5px;
+      border-radius: 2px;
+      background: var(--accent);
+    }
+
+    /* Right Action Rail */
+    .stage-action-rail {
+      position: absolute;
+      right: 14px;
+      bottom: 84px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      z-index: 10;
+    }
+
+    .rail-btn-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .rail-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.14);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      cursor: pointer;
+      transition: all 0.2s var(--ease-apple);
+    }
+
+    .rail-btn svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .rail-btn:hover {
+      background: rgba(255, 255, 255, 0.24);
+      transform: scale(1.08);
+    }
+
+    .rail-btn.liked {
+      background: var(--accent-subtle);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .rail-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: rgba(255, 255, 255, 0.9);
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+      white-space: nowrap;
+    }
+
+    /* Bottom Info Overlay */
+    .stage-info {
+      position: absolute;
+      bottom: 24px;
+      left: 16px;
+      right: 76px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .stage-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge-rank {
+      font-size: 10px;
+      font-weight: 700;
+      background: var(--accent);
+      color: #fff;
+      padding: 1px 7px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
+    .badge-ep {
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.85);
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(8px);
+      padding: 1px 7px;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+
+    .stage-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.3;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+    }
+
+    .stage-desc {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.72);
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+    }
+
+    /* Scrubber */
+    .stage-scrubber-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.2);
+      cursor: pointer;
+      transition: height 0.16s;
+      z-index: 20;
+    }
+
+    .stage-scrubber-bar:hover {
+      height: 8px;
+    }
+
+    .stage-scrubber-fill {
+      width: 48%;
+      height: 100%;
+      background: var(--accent);
+      position: relative;
+    }
+
+    .stage-scrubber-handle {
+      position: absolute;
+      right: -5px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 4px rgba(0,0,0,0.5);
+      opacity: 0;
+      transition: opacity 0.16s;
+    }
+
+    .stage-scrubber-bar:hover .stage-scrubber-handle {
+      opacity: 1;
+    }
+
+    /* ==========================================================================
+       VIEW 2: DISCOVER / CATALOG (Drama Card Grid)
+       ========================================================================== */
+    .discover-header {
+      margin-bottom: 20px;
+    }
+
+    .filter-chips-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+      scrollbar-width: none;
+    }
+
+    .filter-chips-row::-webkit-scrollbar {
+      display: none;
+    }
+
+    .chip-btn {
+      padding: 5px 14px;
+      border-radius: var(--radius-full);
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-2);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.16s var(--ease-apple);
+    }
+
+    .chip-btn:hover {
+      background: var(--bg-surface-hover);
+      color: var(--text-1);
+    }
+
+    .chip-btn.active {
+      background: #fff;
+      color: #0c0d11;
+      font-weight: 600;
+      border-color: #fff;
+    }
+
+    /* Drama Card Grid */
+    .drama-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(154px, 1fr));
+      gap: 20px 16px;
+    }
+
+    .drama-card {
+      cursor: pointer;
+      transition: transform 0.22s var(--ease-apple);
+      outline: none;
+    }
+
+    .drama-card:hover {
+      transform: translateY(-4px);
+    }
+
+    .card-poster-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 3 / 4.2;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      background: #181922;
+      border: 1px solid var(--border-subtle);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+      transition: box-shadow 0.22s var(--ease-apple), border-color 0.22s;
+    }
+
+    .drama-card:hover .card-poster-wrap {
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--border-glass);
+      border-color: var(--border-glass);
+    }
+
+    .card-poster-art {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: 12px;
+      box-sizing: border-box;
+      position: relative;
+      background-size: cover;
+      background-position: center;
+    }
+
+    .card-poster-art svg {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 44px;
+      height: 44px;
+      opacity: 0.18;
+      color: #fff;
+    }
+
+    .card-gradient-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, transparent 40%, rgba(0, 0, 0, 0.85) 100%);
+    }
+
+    .card-badge-top {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 2px 6px;
+      border-radius: 4px;
+      z-index: 2;
+    }
+
+    .card-badge-top.rank-1 {
+      background: var(--accent);
+      border-color: transparent;
+    }
+
+    .card-badge-bottom {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      font-size: 10px;
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(6px);
+      padding: 1px 6px;
+      border-radius: 3px;
+      z-index: 2;
+    }
+
+    .card-info {
+      padding: 8px 2px 0;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-1);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 2px;
+    }
+
+    .card-meta {
+      font-size: 11px;
+      color: var(--text-3);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .card-heat {
+      color: #ff9f0a;
+      font-weight: 600;
+    }
+
+    /* ==========================================================================
+       VIEW 3: DRAMA DETAIL SHEET / MODAL
+       ========================================================================== */
+    .detail-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 11, 15, 0.82);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      z-index: 50;
+      display: none;
+      padding: 30px 40px;
+      overflow-y: auto;
+      animation: sheetUp 0.26s var(--ease-apple);
+    }
+
+    .detail-overlay.active {
+      display: block;
+    }
+
+    @keyframes sheetUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .detail-top-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-full);
+      padding: 6px 14px 6px 10px;
+      color: var(--text-1);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.16s;
+    }
+
+    .back-btn:hover {
+      background: var(--bg-surface-hover);
+      border-color: var(--border-glass);
+    }
+
+    .detail-hero-section {
+      display: flex;
+      gap: 32px;
+      margin-bottom: 34px;
+    }
+
+    .detail-poster-frame {
+      width: 180px;
+      aspect-ratio: 3 / 4.2;
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      background: #181922;
+      border: 1px solid var(--border-glass);
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .detail-info-pane {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 12px;
+    }
+
+    .detail-title {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+    }
+
+    .detail-stats-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--text-2);
+      white-space: nowrap;
+    }
+
+    .detail-stat-pill {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      padding: 3px 9px;
+      border-radius: var(--radius-sm);
+    }
+
+    .detail-stat-pill.hot {
+      color: #ff9f0a;
+      border-color: rgba(255, 159, 10, 0.24);
+      background: rgba(255, 159, 10, 0.08);
+      font-weight: 600;
+    }
+
+    .detail-summary {
+      font-size: 13px;
+      color: var(--text-2);
+      line-height: 1.6;
+      max-width: 620px;
+    }
+
+    .detail-cta-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .btn-apple-primary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 20px;
+      border-radius: var(--radius-full);
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 4px 14px var(--accent-glow);
+      white-space: nowrap;
+      transition: all 0.16s var(--ease-apple);
+    }
+
+    .btn-apple-primary:hover {
+      background: #ff476b;
+      transform: scale(1.02);
+    }
+
+    .btn-apple-secondary {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-glass);
+      color: var(--text-1);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 18px;
+      border-radius: var(--radius-full);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.16s;
+    }
+
+    .btn-apple-secondary:hover {
+      background: var(--bg-surface-hover);
+    }
+
+    /* Episode Selector Grid */
+    .episodes-section {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+    }
+
+    .episodes-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+
+    .episodes-title {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .episodes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+      gap: 8px;
+    }
+
+    .ep-btn {
+      height: 38px;
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-2);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.14s;
+    }
+
+    .ep-btn:hover {
+      background: var(--bg-surface-hover);
+      color: var(--text-1);
+    }
+
+    .ep-btn.active {
+      background: var(--accent);
+      color: #fff;
+      font-weight: 700;
+      border-color: var(--accent);
+    }
+
+    /* ==========================================================================
+       VIEW 4: SETTINGS (macOS Inset Grouped System Style)
+       ========================================================================== */
+    .settings-wrapper {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    .settings-title {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 24px;
+      letter-spacing: -0.3px;
+    }
+
+    .settings-group {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .settings-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .settings-row:last-child {
+      border-bottom: none;
+    }
+
+    .settings-label-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .settings-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-1);
+    }
+
+    .settings-sublabel {
+      font-size: 11px;
+      color: var(--text-3);
+    }
+
+    /* Apple Switch Toggle */
+    .apple-switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 24px;
+    }
+
+    .apple-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .switch-slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background-color: rgba(255, 255, 255, 0.16);
+      transition: 0.24s var(--ease-apple);
+      border-radius: 24px;
+    }
+
+    .switch-slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.24s var(--ease-apple);
+      border-radius: 50%;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+    }
+
+    input:checked + .switch-slider {
+      background-color: #34c759;
+    }
+
+    input:checked + .switch-slider:before {
+      transform: translateX(16px);
+    }
+
+    .settings-action-btn {
+      background: var(--bg-surface-hover);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      color: var(--text-1);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 5px 12px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.16s;
+    }
+
+    .settings-action-btn:hover {
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    /* Subtle Toast Notice */
+    .macos-toast {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(30px);
+      background: rgba(30, 32, 42, 0.92);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-glass);
+      color: #fff;
+      padding: 8px 18px;
+      border-radius: var(--radius-full);
+      font-size: 12px;
+      font-weight: 500;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.24s var(--ease-apple);
+      z-index: 100;
+      white-space: nowrap;
+    }
+
+    .macos-toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- macOS Window Mockup Container -->
+  <div class="macos-window">
+    
+    <!-- Unified Window Titlebar & Toolbar -->
+    <header class="window-titlebar">
+      <!-- Traffic Lights & Title -->
+      <div class="titlebar-left">
+        <div class="traffic-lights">
+          <div class="traffic-light close" title="关闭"></div>
+          <div class="traffic-light min" title="最小化"></div>
+          <div class="traffic-light zoom" title="缩放"></div>
+        </div>
+        <div class="window-title-badge">
+          <span>myguo</span>
+        </div>
+      </div>
+
+      <!-- Segmented Central Navigation -->
+      <div class="titlebar-center">
+        <div class="segmented-control" role="tablist">
+          <button class="segment-btn active" data-view="feed">精选</button>
+          <button class="segment-btn" data-view="discover">片库</button>
+          <button class="segment-btn" data-view="rank">榜单</button>
+          <button class="segment-btn" data-view="new">新剧</button>
+        </div>
+      </div>
+
+      <!-- Search & Profile -->
+      <div class="titlebar-right">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" placeholder="搜索短剧、主演...">
+        </div>
+        <div class="profile-pill" id="btn-open-settings" title="偏好设置">
+          <div class="profile-avatar">M</div>
+          <span class="profile-name">本地</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="window-workspace">
+      
+      <!-- Translucent Sidebar -->
+      <aside class="sidebar">
+        <div>
+          <!-- Discover Section -->
+          <div class="sidebar-nav-group">
+            <div class="sidebar-heading">发现</div>
+            <button class="nav-btn active" data-view="feed">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+              <span>精选推荐</span>
+            </button>
+            <button class="nav-btn" data-view="discover">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+              <span>浏览片库</span>
+            </button>
+            <button class="nav-btn" data-view="rank">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H6v-4h6v4zm0-6H6V7h6v4zm6 6h-4V7h4v10z"/></svg>
+              <span>排行榜</span>
+            </button>
+            <button class="nav-btn" data-view="new">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-1.99.9-1.99 2L3 20a2 2 0 002 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z"/></svg>
+              <span>新剧上线</span>
+            </button>
+          </div>
+
+          <!-- Library Section -->
+          <div class="sidebar-nav-group">
+            <div class="sidebar-heading">片库</div>
+            <button class="nav-btn" data-view="history">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M13 3a9 9 0 00-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0013 21a9 9 0 000-18zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
+              <span>观看历史</span>
+              <span class="nav-counter">18</span>
+            </button>
+            <button class="nav-btn" data-view="favorites">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
+              <span>我的收藏</span>
+              <span class="nav-counter">6</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Sidebar Footer -->
+        <div class="sidebar-footer">
+          <div class="storage-stat">
+            <div class="storage-dot"></div>
+            <span>就绪 · 缓存 128MB</span>
+          </div>
+          <button class="nav-btn" data-view="settings" style="width: auto; padding: 4px 6px;" title="设置">
+            <svg viewBox="0 0 24 24" fill="currentColor" style="width:14px;height:14px;"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.488.488 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Viewport -->
+      <main class="main-viewport">
+        
+        <!-- ========================================== -->
+        <!-- VIEW 1: RECOMMEND FEED (Short-Drama Feed) -->
+        <!-- ========================================== -->
+        <section class="view-page active" id="page-feed">
+          <div class="feed-layout">
+            <div class="stage-ambient-glow" id="ambient-glow"></div>
+            
+            <div class="feed-stage-card">
+              <!-- Video Simulated Layer -->
+              <div class="feed-video-bg">
+                <div class="video-mock-graphic">
+                  <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5v14l11-7z"/>
+                  </svg>
+                </div>
+              </div>
+
+              <!-- Top Channels -->
+              <div class="stage-topbar">
+                <button class="channel-tab">关注</button>
+                <button class="channel-tab active">精选</button>
+                <button class="channel-tab">漫剧</button>
+                <button class="channel-tab">真人</button>
+              </div>
+
+              <!-- Right Floating Actions -->
+              <div class="stage-action-rail">
+                <div class="rail-btn-group">
+                  <button class="rail-btn" id="btn-feed-like" title="喜欢">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                  </button>
+                  <span class="rail-label" id="feed-like-num">24.6w</span>
+                </div>
+                <div class="rail-btn-group">
+                  <button class="rail-btn" id="btn-feed-fav" title="收藏">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
+                  </button>
+                  <span class="rail-label">5.2w</span>
+                </div>
+                <div class="rail-btn-group">
+                  <button class="rail-btn" id="btn-feed-episodes" title="选集">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+                  </button>
+                  <span class="rail-label">80集</span>
+                </div>
+              </div>
+
+              <!-- Bottom Overlay -->
+              <div class="stage-info">
+                <div class="stage-badges">
+                  <span class="badge-rank">热播 TOP 1</span>
+                  <span class="badge-ep">第 12 集</span>
+                </div>
+                <h3 class="stage-title">天降首富：从退婚开始</h3>
+                <p class="stage-desc">龙王隐忍三年，今日身份曝光，全城权贵无不俯首称臣...</p>
+              </div>
+
+              <!-- Bottom Scrubber -->
+              <div class="stage-scrubber-bar">
+                <div class="stage-scrubber-fill">
+                  <div class="stage-scrubber-handle"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- VIEW 2: DISCOVER / CATALOG (Drama Grid)    -->
+        <!-- ========================================== -->
+        <section class="view-page" id="page-discover">
+          <div class="discover-header">
+            <div class="filter-chips-row">
+              <button class="chip-btn active">全部短剧</button>
+              <button class="chip-btn">都市逆袭</button>
+              <button class="chip-btn">战神归来</button>
+              <button class="chip-btn">古代穿越</button>
+              <button class="chip-btn">甜宠虐恋</button>
+              <button class="chip-btn">豪门赘婿</button>
+              <button class="chip-btn">精品漫剧</button>
+            </div>
+          </div>
+
+          <div class="drama-grid">
+            <!-- Card 1 -->
+            <div class="drama-card" data-title="天降首富：从退婚开始" data-heat="980w" data-ep="80集">
+              <div class="card-poster-wrap">
+                <div class="card-badge-top rank-1">TOP 1</div>
+                <div class="card-badge-bottom">全80集</div>
+                <div class="card-poster-art" style="background: linear-gradient(135deg, #301132, #5a195b);">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  <div class="card-gradient-overlay"></div>
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">天降首富：从退婚开始</div>
+                <div class="card-meta">
+                  <span class="card-heat">热度 980w</span>
+                  <span>·</span>
+                  <span>都市逆袭</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 2 -->
+            <div class="drama-card" data-title="绝世龙帅：君临天下" data-heat="870w" data-ep="92集">
+              <div class="card-poster-wrap">
+                <div class="card-badge-top">TOP 2</div>
+                <div class="card-badge-bottom">全92集</div>
+                <div class="card-poster-art" style="background: linear-gradient(135deg, #102340, #1b457a);">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"/></svg>
+                  <div class="card-gradient-overlay"></div>
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">绝世龙帅：君临天下</div>
+                <div class="card-meta">
+                  <span class="card-heat">热度 870w</span>
+                  <span>·</span>
+                  <span>热血战神</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 3 -->
+            <div class="drama-card" data-title="重返1990当首富" data-heat="740w" data-ep="76集">
+              <div class="card-poster-wrap">
+                <div class="card-badge-bottom">全76集</div>
+                <div class="card-poster-art" style="background: linear-gradient(135deg, #2e2417, #694a20);">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/></svg>
+                  <div class="card-gradient-overlay"></div>
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">重返1990当首富</div>
+                <div class="card-meta">
+                  <span class="card-heat">热度 740w</span>
+                  <span>·</span>
+                  <span>年代逆袭</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 4 -->
+            <div class="drama-card" data-title="女总裁的神级贴身高手" data-heat="690w" data-ep="68集">
+              <div class="card-poster-wrap">
+                <div class="card-badge-bottom">全68集</div>
+                <div class="card-poster-art" style="background: linear-gradient(135deg, #1b2e2b, #25635a);">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+                  <div class="card-gradient-overlay"></div>
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">女总裁的神级贴身高手</div>
+                <div class="card-meta">
+                  <span class="card-heat">热度 690w</span>
+                  <span>·</span>
+                  <span>都市情感</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 5 -->
+            <div class="drama-card" data-title="大秦帝国之签到百年" data-heat="620w" data-ep="100集">
+              <div class="card-poster-wrap">
+                <div class="card-badge-bottom">全100集</div>
+                <div class="card-poster-art" style="background: linear-gradient(135deg, #361a22, #732333);">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H6v-4h6v4zm0-6H6V7h6v4zm6 6h-4V7h4v10z"/></svg>
+                  <div class="card-gradient-overlay"></div>
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">大秦帝国之签到百年</div>
+                <div class="card-meta">
+                  <span class="card-heat">热度 620w</span>
+                  <span>·</span>
+                  <span>玄幻历史</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 6 -->
+            <div class="drama-card" data-title="顾总宠妻无极限" data-heat="580w" data-ep="60集">
+              <div class="card-poster-wrap">
+                <div class="card-badge-bottom">全60集</div>
+                <div class="card-poster-art" style="background: linear-gradient(135deg, #2d1e38, #69328f);">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                  <div class="card-gradient-overlay"></div>
+                </div>
+              </div>
+              <div class="card-info">
+                <div class="card-title">顾总宠妻无极限</div>
+                <div class="card-meta">
+                  <span class="card-heat">热度 580w</span>
+                  <span>·</span>
+                  <span>现代甜宠</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- VIEW 3: SETTINGS (macOS Inset Grouped)     -->
+        <!-- ========================================== -->
+        <section class="view-page" id="page-settings">
+          <div class="settings-wrapper">
+            <h2 class="settings-title">偏好设置</h2>
+
+            <!-- Group 1: 账户与存储 -->
+            <div class="settings-group">
+              <div class="settings-row">
+                <div class="settings-label-wrap">
+                  <span class="settings-label">当前账号</span>
+                  <span class="settings-sublabel">匿名访客模式 · 本地持久化</span>
+                </div>
+                <button class="settings-action-btn" id="btn-login-demo">凭据登录</button>
+              </div>
+              <div class="settings-row">
+                <div class="settings-label-wrap">
+                  <span class="settings-label">本地媒体缓存</span>
+                  <span class="settings-sublabel">已占用 128.4 MB 切片与海报数据</span>
+                </div>
+                <button class="settings-action-btn" id="btn-clear-cache-demo">清理缓存</button>
+              </div>
+              <div class="settings-row">
+                <div class="settings-label-wrap">
+                  <span class="settings-label">匿名设备标识</span>
+                  <span class="settings-sublabel">如遇频控可重置生成新指纹</span>
+                </div>
+                <button class="settings-action-btn" id="btn-reset-device-demo">重置标识</button>
+              </div>
+            </div>
+
+            <!-- Group 2: 播放与行为 -->
+            <div class="settings-group">
+              <div class="settings-row">
+                <div class="settings-label-wrap">
+                  <span class="settings-label">自动连续播放下一集</span>
+                  <span class="settings-sublabel">剧集播毕无缝切换下一集</span>
+                </div>
+                <label class="apple-switch">
+                  <input type="checkbox" checked>
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+              <div class="settings-row">
+                <div class="settings-label-wrap">
+                  <span class="settings-label">硬件加速解密与渲染</span>
+                  <span class="settings-sublabel">利用 Apple Silicon 原生硬件模块</span>
+                </div>
+                <label class="apple-switch">
+                  <input type="checkbox" checked>
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+              <div class="settings-row">
+                <div class="settings-label-wrap">
+                  <span class="settings-label">弹幕开关</span>
+                  <span class="settings-sublabel">进入播放界面时默认展现</span>
+                </div>
+                <label class="apple-switch">
+                  <input type="checkbox">
+                  <span class="switch-slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ========================================== -->
+        <!-- DRAMA DETAIL SHEET OVERLAY (Frosted Glass) -->
+        <!-- ========================================== -->
+        <div class="detail-overlay" id="detail-sheet">
+          <div class="detail-top-nav">
+            <button class="back-btn" id="btn-close-detail">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+              <span>返回片库</span>
+            </button>
+          </div>
+
+          <div class="detail-hero-section">
+            <div class="detail-poster-frame">
+              <div style="width: 100%; height: 100%; background: linear-gradient(135deg, #301132, #5a195b);"></div>
+            </div>
+            <div class="detail-info-pane">
+              <h1 class="detail-title" id="sheet-title">天降首富：从退婚开始</h1>
+              <div class="detail-stats-row">
+                <span class="detail-stat-pill hot" id="sheet-heat">热度 980w</span>
+                <span class="detail-stat-pill">全 80 集 · 完结</span>
+                <span class="detail-stat-pill">都市 · 逆袭 · 战神</span>
+              </div>
+              <p class="detail-summary">
+                昔日落魄弃婿三年潜沉，只为守护心爱之人。如今封印解除，百亿财团与暗夜权柄尽归其手，那些曾肆意羞辱他的人，终将在其面前颤栗匍匐。
+              </p>
+              <div class="detail-cta-row">
+                <button class="btn-apple-primary" id="btn-play-now">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                  <span>播放第 1 集</span>
+                </button>
+                <button class="btn-apple-secondary" id="btn-detail-fav">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z"/></svg>
+                  <span>收藏</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Episode Grid -->
+          <div class="episodes-section">
+            <div class="episodes-header">
+              <span class="episodes-title">选集 (共 80 集)</span>
+            </div>
+            <div class="episodes-grid" id="sheet-episodes-grid">
+              <!-- Populated 1..24 -->
+            </div>
+          </div>
+        </div>
+
+      </main>
+    </div>
+
+    <!-- macOS Subtle Toast Notice -->
+    <div class="macos-toast" id="toast-hud"></div>
+  </div>
+
+  <script>
+    (function() {
+      // 1. Navigation Switching
+      const navButtons = document.querySelectorAll('[data-view]');
+      const pages = {
+        feed: document.getElementById('page-feed'),
+        discover: document.getElementById('page-discover'),
+        history: document.getElementById('page-discover'),
+        favorites: document.getElementById('page-discover'),
+        rank: document.getElementById('page-discover'),
+        new: document.getElementById('page-discover'),
+        settings: document.getElementById('page-settings'),
+      };
+      const detailSheet = document.getElementById('detail-sheet');
+
+      function switchView(viewName) {
+        detailSheet.classList.remove('active');
+        
+        navButtons.forEach(btn => {
+          if (btn.dataset.view === viewName) {
+            btn.classList.add('active');
+          } else {
+            btn.classList.remove('active');
+          }
+        });
+
+        document.querySelectorAll('.view-page').forEach(p => p.classList.remove('active'));
+        if (pages[viewName]) {
+          pages[viewName].classList.add('active');
+        }
+      }
+
+      navButtons.forEach(btn => {
+        btn.addEventListener('click', () => switchView(btn.dataset.view));
+      });
+
+      document.getElementById('btn-open-settings').addEventListener('click', () => {
+        switchView('settings');
+      });
+
+      // 2. Detail Sheet Interaction
+      const cards = document.querySelectorAll('.drama-card');
+      const closeDetailBtn = document.getElementById('btn-close-detail');
+      const sheetTitle = document.getElementById('sheet-title');
+      const sheetHeat = document.getElementById('sheet-heat');
+      const epGrid = document.getElementById('sheet-episodes-grid');
+
+      epGrid.innerHTML = '';
+      for (let i = 1; i <= 24; i++) {
+        const b = document.createElement('button');
+        b.className = 'ep-btn' + (i === 1 ? ' active' : '');
+        b.textContent = i;
+        b.addEventListener('click', function() {
+          document.querySelectorAll('.ep-btn').forEach(el => el.classList.remove('active'));
+          b.classList.add('active');
+          showToast(`已开始播放第 ${i} 集`);
+        });
+        epGrid.appendChild(b);
+      }
+
+      cards.forEach(card => {
+        card.addEventListener('click', () => {
+          sheetTitle.textContent = card.dataset.title || '短剧详情';
+          sheetHeat.textContent = '热度 ' + (card.dataset.heat || '880w');
+          detailSheet.classList.add('active');
+        });
+      });
+
+      closeDetailBtn.addEventListener('click', () => {
+        detailSheet.classList.remove('active');
+      });
+
+      // 3. Like Button Toggle
+      const likeBtn = document.getElementById('btn-feed-like');
+      const likeNum = document.getElementById('feed-like-num');
+      let liked = false;
+      likeBtn.addEventListener('click', () => {
+        liked = !liked;
+        likeBtn.classList.toggle('liked', liked);
+        likeNum.textContent = liked ? '24.7w' : '24.6w';
+        showToast(liked ? '已点赞' : '已取消点赞');
+      });
+
+      // 4. Toast
+      const toast = document.getElementById('toast-hud');
+      let toastTimer = null;
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+          toast.classList.remove('show');
+        }, 1600);
+      }
+
+      document.getElementById('btn-feed-fav').addEventListener('click', function() {
+        this.classList.toggle('liked');
+        showToast(this.classList.contains('liked') ? '已加入收藏' : '已移出收藏');
+      });
+
+      document.getElementById('btn-play-now').addEventListener('click', () => {
+        showToast('开始播放');
+      });
+
+      document.getElementById('btn-clear-cache-demo').addEventListener('click', () => {
+        showToast('缓存已清空 (0.0 MB)');
+      });
+
+      document.getElementById('btn-reset-device-demo').addEventListener('click', () => {
+        showToast('设备标识已重置');
+      });
+    })();
+  </script>
+</body>
+</html>

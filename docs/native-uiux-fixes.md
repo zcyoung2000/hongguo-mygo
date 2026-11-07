@@ -1,0 +1,99 @@
+# Native UI/UX fixes — 2026-11-06
+
+This pass compares the existing WebView shell and native browsing views. It
+builds on the migration changes already present in the working directory.
+
+| Problem | Change |
+| --- | --- |
+| Recommendation, rankings, new releases, likes and settings reuse unrelated icons | Restore distinct SVG icons; use 18px navigation icons and the original subdued red selection palette |
+| Default sidebar width differs from the original shell; short sidebars clip navigation | Share the original 210px default across rendering, reset and preferences; allow sidebar scrolling |
+| Discover has no search entry | Reuse the search field, suggestions and submission behavior on discover |
+| Search starts by claiming there are no results; clearing leaves old results | Show an initial input prompt and reset results with the query |
+| One filter row leaves a 180px blank area | Let filters take their natural height up to a 150px scrolling limit |
+| Discover wraps a virtual grid inside another scrolling container | Give the result grid its own remaining viewport and center the pagination control |
+| Fixed 150px posters leave unused space inside wider columns | Fit posters to columns at 3:4 in discover, search, releases, actor works and local collections; include grid-cell borders and 16px grid spacing in the sizing |
+| Upcoming cards leak online episode metadata; episode-only labels end with a separator | Render metadata according to release state and join only available fields |
+| Calendar dates overflow narrow windows | Wrap the date controls |
+| Settings sends a scene command but hides the actual scene behind static controls | Display the existing interactive settings document; remove the invented native identity and inert controls |
+| Recommendation and playback have extra side/bottom gutters and a duplicate native close control | Let the existing hosted scenes occupy their available content area |
+| Leaving media before its document loads can deadlock | Avoid acquiring the media-host mutex twice when stopping an unready host |
+
+Verification: `go mod tidy`, `go test ./...` (282 passes including subtests),
+the 127 JavaScript controller tests, and the CGO-disabled build pass. Native
+package race checks also pass after synchronizing the existing default-rank
+test with its background load. Native
+render tests cover search submission/clear, settings visibility, early media
+navigation, poster geometry at 1000/1200/1600px, and existing minimum-window
+collection actions. Before/after fixture images were exported for visual
+inspection; they do not populate the user's library.
+
+The rebuilt app was opened and discover was inspected with real catalog data
+and artwork. Further native automation reported `cgWindowNotFound`, so live
+settings, playback and every other route are not claimed as accepted here.
+Settings continues to use its existing WebView implementation; rebuilding its
+controls as fully native UI is outside this pass.
+
+## Follow-up: transitions, media bounds and detail blackouts
+
+- Native pages now have separate keyed containers and a 160ms opacity entrance,
+  using the same `(0.23, 1, 0.32, 1)` easing as the frontend. Sidebar selection
+  colors also transition. There is no retained outgoing media surface; reduced
+  motion keeps the fade in place. Existing hosted scene transitions remain in
+  use inside the media document.
+- Hosted scenes use the entire content pane, including its top edge. The
+  remaining 42px inset has been removed. Native browsing pages retain their
+  titlebar inset.
+- Stop and Play now share one ordered dispatcher. The former asynchronous
+  `StopNow` could run after a newer playback request and leave the visible
+  WebView on the empty `native-idle` scene.
+- The document explicitly calls `NativeShell.MediaReady` after installing its
+  scene handler. The host retains the latest requested scene until then,
+  instead of silently dropping commands sent before the handler exists.
+- Returning from playback stops the hidden document and shows native detail;
+  it no longer loads a second, hidden WebView detail page.
+
+Live validation used the repository's existing `e2e` build and MyGo's native
+automation interface: opening a real catalog card showed its poster, metadata,
+actors, episodes and related shows. Native geometry reported the playback
+surface at y=0 with the full content-pane height (820px in the live window).
+Native-window captures show the native detail page; the native-only capture
+does not provide visual acceptance of embedded video frames.
+
+Regression coverage includes the media-to-detail-to-playback round trip at
+1000×640 and 1600×1000, early readiness with rapid scene replacement, and actual
+pixel differences during the page fade and rapid repeated navigation. Go and
+JavaScript tests pass, including the readiness test (128 JavaScript tests), as
+do native-package race checks and the CGO-disabled build.
+
+## Follow-up: native window dragging
+
+The native shell now places transparent `DragWindow` hit regions over the
+sidebar's titlebar and brand header, leaving the macOS window controls clear.
+Native browsing pages also provide a drag region in their unused top inset.
+Hosted video pages retain their full content area and use the sidebar header
+for dragging, so channel tabs and player buttons remain clickable.
+
+Verified against a running e2e build: double-clicking the sidebar titlebar
+changed the native window from 1280×820 to its zoomed bounds; the native page
+header also triggered the system titlebar action. All 287 Go tests pass.
+
+## Follow-up: native recommendation channels
+
+The four recommendation channels — 关注, 推荐, 漫剧 and 真人剧 — are native
+segmented controls layered over the existing media document. Native selection
+sends only a scene request with the channel; the existing `loadFeed`, queue
+restore, diagnostics, preloading and playback implementation remains the source
+of truth.
+
+The old web category bar stays mounted as a geometry anchor but is invisible
+and inert. Its visibility and centered position are mirrored to native UI only
+when they change, so comment panels, clear-screen mode, full-screen playback and
+the full player correctly move or hide the native control. Mouse selection
+returns focus to the video; keyboard selection keeps the native radio group.
+
+Live automation confirmed that 漫剧 becomes checked and requests a new feed.
+Additional regressions cover pointer ownership over the WebView, unchanged
+full-viewport media bounds, comment-panel offset, clear-screen/fullscreen
+hiding, scene isolation, invalid channel rejection, startup-before-ready
+delivery and same-channel queue reuse. All 289 Go tests, native-package race
+checks and the 8 media-host JavaScript tests pass.

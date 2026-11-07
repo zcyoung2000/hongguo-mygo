@@ -300,12 +300,70 @@ body.feed-ambient-glowing .sidebar::after {
   transition: box-shadow 0.4s ease, border-color 0.4s ease;
 }
 
+.cat-bar-glider {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 20px;
+  background: var(--macos-accent-gradient) !important;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
+  transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), width 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.cat-bar .cat-chip {
+  position: relative;
+  z-index: 2;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  transition: color 0.18s ease !important;
+}
+
+.cat-bar .cat-chip.active {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: #ffffff !important;
+}
+
+.cat-bar .cat-chip:not(.active):hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
 body.feed-ambient-glowing .cat-bar {
   border-bottom: 1px solid var(--feed-ambient-top, rgba(255, 255, 255, 0.10)) !important;
   box-shadow:
     0 8px 24px rgba(0, 0, 0, 0.30),
     inset 0 -2px 14px var(--feed-ambient-top, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Ambient video glow around player modal stage & container */
+body.player-ambient-glowing #player-stage {
+  box-shadow: 0 0 80px var(--feed-ambient-top, rgba(226, 26, 68, 0.25)) !important;
+}
+
+body.player-ambient-glowing .video-container::before {
+  content: '';
+  position: absolute;
+  inset: -20px;
+  border-radius: 16px;
+  background: radial-gradient(
+    ellipse at center,
+    var(--feed-ambient-top, transparent) 0%,
+    var(--feed-ambient-left, transparent) 40%,
+    transparent 75%
+  );
+  filter: blur(36px);
+  opacity: 0.65;
+  pointer-events: none;
+  z-index: -1;
+  transition: opacity 0.4s ease;
 }
 
 /* Floating Vertical Rail Icons */
@@ -369,7 +427,6 @@ body.feed-ambient-glowing .cat-bar {
 .settings-btn-subtle,
 .actor-back-btn,
 .player-back-btn,
-.btn-actor-load-more,
 .ctrl-text-btn {
   display: inline-flex !important;
   align-items: center;
@@ -393,7 +450,6 @@ body.feed-ambient-glowing .cat-bar {
 .settings-btn-subtle:hover,
 .actor-back-btn:hover,
 .player-back-btn:hover,
-.btn-actor-load-more:hover,
 .ctrl-text-btn:hover {
   background: rgba(255, 255, 255, 0.11) !important;
   border-color: rgba(255, 255, 255, 0.16) !important;
@@ -404,7 +460,6 @@ body.feed-ambient-glowing .cat-bar {
 .settings-btn-subtle:active,
 .actor-back-btn:active,
 .player-back-btn:active,
-.btn-actor-load-more:active,
 .ctrl-text-btn:active {
   transform: translateY(0.5px) scale(0.98);
 }

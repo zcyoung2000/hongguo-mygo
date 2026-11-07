@@ -1914,7 +1914,8 @@ const state = {
     board: 'ranklist_hot_sc',
     contents: [],
     cursor: '',
-    hasMore: false
+    hasMore: false,
+    loading: false
   },
 
   // New releases
@@ -2172,12 +2173,7 @@ function togglePictureInPicture() {
   });
 }
 
-function initNativeBridgeEvents() {
-  waitForMygoBridge().then(runtime => {
-    if (!runtime?.on) return;
-
-    // Handle macOS menu & media keys command events
-    runtime.on('mediaCommand', (payload) => {
+function handleMediaCommand(payload) {
       const cmd = payload?.command;
       if (!cmd) return;
 
@@ -2229,7 +2225,14 @@ function initNativeBridgeEvents() {
       } else if (cmd === 'pip') {
         togglePictureInPicture();
       }
-    });
+}
+
+function initNativeBridgeEvents() {
+  waitForMygoBridge().then(runtime => {
+    if (!runtime?.on) return;
+
+    // Handle macOS menu & media keys command events
+    runtime.on('mediaCommand', handleMediaCommand);
 
     // Handle macOS menu navigation events
     runtime.on('navigate', (payload) => {
@@ -2283,10 +2286,13 @@ document.addEventListener('DOMContentLoaded', () => {
   initSettingsEvents();
 
   // 1. Immediately switch to Recommend view for instant render
-  switchView('recommend');
-
-  // 2. Load user profile in the background
-  loadProfile();
+  if (!window.myguoNativeMedia) {
+    switchView('recommend');
+    loadProfile();
+  } else {
+    state.currentView = 'native-idle';
+    document.querySelectorAll('.view-page').forEach(page => page.classList.remove('active'));
+  }
 });
 
 function initNavigation() {
@@ -2326,22 +2332,34 @@ function initNavigation() {
     backFromActorBtn.addEventListener('click', navigateBack);
   }
 
-  const loadMoreActorBtn = document.getElementById('btn-actor-load-more');
-  if (loadMoreActorBtn) {
-    loadMoreActorBtn.addEventListener('click', () => {
-      loadMoreActorWorks();
-    });
-  }
+  observeActorLoadMore();
 
-  // Global keydown listeners for Escape (close player)
+  // Global keydown listeners for Escape (close player or exit fullscreen)
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      const feedContainer = document.getElementById('feed-container');
+      const stageWrap = document.getElementById('player-stage');
       const playerModal = document.getElementById('player-modal');
+      let exitedFull = false;
+      if (feedContainer?.classList.contains('feed-fullscreen')) {
+        feedContainer.classList.remove('feed-fullscreen');
+        exitedFull = true;
+      }
+      if (stageWrap?.classList.contains('player-fullscreen')) {
+        stageWrap.classList.remove('player-fullscreen');
+        playerModal?.classList.remove('player-is-fullscreen');
+        exitedFull = true;
+      }
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(err => console.log(err));
+        exitedFull = true;
+      }
+      if (exitedFull) {
+        schedulePlaybackVideoFit();
+        (window.nativeMediaNotify ? window.nativeMediaNotify('ToggleFullscreen') : window.mygo?.call?.('NativeShell.ToggleFullscreen'))?.catch?.(() => {});
+        return;
+      }
       if (playerModal && playerModal.style.display !== 'none') {
-        if (document.fullscreenElement) {
-          document.exitFullscreen().catch(err => console.log(err));
-          return;
-        }
         closePlayer();
       }
     }
@@ -2351,9 +2369,7 @@ function initNavigation() {
 }
 
 function initDiscoverPagination() {
-  document.getElementById('btn-discover-load-more')?.addEventListener('click', () => {
-    loadMoreDiscover();
-  });
+  observeDiscoverLoadMore();
 }
 
 function updateNavButtons() {
@@ -2398,6 +2414,7 @@ function invalidateViewRequests(view) {
 }
 
 function applyFavoriteState(seriesId, favorite) {
+  window.nativeMediaNotify?.("LibraryChanged");
   const changes = state.favoriteChanges || (state.favoriteChanges = {});
   changes[seriesId] = { revision: (changes[seriesId]?.revision || 0) + 1, value: favorite };
   if (state.detail.id === seriesId && state.detail.data?.id === seriesId) {
@@ -2422,6 +2439,7 @@ function applyFavoriteState(seriesId, favorite) {
 }
 
 function applyLikeState(seriesId, episodeId, liked) {
+  window.nativeMediaNotify?.("LibraryChanged");
   for (const [scene, buttonId] of [['feed', 'feed-like'], ['player', 'player-like']]) {
     if (state[scene]?.seriesId !== seriesId || state[scene]?.episodeId !== episodeId) continue;
     state[scene].isLiked = liked;
@@ -2453,6 +2471,7 @@ function historyDetailId(entry) {
 }
 
 function navigateToDetail(seriesId) {
+  if (window.myguoNativeMedia) { window.nativeMediaNotify?.("OpenDetail", seriesId); return; }
   if (!seriesId) return;
   const entry = `detail:${seriesId}`;
   if (state.currentView === 'detail' && state.historyStack[state.historyIndex] === entry) return;
@@ -3728,7 +3747,7 @@ function showFeedHint(text, spinner = false, duration = 2200) {
 async function loadRecommend() {
   syncFeedScrollCapture();
   if (state.feed.items.length === 0) {
-    await loadFeed(true);
+    await loadFeed(true, state.feed.channel);
   } else {
     resumeFeedPlayback();
   }
@@ -3757,6 +3776,15 @@ async function loadFeed(reset = false, channel = '', forceRefresh = false) {
     state.feed.playbackInfoLoads.clear();
     if (channel !== undefined) {
       state.feed.channel = channel;
+      const bar = typeof document !== 'undefined' ? document.getElementById('feed-cat-bar') : null;
+      if (bar) {
+        bar.querySelectorAll('.cat-chip').forEach(c => {
+          c.classList.toggle('active', (c.dataset.channel || '') === channel);
+        });
+        if (typeof updateCatBarGlider === 'function') {
+          updateCatBarGlider();
+        }
+      }
     }
     if (forceRefresh) {
       state.feed.cursor = '';
@@ -5748,10 +5776,28 @@ function initFeedControls() {
 
   if (fullscreenBtn) {
     fullscreenBtn.addEventListener('click', () => {
-      if (!document.fullscreenElement) {
-        if (feedContainer) feedContainer.requestFullscreen().catch(e => console.log(e));
+      const isFull = feedContainer?.classList.contains('feed-fullscreen');
+      if (isFull) {
+        feedContainer?.classList.remove('feed-fullscreen');
+        if (document.fullscreenElement) {
+          document.exitFullscreen?.().catch(() => {});
+        }
       } else {
-        document.exitFullscreen().catch(e => console.log(e));
+        feedContainer?.classList.add('feed-fullscreen');
+      }
+      schedulePlaybackVideoFit();
+      try {
+        if (window.mygo?.window?.toggleFullScreen) {
+          window.mygo.window.toggleFullScreen();
+        } else if (window.mygo?.currentWindow?.toggleFullScreen) {
+          window.mygo.currentWindow.toggleFullScreen();
+        } else if (window.nativeMediaNotify) {
+          window.nativeMediaNotify('ToggleFullscreen');
+        } else {
+          window.mygo?.call?.('NativeShell.ToggleFullscreen');
+        }
+      } catch (e) {
+        console.warn('toggleFullScreen failed:', e);
       }
     });
   }
@@ -5810,11 +5856,33 @@ function initFeedControls() {
     });
   }
 
+  function updateCatBarGlider() {
+    const bar = document.getElementById('feed-cat-bar');
+    if (!bar) return;
+    let glider = document.getElementById('feed-cat-glider');
+    if (!glider) {
+      glider = document.createElement('div');
+      glider.id = 'feed-cat-glider';
+      glider.className = 'cat-bar-glider';
+      bar.prepend(glider);
+    }
+    const activeChip = bar.querySelector('.cat-chip.active');
+    if (!activeChip) return;
+    const left = activeChip.offsetLeft;
+    const width = activeChip.offsetWidth;
+    glider.style.transform = `translateX(${left}px)`;
+    glider.style.width = `${width}px`;
+  }
+  window.updateCatBarGlider = updateCatBarGlider;
+  window.addEventListener('resize', updateCatBarGlider);
+  requestAnimationFrame(updateCatBarGlider);
+
   if (catBar) {
     catBar.querySelectorAll('.cat-chip').forEach(chip => {
       chip.addEventListener('click', () => {
         catBar.querySelectorAll('.cat-chip').forEach(c => c.classList.remove('active'));
         chip.classList.add('active');
+        updateCatBarGlider();
         const channel = chip.dataset.channel || '';
         loadFeed(true, channel);
       });
@@ -6440,7 +6508,14 @@ async function executeDiscover(reset = true) {
 
 function createDramaCardsFragment(items) {
   const fragment = document.createDocumentFragment();
-  items.forEach(item => fragment.appendChild(createDramaCard(item)));
+  items.forEach((item, index) => {
+    const card = createDramaCard(item);
+    if (!card.classList.contains('discover-card-enter')) {
+      card.classList.add('card-enter');
+      card.style.setProperty('--card-index', String(index % 12));
+    }
+    fragment.appendChild(card);
+  });
   return fragment;
 }
 
@@ -6569,22 +6644,35 @@ function createRankItemCard(it) {
   return card;
 }
 
+let rankLoadMoreObserver = null;
+
+function disconnectRankLoadMore() {
+  if (rankLoadMoreObserver) {
+    rankLoadMoreObserver.disconnect();
+    rankLoadMoreObserver = null;
+  }
+}
+
 function appendRankLoadMore(listElem, loading = false) {
+  disconnectRankLoadMore();
   if (!state.rank.cursor) return;
+  listElem.querySelector('.rank-load-more')?.remove();
   const wrap = document.createElement('div');
   wrap.className = 'rank-load-more';
-  wrap.innerHTML = loading
-    ? createLoader('正在加载更多...')
-    : '<button type="button" class="rank-more-btn">加载更多</button>';
-  if (!loading) {
-    wrap.querySelector('.rank-more-btn').onclick = () => loadRankings(false);
-  }
+  wrap.innerHTML = createLoader('正在加载更多...');
   listElem.appendChild(wrap);
+  if (loading || !state.rank.hasMore || state.rank.loading || typeof IntersectionObserver === 'undefined') return;
+  const viewport = document.querySelector('.view-viewport');
+  rankLoadMoreObserver = new IntersectionObserver(entries => {
+    if (entries.some(entry => entry.isIntersecting)) loadRankings(false);
+  }, { root: viewport, rootMargin: '160px 0px' });
+  rankLoadMoreObserver.observe(wrap);
 }
 
 async function loadRankings(reset = true) {
   const listElem = document.getElementById('rank-items-list');
-  if (!reset && !state.rank.cursor) return;
+  if (!reset && (!state.rank.cursor || state.rank.loading)) return;
+  state.rank.loading = true;
 
   const requestToken = ++rankRequestToken;
   const cursor = reset ? '' : state.rank.cursor;
@@ -6623,6 +6711,7 @@ async function loadRankings(reset = true) {
     const fragment = document.createDocumentFragment();
     (res.items || []).forEach(it => fragment.appendChild(createRankItemCard(it)));
     listElem.appendChild(fragment);
+    state.rank.loading = false;
     appendRankLoadMore(listElem);
   } catch (err) {
     if (requestToken !== rankRequestToken) return;
@@ -6637,6 +6726,8 @@ async function loadRankings(reset = true) {
       showToast('加载更多榜单失败');
       appendRankLoadMore(listElem);
     }
+  } finally {
+    state.rank.loading = false;
   }
 }
 
@@ -6645,6 +6736,7 @@ async function loadRankings(reset = true) {
 // ==========================================================================
 
 function openActorDetail(userId, name, avatarUrl) {
+  if (window.myguoNativeMedia) { window.nativeMediaNotify?.("OpenActor", userId); return; }
   if (!userId) {
     showToast('暂无该演员账号信息');
     return;
@@ -6661,14 +6753,37 @@ function openActorDetail(userId, name, avatarUrl) {
   if (alreadyOpen) loadActorDetail(userId);
 }
 
+let actorLoadMoreObserver = null;
+
+function disconnectActorLoadMore() {
+  if (actorLoadMoreObserver) {
+    actorLoadMoreObserver.disconnect();
+    actorLoadMoreObserver = null;
+  }
+}
+
+function syncActorLoadMore() {
+  const wrap = document.getElementById('actor-load-more-wrap');
+  if (wrap) wrap.hidden = !state.actor.hasMore || state.actor.loading;
+  disconnectActorLoadMore();
+  if (state.currentView !== 'actor' || !wrap || wrap.hidden || typeof IntersectionObserver === 'undefined') return;
+  const viewport = document.querySelector('.view-viewport');
+  actorLoadMoreObserver = new IntersectionObserver(entries => {
+    if (entries.some(entry => entry.isIntersecting)) loadMoreActorWorks();
+  }, { root: viewport, rootMargin: '160px 0px' });
+  actorLoadMoreObserver.observe(wrap);
+}
+
+function observeActorLoadMore() {
+  syncActorLoadMore();
+}
+
 async function loadActorDetail(userId) {
   const token = beginViewRequest('actor');
   const isCurrent = () => isViewRequestCurrent('actor', token) && state.actor.userId === userId;
   state.actor.loading = true;
   state.actor.cursor = '';
   state.actor.hasMore = false;
-  const moreButton = document.getElementById('btn-actor-load-more');
-  if (moreButton) moreButton.textContent = '加载更多作品';
   const avatarElem = document.getElementById('actor-detail-avatar');
   const nameElem = document.getElementById('actor-detail-name');
   const tagsElem = document.getElementById('actor-detail-tags');
@@ -6677,8 +6792,6 @@ async function loadActorDetail(userId) {
   const countElem = document.getElementById('actor-stat-works-count');
   const descElem = document.getElementById('actor-detail-desc');
   const grid = document.getElementById('actor-drama-grid');
-  const loadMoreWrap = document.getElementById('actor-load-more-wrap');
-
   // Pre-fill immediate values from state
   if (state.actor.avatarUrl) avatarElem.src = state.actor.avatarUrl;
   if (state.actor.name) {
@@ -6692,7 +6805,7 @@ async function loadActorDetail(userId) {
   followersElem.textContent = '--';
   likesElem.textContent = '--';
   countElem.textContent = '--';
-  if (loadMoreWrap) loadMoreWrap.style.display = 'none';
+  syncActorLoadMore();
 
   grid.innerHTML = renderDramaGridSkeleton(8);
 
@@ -6748,7 +6861,7 @@ async function loadActorDetail(userId) {
 
     state.actor.cursor = profile.cursor || '';
     state.actor.hasMore = Boolean(profile.hasMore && state.actor.cursor);
-    if (loadMoreWrap) loadMoreWrap.style.display = state.actor.hasMore ? 'flex' : 'none';
+    syncActorLoadMore();
   } catch (err) {
     if (!isCurrent()) return;
     grid.innerHTML = '';
@@ -6768,10 +6881,6 @@ async function loadMoreActorWorks() {
   const token = beginViewRequest('actor');
   const isCurrent = () => isViewRequestCurrent('actor', token) && state.actor.userId === userId;
   state.actor.loading = true;
-  const btn = document.getElementById('btn-actor-load-more');
-  const origText = btn.textContent;
-  btn.textContent = '加载中...';
-
   try {
     const res = await apiCall('GetActorWorks', userId, cursor);
     if (!isCurrent()) return;
@@ -6789,15 +6898,11 @@ async function loadMoreActorWorks() {
     } else {
       state.actor.hasMore = false;
     }
-    const loadMoreWrap = document.getElementById('actor-load-more-wrap');
-    if (loadMoreWrap) loadMoreWrap.style.display = state.actor.hasMore ? 'flex' : 'none';
+    syncActorLoadMore();
   } catch (err) {
     if (isCurrent()) showToast(`加载更多作品失败: ${err}`);
   } finally {
-    if (isCurrent()) {
-      btn.textContent = origText;
-      state.actor.loading = false;
-    }
+    if (isCurrent()) state.actor.loading = false;
   }
 }
 
@@ -7718,6 +7823,7 @@ function initPlayerControls() {
   const modal = document.getElementById('player-modal');
   const stageWrap = document.getElementById('player-stage');
   const closeBtn = document.getElementById('btn-close-player');
+  const closeRightBtn = document.getElementById('btn-close-player-right');
   const playPauseBtn = document.getElementById('player-play');
   const iconPlay = playPauseBtn.querySelector('.icon-play');
   const iconPause = playPauseBtn.querySelector('.icon-pause');
@@ -7821,7 +7927,8 @@ function initPlayerControls() {
   });
 
   // Close player
-  closeBtn.addEventListener('click', closePlayer);
+  if (closeBtn) closeBtn.addEventListener('click', closePlayer);
+  if (closeRightBtn) closeRightBtn.addEventListener('click', closePlayer);
 
   // Play/Pause
   function togglePlay() {
@@ -8042,12 +8149,14 @@ function initPlayerControls() {
   });
 
   // Speed selection
-  speedBtn.addEventListener('click', () => {
+  speedBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
     speedMenu.style.display = speedMenu.style.display === 'none' ? 'block' : 'none';
   });
 
   speedMenu.querySelectorAll('.speed-opt').forEach(opt => {
-    opt.addEventListener('click', () => {
+    opt.addEventListener('click', (e) => {
+      e.stopPropagation();
       const spd = parseFloat(opt.dataset.speed);
       state.player.playbackSpeed = spd;
       video.playbackRate = spd;
@@ -8059,9 +8168,16 @@ function initPlayerControls() {
     });
   });
 
+  document.addEventListener('click', (event) => {
+    if (!speedBtn.contains(event.target) && !speedMenu.contains(event.target)) {
+      speedMenu.style.display = 'none';
+    }
+  });
+
   // Quality selection
   if (qualityBtn && qualityMenu) {
-    qualityBtn.addEventListener('click', () => {
+    qualityBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       const isOpen = qualityMenu.style.display === 'none';
       qualityMenu.style.display = isOpen ? 'block' : 'none';
       qualityBtn.setAttribute('aria-expanded', String(isOpen));
@@ -8081,23 +8197,39 @@ function initPlayerControls() {
   // class fallback covers WebViews where Element Fullscreen is unavailable.
   function togglePlayerFullscreen() {
     if (!stageWrap) return;
-    if (document.fullscreenElement) {
+    const isFull = stageWrap.classList.contains('player-fullscreen');
+    if (isFull) {
       stageWrap.classList.remove('player-fullscreen');
-      document.exitFullscreen().catch(err => console.log(err));
-      return;
-    }
-
-    const enterPseudoFullscreen = () => stageWrap.classList.add('player-fullscreen');
-    if (stageWrap.requestFullscreen) {
-      stageWrap.requestFullscreen()
-        .then(enterPseudoFullscreen)
-        .catch(err => {
-          console.log(err);
-          enterPseudoFullscreen();
-        });
+      modal?.classList.remove('player-is-fullscreen');
+      if (document.fullscreenElement) {
+        document.exitFullscreen?.().catch(() => {});
+      }
     } else {
-      enterPseudoFullscreen();
+      stageWrap.classList.add('player-fullscreen');
+      modal?.classList.add('player-is-fullscreen');
     }
+    schedulePlaybackVideoFit();
+    try {
+      if (window.mygo?.window?.toggleFullScreen) {
+        window.mygo.window.toggleFullScreen();
+      } else if (window.mygo?.currentWindow?.toggleFullScreen) {
+        window.mygo.currentWindow.toggleFullScreen();
+      } else if (window.nativeMediaNotify) {
+        window.nativeMediaNotify('ToggleFullscreen');
+      } else {
+        window.mygo?.call?.('NativeShell.ToggleFullscreen');
+      }
+    } catch (e) {
+      console.warn('toggleFullScreen failed:', e);
+    }
+  }
+
+  const vContainer = document.getElementById('video-container');
+  if (vContainer) {
+    vContainer.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      togglePlayerFullscreen();
+    });
   }
 
   document.addEventListener('fullscreenchange', () => {
@@ -8219,6 +8351,10 @@ function initPlayerControls() {
           drawerToggle.setAttribute('aria-expanded', 'false');
           return;
         }
+        if (stageWrap.classList.contains('player-fullscreen')) {
+          togglePlayerFullscreen();
+          return;
+        }
         if (document.fullscreenElement) {
           document.exitFullscreen().catch(err => console.log(err));
           return;
@@ -8260,7 +8396,7 @@ async function playNextSeason(seriesId, source = 'player') {
   }
 }
 
-async function openPlayer(seriesId, initialEpisodeNum = 1) {
+async function openPlayer(seriesId, initialEpisodeNum = 1, initialPosition = null) {
   persistProgress();
   const requestToken = ++playerRequestToken;
 
@@ -8282,8 +8418,10 @@ async function openPlayer(seriesId, initialEpisodeNum = 1) {
   state.player.userPaused = false;
 
   const modal = document.getElementById('player-modal');
+  modal.classList.add('is-opening');
   modal.style.display = 'flex';
   modal.classList.remove('controls-hidden');
+  requestAnimationFrame(() => modal.classList.remove('is-opening'));
   modal.scrollLeft = 0;
   const stage = document.getElementById('player-stage');
   if (stage) stage.scrollLeft = 0;
@@ -8338,7 +8476,7 @@ async function openPlayer(seriesId, initialEpisodeNum = 1) {
     renderPlaylistDrawer();
 
     // 2. Play initial episode
-    await playEpisodeNumber(initialEpisodeNum);
+    await playEpisodeNumber(initialEpisodeNum, state.player.quality, initialPosition);
   } catch (err) {
     if (!isPlayerRequestCurrent(requestToken)) return;
     showToast('打开播放器失败: ' + err);
@@ -8467,7 +8605,7 @@ async function playEpisodeNumber(num, requestedQuality = state.player.quality, r
       if (!isPlayerRequestCurrent(requestToken) || playerPlaybackIdentity !== identity) return;
       syncMainVideoOrientation();
       const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : identity.durationSec;
-      if (resumeAt !== null) {
+      if (resumeAt !== null && resumeAt >= 0) {
         video.currentTime = Math.min(resumeAt, duration || resumeAt);
       } else if (pb.lastPosition > 3 && pb.lastPosition < (duration - 5)) {
         video.currentTime = pb.lastPosition;
@@ -8570,7 +8708,15 @@ function closePlayer() {
   document.getElementById('player-stage')?.classList.remove('player-fullscreen');
   document.getElementById('player-playlist-drawer')?.classList.remove('open');
   playerModal?.classList.remove('controls-hidden');
-  document.getElementById('player-modal').style.display = 'none';
+  const modalToClose = document.getElementById('player-modal');
+  const finishClosePlayer = () => {
+    modalToClose.style.display = 'none';
+    modalToClose.classList.remove('is-opening');
+    modalToClose.removeEventListener('transitionend', finishClosePlayer);
+  };
+  modalToClose.classList.add('is-opening');
+  modalToClose.addEventListener('transitionend', finishClosePlayer);
+  setTimeout(finishClosePlayer, 280);
   if (playerModal) playerModal.scrollLeft = 0;
   const stage = document.getElementById('player-stage');
   if (stage) stage.scrollLeft = 0;
@@ -8591,6 +8737,7 @@ function closePlayer() {
   if (state.currentView === 'history') {
     loadHistory();
   }
+  window.nativeMediaClosed?.();
 }
 
 function formatTime(sec) {
