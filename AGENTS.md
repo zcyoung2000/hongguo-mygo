@@ -10,6 +10,8 @@ This repository is a native macOS short-drama browsing client. Before starting d
 4. Use inline SVG icons with `fill="currentColor"` in the UI. Do not add emoji to HTML, JavaScript, CSS, or notifications.
 5. Use responsive `.drama-grid` / `.drama-card` layouts for collection views, including history.
 6. All drama and poster images must use `handleImgError(this)`.
+7. Delegate implementation tasks to a Codex subagent with `sc layout run tabs --provider codex --model zhipu/glm-5.3-flash` unless the user explicitly chooses another model; use a separate app-managed worktree branch, then review and merge the result back to the current target branch.
+8. Do not rely on `sc worktree create` for child-agent completion wakeups; its completed sessions currently lack parent association. Read or poll `sc agents list --worktree <path>` when using that path.
 
 ## Integration boundaries
 
