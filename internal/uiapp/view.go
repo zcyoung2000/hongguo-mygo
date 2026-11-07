@@ -514,8 +514,11 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 		}
 	}
 
+	posterLabel := fmt.Sprintf("poster:%s|%s", item.ID, item.EpisodeID)
+	posterKey := c.Key(posterLabel)
+
 	card.Children(func() {
-		posterBox := ui.Box(c.Key("poster-box")).Size(width, width*4/3).Radius(8).Clip()
+		posterBox := ui.Box(posterKey).Size(width, width*4/3).Radius(8).Clip().Role(ui.RoleImage).Label(posterLabel)
 		posterBox.Children(func() {
 			a.image(c, item.CoverURL, width, width*4/3)
 			if topLeftBadge != "" {

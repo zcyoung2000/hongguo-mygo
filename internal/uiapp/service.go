@@ -621,9 +621,17 @@ func (a *App) loadRelatedAt(seriesID string, generation uint64) {
 	if err != nil || collection == nil {
 		a.detail.RelatedError = "相关推荐加载失败"
 	} else {
-		a.detail.Related, a.detail.RelatedTitle = convertCards(collection.Items), collection.Title
+		a.detail.Related, a.detail.RelatedTitle = clearRelatedCollectionCardFields(convertCards(collection.Items)), collection.Title
 	}
 	a.invalidate()
+}
+
+func clearRelatedCollectionCardFields(items []CatalogItem) []CatalogItem {
+	for i := range items {
+		items[i].BadgeText = ""
+		items[i].Category = ""
+	}
+	return items
 }
 func (a *App) detailProvider() detailProvider {
 	if a.detailSource != nil {
