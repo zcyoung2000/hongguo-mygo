@@ -43,10 +43,11 @@ const (
 // Titles render one line for the first 18 CJK-sized characters and wrap once
 // beyond that, so the row estimate tracks the rendered title block.
 func catalogTitleHeight(title string) float32 {
-	if utf8.RuneCountInString(title) <= 18 {
+	length := utf8.RuneCountInString(title)
+	if length <= 18 {
 		return catalogTextLineHeight
 	}
-	return catalogTextLineHeight * 2
+	return catalogTextLineHeight * float32((length+19)/20)
 }
 
 func collectionRowHeight(view string, items []CatalogItem) float32 {
@@ -55,6 +56,7 @@ func collectionRowHeight(view string, items []CatalogItem) float32 {
 		height := catalogTitleHeight(item.Title) + catalogTextLineHeight
 		switch view {
 		case "history", "reservations":
+			height += 8
 		case "new":
 			if item.Upcoming {
 				if item.PublishAt != "" {

@@ -193,6 +193,32 @@ func TestCollectionRowsFitRenderedMetadata(t *testing.T) {
 	}
 }
 
+func TestHistoryRowsFitMultiLineTitlesAcrossRows(t *testing.T) {
+	app := NewTestApp(nil)
+	app.view = "history"
+	now := time.Now().Unix()
+	app.library.History = Library{Title: "观看历史", Loaded: true, Items: []CatalogItem{
+		{ID: "1", Title: "谁说纨绔不能出状元：这一世我要亲手改命", EpisodeCount: 80, ResumeEpisode: 1, UpdatedAt: now - 180},
+		{ID: "6", Title: "深海来客：红色进化纪元", EpisodeCount: 88, ResumeEpisode: 23, UpdatedAt: now - 7200},
+	}}
+	tt := ui.NewTester(app.Render, 1280, 820)
+	tt.Frame()
+	title, titleOK := tt.Find("谁说纨绔不能出状元：这一世我要亲手改命")
+	progress, progressOK := tt.Find("看到第1集")
+	timeText, timeOK := tt.Find("3分钟前")
+	nextTitle, nextTitleOK := tt.Find("深海来客：红色进化纪元")
+	nextProgress, nextProgressOK := tt.Find("看到第23集")
+	if !titleOK || !progressOK || !timeOK || !nextTitleOK || !nextProgressOK {
+		t.Fatalf("history metadata missing: title=%v progress=%v time=%v nextTitle=%v nextProgress=%v texts=%v", titleOK, progressOK, timeOK, nextTitleOK, nextProgressOK, tt.Texts())
+	}
+	if title.Y > progress.Y || progress.Y > timeText.Y {
+		t.Fatalf("first history metadata overlaps: title=%+v progress=%+v time=%+v", title, progress, timeText)
+	}
+	if nextTitle.Y+nextTitle.H > nextProgress.Y || nextProgress.Y > 820 {
+		t.Fatalf("second history row incomplete: title=%+v progress=%+v viewport=820", nextTitle, nextProgress)
+	}
+}
+
 func TestSettingsUsesExistingInteractiveHost(t *testing.T) {
 	a := NewTestApp(nil)
 	a.SetMediaHost(&MediaHost{})

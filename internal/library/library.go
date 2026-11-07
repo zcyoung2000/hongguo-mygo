@@ -139,7 +139,11 @@ func (s *Service) RefreshHistory(ctx context.Context) ([]HistoryItem, error) {
 	}
 	generation := s.currentHistoryGeneration()
 	if err := s.syncRemoteHistory(ctx, generation); err != nil {
-		return nil, err
+		// Queued history can be invalid or the upstream endpoint can be
+		// temporarily unreachable. Neither condition invalidates local rows,
+		// and blocking refresh on a failed upload makes a saved-playback bug
+		// look like a failed library. Failed intents remain queued for retry.
+		return s.GetHistory(ctx)
 	}
 	return s.GetHistory(ctx)
 }

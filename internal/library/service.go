@@ -65,6 +65,7 @@ type Service struct {
 	historyMutationMu      sync.Mutex
 	historyMutationSyncing bool
 	historyMutationWake    bool
+	historyUploadRetries   map[string]historyUploadRetry
 
 	favMu           sync.Mutex
 	favRemoteMu     sync.Mutex
