@@ -94,6 +94,7 @@
       last = signature;
       notify('PlayerChromeChanged', value);
     };
+    window.__syncPlayerChromeState = sync;
     const observer = new MutationObserver(sync);
     for (const node of [modal, document.body]) observer.observe(node, {attributes: true, attributeFilter: ['class', 'style']});
     window.addEventListener('resize', sync);
@@ -155,6 +156,7 @@
           if ([0.75, 1, 1.25, 1.5, 2].includes(speed)) {
             state.player.playbackSpeed = speed;
             video.playbackRate = speed;
+            window.__syncPlayerChromeState?.();
           }
           break;
         }

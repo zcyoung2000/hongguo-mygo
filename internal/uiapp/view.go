@@ -88,9 +88,13 @@ func (a *App) renderWindowDragRegions(c *ui.Context, sidebarWidth float32) {
 		Width(max(0, sidebarWidth-bar.Left)).Height(44).DragWindow()
 	ui.Box(c.Key("sidebar-brand-drag")).Absolute().Top(44).Left(0).
 		Width(sidebarWidth).Height(40).DragWindow()
-	if !a.hostedScene() {
+	if !a.hostedScene() && !a.mediaOn {
 		ui.Box(c.Key("content-titlebar-drag")).Absolute().Top(0).Left(sidebarWidth + 1).Right(bar.Right).
 			Height(32).DragWindow()
+	}
+	if a.mediaOn {
+		ui.Box(c.Key("media-titlebar-drag")).Absolute().Top(0).Left(sidebarWidth).Right(0).
+			Height(32).PassThrough().DragWindow()
 	}
 }
 

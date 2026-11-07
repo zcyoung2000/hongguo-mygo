@@ -127,3 +127,15 @@ assert.match(playerChrome, /playerDrawerMaxWidth = 248/);
 });
 
 console.log('player drawer, collapse, and navigation UI regression: ok');
+
+{
+  const app = read('frontend/app.js');
+  assert.match(app, /for \(let episodeNum = 1; episodeNum <= total; episodeNum\+\+\)/);
+  assert.doesNotMatch(app, /if \(chrome\.Episode > 12 && index == 11\)/);
+  assert.doesNotMatch(app, /number = chrome\.Episode/);
+
+  const chrome = read('internal/uiapp/player_chrome.go');
+  assert.match(chrome, /ui\.GridView\(c, &a\.playerDrawerGrid, chrome\.TotalEpisodes/);
+  assert.doesNotMatch(chrome, /min\(chrome\.TotalEpisodes,\s*12\)/);
+  assert.doesNotMatch(chrome, /number = chrome\.Episode/);
+}

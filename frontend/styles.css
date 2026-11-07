@@ -783,7 +783,7 @@ body.is-resizing-sidebar * {
 /* Right Vertical Action Rail (TikTok/Douyin Style) */
 .feed-rail {
   position: absolute;
-  right: 20px;
+  right: var(--stage-chrome-inset, 18px);
   bottom: 84px;
   z-index: 21;
   display: flex;
@@ -2639,6 +2639,7 @@ body.is-resizing-sidebar * {
   display: flex;
   flex-direction: column;
   position: relative;
+  --stage-chrome-inset: 18px;
   background: #000;
   overflow: hidden;
   overflow-x: hidden;

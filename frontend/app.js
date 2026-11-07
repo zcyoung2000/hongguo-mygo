@@ -911,6 +911,10 @@ function syncPlaybackVideoFit(video) {
   video.style.height = `${Math.max(1, Math.round(sourceHeight * scale))}px`;
 }
 
+function syncPlayerChromeState() {
+  window.__syncPlayerChromeState?.();
+}
+
 function resetPlaybackVideoFit(video) {
   if (!video) return;
   video.style.removeProperty('width');
@@ -7981,15 +7985,17 @@ function initPlayerControls() {
 
   playPauseBtn.addEventListener('click', togglePlay);
   document.getElementById('video-container').addEventListener('click', (e) => {
-    if (e.target === video || e.target.id === 'video-container') {
-      // One tap on blank video toggles chrome; the play button and Space
-      // remain the explicit playback controls.
-      if (modal.classList.contains('controls-hidden') || controlsAreLocked()) {
-        wakePlayerControls();
-      } else {
-        hidePlayerControls();
-      }
-    }
+    // Keep clicks on the drawer, rail, progress bar, menus and every other
+    // interactive descendant out of the media surface toggle.
+    const interactiveTarget = e.target?.closest?.(
+      '.feed-rail, .feed-controls, .feed-playlist-drawer, .danmaku-composer, .danmaku-settings-panel'
+    );
+    if (interactiveTarget || e.target !== video) return;
+    // One tap on the picture itself switches playback; double click keeps
+    // its fullscreen shortcut separate.
+    if (e.detail === 2) return;
+    togglePlay();
+    wakePlayerControls();
   });
 
   video.addEventListener('play', () => {
@@ -8280,7 +8286,6 @@ function initPlayerControls() {
     drawerToggle.setAttribute('aria-expanded', String(willOpen));
     if (willOpen) {
       state.player.episodeCollapse?.measure();
-      scrollActiveDrawerEpisode('player-drawer-grid', state.player.episodeNum);
     }
     wakePlayerControls();
   });
@@ -8550,6 +8555,7 @@ function renderQualityMenu() {
     }
     qualityMenu.appendChild(item);
   });
+  syncPlayerChromeState();
 }
 
 function updateQualityControls(playback) {
@@ -8659,6 +8665,7 @@ async function playEpisodeNumber(num, requestedQuality = state.player.quality, r
         showToast(`已为您自动跳转到上次播放位置 ${formatTime(pb.lastPosition)}`);
       }
       video.playbackRate = state.player.playbackSpeed;
+      syncPlayerChromeState();
       if (autoPlay && !state.player.userPaused) {
         state.player.userPaused = false;
         video.play().catch(e => console.log('play error:', e));

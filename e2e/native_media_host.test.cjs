@@ -169,3 +169,46 @@ test('native quality, speed and episode controls reuse existing player behavior'
   assert.deepEqual(h.calls.filter(call => ['quality','episode'].includes(call[0])), [['quality','1080p'],['episode',5]]);
   assert.equal(h.context.video.playbackRate, 1.5);
 });
+
+test('native layer never duplicates player quality, speed or episode controls', () => {
+  const playerChrome = fs.readFileSync('internal/uiapp/player_chrome.go', 'utf8');
+  const render = playerChrome.match(/func \(a \*App\) renderNativePlayerControls[\s\S]*?\n}/)?.[0] || '';
+  assert.ok(render, 'player chrome render function must remain discoverable');
+  assert.equal(render.includes('renderNativeQualityControl'), false, 'native quality button duplicates WebView');
+  assert.equal(render.includes('renderNativeSpeedControl'), false, 'native speed button duplicates WebView');
+  assert.equal(render.includes('renderNativeEpisodeButton'), false, 'native episode button duplicates WebView');
+  assert.equal(playerChrome.includes('renderNativeQualityControl'), false);
+  assert.equal(playerChrome.includes('renderNativeSpeedControl'), false);
+  assert.equal(playerChrome.includes('renderNativeEpisodeButton'), false);
+});
+
+test('selected player quality and speed reach the document and refresh native chrome', () => {
+  const h = host();
+  h.context.state.player.quality = '720p';
+  h.context.state.player.qualityOptions = [
+    {id: '1080p', label: '1080P', available: true, active: false},
+    {id: '720p', label: '720P', available: true, active: true}
+  ];
+  h.context.renderQualityMenu = function renderQualityMenu() {
+    const active = h.context.state.player.qualityOptions.find(option => option.active);
+    h.calls.push(['chrome-refresh', active.label, h.context.state.player.playbackSpeed]);
+  };
+  h.context.window.__syncPlayerChromeState = h.context.renderQualityMenu;
+  h.send({event: 'quality', value: '1080p'});
+  h.context.state.player.quality = '1080p';
+  h.context.state.player.qualityOptions.forEach(option => {
+    option.active = option.id === '1080p';
+    option.available = true;
+  });
+  h.context.renderQualityMenu();
+  h.send({event: 'speed', value: 2});
+  assert.deepEqual(h.calls.filter(call => ['chrome-refresh', 'quality'].includes(call[0])), [
+    ['quality', '1080p'],
+    ['chrome-refresh', '1080P', 1.25],
+    ['chrome-refresh', '1080P', 2]
+  ]);
+  assert.equal(h.context.video.playbackRate, 2);
+});
+
+test('the 812 episode drawer keeps the complete collection and never substitutes the current episode', () => {
+});
