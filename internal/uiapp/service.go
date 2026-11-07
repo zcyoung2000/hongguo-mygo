@@ -722,7 +722,7 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	library.Loading = false
 	if err != nil {
 		library.Error = "数据加载失败，请稍后重试"
-		a.fail("资料库加载失败：", err)
+		log.Printf("[library] tab=%d load failed: %v", tab, err)
 		return
 	}
 	sort.SliceStable(items, func(i, j int) bool {

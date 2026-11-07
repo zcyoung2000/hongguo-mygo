@@ -6,6 +6,8 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -85,6 +87,102 @@ func TestSearchTypingSurvivesFramesAndSubmit(t *testing.T) {
 	if app.Query() != "短剧关键词" || !app.SearchState().Loading {
 		t.Fatal("submission lost query")
 	}
+}
+
+type shelfDeadlineLibrary struct {
+	fakeLibrary
+	refreshes atomic.Int64
+}
+
+func (s *shelfDeadlineLibrary) RefreshFavorites(context.Context) ([]ipc.FavoriteItem, error) {
+	s.refreshes.Add(1)
+	return nil, context.DeadlineExceeded
+}
+
+func (s *shelfDeadlineLibrary) RefreshHistory(ctx context.Context) ([]ipc.HistoryItem, error) {
+	return s.GetHistory(ctx)
+}
+
+func (s *shelfDeadlineLibrary) RefreshLikes(ctx context.Context) ([]ipc.LikeItem, error) {
+	return s.GetLikes(ctx)
+}
+
+func (s *shelfDeadlineLibrary) RefreshReservations(ctx context.Context) ([]ipc.ReservationItem, error) {
+	return s.GetReservations(ctx)
+}
+
+func TestShelfDeadlineDoesNotBlockOrDisguiseCoreDetail(t *testing.T) {
+	library := &shelfDeadlineLibrary{
+		fakeLibrary: fakeLibrary{favorites: []ipc.FavoriteItem{{SeriesID: "123456"}}},
+	}
+	detail := &fakeDetail{page: &ipc.SeriesDetailPageDTO{
+		SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "真实详情标题", CoverURL: "https://media.invalid/cover.jpg", EpisodeCount: 12},
+	}}
+	app := NewTestApp(nil)
+	app.detailSource = detail
+	app.libraryData = library
+	app.SetInvalidator(func() {})
+
+	app.OpenDetail("123456")
+	tt := ui.NewTester(app.Render, 1200, 800)
+	tt.Frame()
+	if !tt.HasText("正在加载详情") {
+		t.Fatalf("core detail loading state missing: %v", tt.Texts())
+	}
+
+	done := make(chan struct{})
+	go func() {
+		app.loadDetail("123456")
+		close(done)
+	}()
+	app.loadLibraryWithRefresh(libraryFavorites, true)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("shelf deadline blocked core detail loading")
+	}
+	tt.Frame()
+	tt.Advance(200 * time.Millisecond)
+
+	state := app.DetailState()
+	libraryState := app.LibraryState()
+	if state.Title != "真实详情标题" || state.Loading || state.Error != "" {
+		t.Fatalf("core detail state = %+v", state)
+	}
+	if libraryState.Favorites.Loading || libraryState.Favorites.Error == "" {
+		t.Fatalf("favorites state = %+v", libraryState.Favorites)
+	}
+	if app.GlobalError() != "" || tt.HasText("资料库加载失败") || tt.HasText("context deadline exceeded") {
+		t.Fatalf("misleading global shelf banner shown: global=%q texts=%v", app.GlobalError(), tt.Texts())
+	}
+	title, titleVisible := tt.Find("真实详情标题")
+	if !titleVisible || title.X < 0 || title.Y < 0 || title.X+title.W > 1200 || title.Y+title.H > 800 {
+		t.Fatalf("detail title clipped or absent: %+v", title)
+	}
+	if !tt.HasText("播放 / 继续观看") {
+		t.Fatalf("core detail controls missing: %v", tt.Texts())
+	}
+	if !tt.HasText("正在加载...") || tt.HasText("重试") {
+		t.Fatalf("supplement state changed by independent shelf failure: %v", tt.Texts())
+	}
+
+	screenshotDir := "/tmp/mygo-ui-bugs/regression"
+	if err := os.MkdirAll(screenshotDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	screenshotPath := filepath.Join(screenshotDir, "detail-shelf-deadline.png")
+	file, err := os.Create(screenshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, tt.Image()); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("detail resilience screenshot: %s", screenshotPath)
 }
 func TestProductionPlaybackFallbackAndCallbacksBind(t *testing.T) {
 	service := &ipc.HongguoService{}
