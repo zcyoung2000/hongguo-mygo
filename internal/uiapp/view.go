@@ -854,7 +854,7 @@ func (a *App) renderDetail(c *ui.Context) {
 		a.errorView(c, detail.Error, func() { go a.OpenDetail(detail.ID) })
 		return
 	}
-	scroll := ui.Scroll(c.Key("detail-page-scroll")).Grow(1).Gap(c.Theme().Space(3)).TrackScroll(&a.detailScroll)
+	scroll := ui.Scroll(c.Key("detail-page-scroll")).Grow(1).Gap(c.Theme().Space(2) + 2).TrackScroll(&a.detailScroll)
 	scroll.Children(func() {
 		// Top Bar with a single back navigation entry.
 		ui.Row(c.Key("detail-top-bar")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).Children(func() {
@@ -1283,23 +1283,33 @@ func formatPublishDate(value string) string {
 	return value
 }
 
-// GridView rows have a fixed height. Size them for their actual metadata and
-// actions so reservation/removal controls cannot be clipped beneath a poster.
+// Collection shelves show fixed-width cards. Size the shelf from the tallest
+// card's poster, one title row and its visible metadata/actions so the fixed
+// horizontal scroll does not add phantom bottom space.
 func catalogRowHeight(items []CatalogItem) float32 {
-	var tallest float32 = 260
+	const posterHeight float32 = 200
+	const titleHeight float32 = 16
+	const cardGap float32 = 6
+	const metadataHeight float32 = 16
+	const buttonHeight float32 = 28
+	var tallest float32
 	for _, item := range items {
-		var height float32 = 242
-		if item.Heat != "" || item.EpisodeCount > 0 {
-			height += 26
-		}
-		if item.BadgeText != "" {
-			height += 26
-		}
-		if item.Category != "" {
-			height += 26
+		height := posterHeight + cardGap + titleHeight
+		if item.Upcoming && item.PublishAt != "" {
+			height += metadataHeight + cardGap
+		} else {
+			if !item.Upcoming && item.BadgeText != "" {
+				height += metadataHeight + cardGap
+			}
+			if !item.Upcoming && item.Category != "" {
+				height += metadataHeight + cardGap
+			}
+			if !item.Upcoming && (item.Heat != "" || item.EpisodeCount > 0) {
+				height += metadataHeight + cardGap
+			}
 		}
 		if item.Upcoming {
-			height += 70
+			height += buttonHeight
 		}
 		tallest = max(tallest, height)
 	}

@@ -331,21 +331,23 @@ func (a *App) renderCollection(c *ui.Context, label string, value DetailCollecti
 	if !value.Loading && value.Error == "" && len(value.Items) == 0 {
 		return
 	}
-	ui.Text(c, label).Bold().FontSize(15).TextColor(ui.Hex("#ffffff"))
-	if value.Loading {
-		ui.Text(c, "正在加载...").FontSize(12).TextColor(c.Theme().TextMuted)
-		return
-	}
-	if value.Error != "" {
-		a.errorView(c, value.Error, retry)
-		return
-	}
-	rowHeight := catalogRowHeight(value.Items) + 16
-	ui.ScrollHorizontal(c.Key("col-scroll-" + label)).Height(rowHeight).Children(func() {
-		ui.Row(c.Key("collection-" + label)).Gap(c.Theme().Space(3)).Children(func() {
-			for _, item := range value.Items {
-				a.catalogCard(c, item)
-			}
+	section := ui.Column(c.Key("detail-collection:" + label)).Gap(8)
+	section.Children(func() {
+		ui.Text(c, label).Bold().FontSize(15).TextColor(ui.Hex("#ffffff"))
+		if value.Loading {
+			ui.Text(c, "正在加载...").FontSize(12).TextColor(c.Theme().TextMuted)
+			return
+		}
+		if value.Error != "" {
+			a.errorView(c, value.Error, retry)
+			return
+		}
+		ui.ScrollHorizontal(c.Key("col-scroll-" + label)).Height(catalogRowHeight(value.Items)).Children(func() {
+			ui.Row(c.Key("collection-" + label)).Gap(c.Theme().Space(3)).Children(func() {
+				for _, item := range value.Items {
+					a.catalogCard(c, item)
+				}
+			})
 		})
 	})
 }
