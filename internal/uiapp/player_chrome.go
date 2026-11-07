@@ -107,11 +107,6 @@ func (a *App) renderNativePlayerControls(c *ui.Context) {
 	if !chrome.Visible {
 		return
 	}
-	if chrome.ControlsVisible {
-		a.renderNativeQualityControl(c, chrome)
-		a.renderNativeSpeedControl(c, chrome)
-		a.renderNativeEpisodeButton(c, chrome)
-	}
 	if a.playerDrawerOpen {
 		a.renderNativeEpisodeDrawer(c)
 		a.renderPlayerDrawerScrim(c)
@@ -137,56 +132,6 @@ func (a *App) renderPlayerDrawerScrim(c *ui.Context) {
 
 func (a *App) nativeControlBox(c *ui.Context, key string, frame ControlFrame) ui.Element {
 	return ui.Box(c.Key(key)).Absolute().Top(frame.Y).Left(frame.X).Width(frame.W).Height(frame.H)
-}
-
-func (a *App) renderNativeQualityControl(c *ui.Context, chrome PlayerChrome) {
-	a.nativeControlBox(c, "native-player-quality", chrome.Quality).Children(func() {
-		button := ui.ButtonBase(c).Label("清晰度").Fill().TextColor(c.Theme().Text).
-			Background(ui.RGBA(30, 32, 42, .58)).Border(1, ui.RGBA(255, 255, 255, .16)).Radius(7).Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, .28))
-		button.PopoverMenuButton(func(m *ui.Menu) {
-			for _, option := range chrome.QualityOptions {
-				item := m.Item(option.Label).Disabled(!option.Available).Radio(option.Active)
-				if item.Chosen() {
-					go a.playerControl("quality", option.ID)
-				}
-			}
-		})
-		button.Children(func() { ui.Text(c, chrome.QualityLabel).FontSize(12).Bold().SingleLine() })
-	})
-}
-
-func (a *App) renderNativeSpeedControl(c *ui.Context, chrome PlayerChrome) {
-	a.nativeControlBox(c, "native-player-speed", chrome.Speed).Children(func() {
-		button := ui.ButtonBase(c).Label("倍速").Fill().TextColor(c.Theme().Text).
-			Background(ui.RGBA(30, 32, 42, .58)).Border(1, ui.RGBA(255, 255, 255, .16)).Radius(7).Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, .28))
-		button.PopoverMenuButton(func(m *ui.Menu) {
-			for _, speed := range []float64{.75, 1, 1.25, 1.5, 2} {
-				item := m.Item(formatPlayerSpeed(speed)).Radio(speed == chrome.SpeedValue)
-				if item.Chosen() {
-					go a.playerControl("speed", speed)
-				}
-			}
-		})
-		button.Children(func() { ui.Text(c, formatPlayerSpeed(chrome.SpeedValue)).FontSize(12).Bold().SingleLine() })
-	})
-}
-
-func (a *App) renderNativeEpisodeButton(c *ui.Context, chrome PlayerChrome) {
-	a.nativeControlBox(c, "native-player-episodes", chrome.Drawer).Children(func() {
-		button := ui.ButtonBase(c).Label("选集").Fill().TextColor(c.Theme().Text).
-			Background(ui.RGBA(30, 32, 42, .58)).Border(1, ui.RGBA(255, 255, 255, .16)).Radius(7).Shadow(0, 6, 18, 0, ui.RGBA(0, 0, 0, .28))
-		button.OnClick(func() {
-			a.mu.Lock()
-			a.playerDrawerOpen = !a.playerDrawerOpen
-			a.mu.Unlock()
-			a.focusMediaAfterPointer()
-			a.invalidate()
-		})
-		button.Children(func() {
-			ui.Icon(c, episodesIcon).Size(18, 18)
-			ui.Text(c, "选集").FontSize(12).Bold().SingleLine()
-		})
-	})
 }
 
 func (a *App) renderNativeEpisodeDrawer(c *ui.Context) {
@@ -217,11 +162,8 @@ func (a *App) renderNativeEpisodeDrawer(c *ui.Context) {
 			} else {
 				a.playerDrawerGrid.Key = func(index int) any { return index + 1 }
 				a.playerDrawerGrid.Label = func(index int) string { return formatEpisode(index + 1) }
-				ui.GridView(c, &a.playerDrawerGrid, min(chrome.TotalEpisodes, 12), 55, 28, func(index int) {
+				ui.GridView(c, &a.playerDrawerGrid, chrome.TotalEpisodes, 55, 28, func(index int) {
 					number := index + 1
-					if chrome.Episode > 12 && index == 11 {
-						number = chrome.Episode
-					}
 					button := ui.ButtonBase(c).Label(formatEpisode(number)).Fill().Radius(8)
 					if number == chrome.Episode {
 						button.Background(c.Theme().Accent).TextColor(c.Theme().AccentText)

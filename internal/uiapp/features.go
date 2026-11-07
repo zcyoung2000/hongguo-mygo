@@ -72,6 +72,8 @@ func (a *App) featureProvider() featureProvider {
 }
 func (a *App) SetMediaHost(host *MediaHost) { a.mu.Lock(); defer a.mu.Unlock(); a.media = host }
 
+func (a *App) TogglePlayerFixture() { a.mu.Lock(); defer a.mu.Unlock(); a.playerFixture = true }
+
 func (a *App) MediaCommand(payload native.MediaCommandPayload) {
 	a.mu.Lock()
 	host, active := a.media, a.mediaOn || a.view == "recommend"

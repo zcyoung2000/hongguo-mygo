@@ -88,9 +88,13 @@ func (a *App) renderWindowDragRegions(c *ui.Context, sidebarWidth float32) {
 		Width(max(0, sidebarWidth-bar.Left)).Height(44).DragWindow()
 	ui.Box(c.Key("sidebar-brand-drag")).Absolute().Top(44).Left(0).
 		Width(sidebarWidth).Height(40).DragWindow()
-	if !a.hostedScene() {
+	if !a.hostedScene() && !a.mediaOn {
 		ui.Box(c.Key("content-titlebar-drag")).Absolute().Top(0).Left(sidebarWidth + 1).Right(bar.Right).
 			Height(32).DragWindow()
+	}
+	if a.mediaOn && !a.playerFixture {
+		ui.Box(c.Key("media-titlebar-drag")).Absolute().Top(0).Left(sidebarWidth).Right(0).
+			Height(32).PassThrough().DragWindow()
 	}
 }
 
@@ -192,6 +196,12 @@ func (a *App) renderBody(c *ui.Context) {
 	// identities. A removed WebView must not retain a hole over the next page.
 	ui.Column(c.Key("content-host")).Fill().MinWidth(0).MinHeight(0).Background(c.Theme().Background).Children(func() {
 		if a.hostedScene() {
+			if a.playerFixture {
+				ui.Column(c.Key("fixture-frame")).Fill().Children(func() {
+					a.renderPlayerVisualFixture(c)
+				})
+				return
+			}
 			page := ui.Column(c.Key("hosted-page")).Fill().MinWidth(0).MinHeight(0)
 			page.Transition(pageTransition).Children(func() {
 				ui.WebView(c.Key("media-surface"), a.media.WebView()).Fill().MinWidth(0).MinHeight(0)

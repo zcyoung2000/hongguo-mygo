@@ -7,6 +7,7 @@ import (
 )
 
 const detailEpisodeCollapsedRows = 3
+const detailEpisodeCollapsedColumns = 4
 
 //go:embed icons/chevron-down.svg
 var chevronSVG []byte
@@ -19,25 +20,12 @@ func (a *App) detailEpisodeCollapsedIndexes(episodes []CatalogItem) []int {
 	for index := range episodes[:count] {
 		indexes = append(indexes, index)
 	}
-	current := a.currentDetailEpisodeIndex(episodes)
-	if current >= count && current < len(episodes) {
-		indexes = append(indexes, current)
-	}
 	return indexes
 }
 
-func (a *App) currentDetailEpisodeIndex(episodes []CatalogItem) int {
-	for index, episode := range episodes {
-		if a.resume.ResumeEpisode > 0 && episode.EpisodeCount == a.resume.ResumeEpisode {
-			return index
-		}
-	}
-	return -1
-}
-
 func detailEpisodeCollapsedCount(episodeCount int) int {
-	if episodeCount <= detailEpisodeCollapsedRows*16 {
+	if episodeCount <= detailEpisodeCollapsedRows*detailEpisodeCollapsedColumns {
 		return episodeCount
 	}
-	return detailEpisodeCollapsedRows*16 - 1
+	return detailEpisodeCollapsedRows * detailEpisodeCollapsedColumns
 }

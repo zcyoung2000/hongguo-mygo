@@ -52,6 +52,7 @@ function harness() {
     updatePlayerCommentCount() {}, scrollActiveDrawerEpisode() {}, updatePlayerPlayBadge() {},
     resetPlaybackVideoFit() {}, updateQualityControls() {}, syncMainVideoOrientation() {},
     setPlaybackKeepAwake() {}, clearNowPlayingState() {}, restoreCommentOverlay() {},
+    collapsePlayerDrawerEpisodes() {}, syncPlayerChromeState() {},
     syncFeedScrollCapture() {}, pauseFeedPlayback() {}, clearCommentSceneLayout() {},
     fallbackQualityOptions: () => [], renderQualityMenu() {}, renderPlaylistDrawer() {},
     showToast: text => toasts.push(text), switchFeedDrama: value => switches.push(value),
