@@ -40,6 +40,8 @@ func TestLoadingShimmerAnimatesThenSettles(t *testing.T) {
 	tester := ui.NewTester(app.Render, 1000, 800)
 	tester.Frame()
 	tester.Advance(shimmerSweep)
+	tester.Frame()
+	tester.Advance(shimmerPeriod - shimmerSweep - time.Millisecond)
 	if !tester.FramePending() {
 		t.Fatal("rest phase shimmer did not schedule its next bounded paint frame")
 	}

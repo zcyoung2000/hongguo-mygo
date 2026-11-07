@@ -42,7 +42,7 @@ func (s shimmer) paint(p *ui.Painter, r ui.Rect, radius float32) {
 	at := time.Duration(p.Now().UnixNano() % int64(shimmerPeriod))
 	if at >= shimmerSweep {
 		p.Fill(r, s.base, radius)
-		p.After(shimmerPeriod - at)
+		p.After(shimmerPeriod - at + 100*time.Millisecond)
 		return
 	}
 	p.AnimationFrameRate(shimmerFrameRate)

@@ -3236,7 +3236,7 @@ function renderDetailRelatedPlaceholder(detail) {
   if (status) status.textContent = '下滑加载';
   grid.innerHTML = `
     <div class="detail-inline-loader" aria-label="加载中">
-      <svg class="loading-spinner" viewBox="0 0 24 24">
+      <svg class="loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <circle cx="12" cy="12" r="10"></circle>
         <path d="M6.12 20.09A10 10 0 1 1 17.88 20.09"></path>
       </svg>

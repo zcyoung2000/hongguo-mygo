@@ -548,7 +548,11 @@ func TestNativePageScreens(t *testing.T) {
 	}
 	save := func(name string, app *App) {
 		t.Helper()
-		tt := ui.NewTester(app.Render, 1200, 800)
+		width, height := 1200, 800
+		if strings.HasSuffix(name, "-1600") {
+			width, height = 1600, 1000
+		}
+		tt := ui.NewTester(app.Render, width, height)
 		tt.SetDark(true)
 		if strings.Contains(name, "-loading") {
 			tt.Advance(shimmerSampleOffset)
@@ -566,7 +570,7 @@ func TestNativePageScreens(t *testing.T) {
 		}
 	}
 	libraryItem := CatalogItem{ID: "123456", Title: "本地记录剧", Category: "真人剧", Description: "记录简介", EpisodeCount: 20, ResumeEpisode: 4, Progress: 42, UpdatedAt: time.Now().Unix()}
-	for _, state := range []struct {
+	states := []struct {
 		name    string
 		view    string
 		prepare func(*App)
@@ -616,7 +620,8 @@ func TestNativePageScreens(t *testing.T) {
 			app.actor = ActorState{ID: "actor-id", Profile: provider.profile, Works: []CatalogItem{{ID: "123456", Title: "演员作品一", EpisodeCount: 32}}, HasMore: true}
 		}},
 		{name: "settings", view: "settings"},
-	} {
+	}
+	for _, state := range states {
 		state := state
 		t.Run(state.name, func(t *testing.T) {
 			app := NewTestApp(nil)
@@ -626,6 +631,19 @@ func TestNativePageScreens(t *testing.T) {
 				state.prepare(app)
 			}
 			save(state.name, app)
+		})
+	}
+	for _, state := range states {
+		state := state
+		name := state.name + "-1600"
+		t.Run(name, func(t *testing.T) {
+			app := NewTestApp(nil)
+			app.featuresSource = provider
+			app.view = state.view
+			if state.prepare != nil {
+				state.prepare(app)
+			}
+			save(name, app)
 		})
 	}
 }
