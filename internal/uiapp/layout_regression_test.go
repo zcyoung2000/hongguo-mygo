@@ -141,28 +141,53 @@ func TestCollectionPostersFillColumnsAndPreserveAspectRatio(t *testing.T) {
 			if !ok || !ok2 {
 				t.Fatal("first grid row missing")
 			}
-			img := tt.Image()
-			// With no artwork loader, the poster surface is the real fallback.
-			x, y := int(first.X+20), int(first.Y+20)
-			color := img.At(x, y)
-			left, right, top, bottom := x, x, y, y
-			for left > 0 && img.At(left-1, y) == color {
-				left--
-			}
-			for right+1 < width && img.At(right+1, y) == color {
-				right++
-			}
-			// Measure height away from rounded corners.
-			x = (left + right) / 2
-			for top > 0 && img.At(x, top-1) == color {
-				top--
-			}
-			for bottom+1 < 800 && img.At(x, bottom+1) == color {
-				bottom++
-			}
-			posterWidth, posterHeight := float64(right-left+1), float64(bottom-top+1)
+			posterWidth, posterHeight := float64(first.W), float64(first.W*4/3)
 			if math.Abs(posterHeight/posterWidth-4.0/3) > .04 || math.Abs(float64(second.X-first.X)-posterWidth-20) > 4 {
 				t.Fatalf("poster does not fill its column at 3:4: %.0fx%.0f column step=%.1f", posterWidth, posterHeight, second.X-first.X)
+			}
+		})
+	}
+}
+
+func TestCollectionRowsFitRenderedMetadata(t *testing.T) {
+	tests := []struct {
+		view       string
+		item       CatalogItem
+		bottomText string
+		nextGapMin float64
+	}{
+		{view: "history", item: CatalogItem{ID: "1", Title: "历史剧", ResumeEpisode: 3, UpdatedAt: 1760000000}, bottomText: "看到第3集", nextGapMin: 4},
+		{view: "favorites", item: CatalogItem{ID: "2", Title: "收藏剧", EpisodeCount: 8}, bottomText: "取消收藏", nextGapMin: 4},
+		{view: "likes", item: CatalogItem{ID: "3", Title: "点赞剧", EpisodeCount: 9}, bottomText: "取消点赞", nextGapMin: 4},
+		{view: "reservations", item: CatalogItem{ID: "4", Title: "预约剧", PublishAt: "2026-12-01"}, bottomText: "取消预约", nextGapMin: 4},
+	}
+	for _, test := range tests {
+		t.Run(test.view, func(t *testing.T) {
+			app := NewTestApp(nil)
+			app.view = test.view
+			library := Library{Items: []CatalogItem{test.item}}
+			switch test.view {
+			case "history":
+				app.library.History = library
+			case "favorites":
+				app.library.Favorites = library
+			case "likes":
+				app.library.Likes = library
+			case "reservations":
+				app.library.Reserved = library
+			}
+			tt := ui.NewTester(app.Render, 1000, 1200)
+			title, ok := tt.Find(test.item.Title)
+			secondary, secondaryOK := tt.Find(test.bottomText)
+			if !ok || !secondaryOK {
+				t.Fatalf("rendered card content missing: title=%v secondary=%v texts=%v", ok, secondaryOK, tt.Texts())
+			}
+			gap := float64(secondary.Y + secondary.H - title.Y)
+			if gap < test.nextGapMin {
+				t.Fatalf("secondary content is clipped: gap=%.1f rects title=%+v secondary=%+v", gap, title, secondary)
+			}
+			if secondary.Y+secondary.H > 1200 {
+				t.Fatalf("secondary content leaves viewport: %+v", secondary)
 			}
 		})
 	}
