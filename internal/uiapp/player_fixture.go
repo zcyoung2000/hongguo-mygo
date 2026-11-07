@@ -66,11 +66,8 @@ func (a *App) renderPlayerVisualFixture(c *ui.Context) {
 				})
 				ui.Box(c.Key("fixture-controls-spacer")).Grow(1)
 				ui.Row(c.Key("fixture-controls-right")).Gap(10).AlignItems(ui.Center).Children(func() {
-					controlText(c, "fixture-quality", "720P", true)
-					controlText(c, "fixture-speed", "1.0x", true)
 					controlText(c, "fixture-danmaku", "弹幕", false)
 					controlText(c, "fixture-settings", "设置", false)
-					controlText(c, "fixture-episodes", "选集", true)
 					controlText(c, "fixture-pip", "画中画", false)
 					controlText(c, "fixture-fullscreen", "全屏", false)
 				})

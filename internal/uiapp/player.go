@@ -35,6 +35,8 @@ type seriesMetadata struct {
 type PlaybackState struct {
 	SeriesID, EpisodeID string
 	EpisodeNum          int
+	Quality             string
+	Speed               float64
 	Title, CoverURL     string
 	Position, Duration  float64
 	Playing             bool
@@ -153,7 +155,10 @@ func (b *PlayerBridge) playLocked(seriesID, episodeID string, num int, resumeAt 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		playback, err := provider.PlayEpisode(ctx, seriesID, episodeID, num, "", false)
+		b.mu.Lock()
+		quality := b.current.Quality
+		b.mu.Unlock()
+		playback, err := provider.PlayEpisode(ctx, seriesID, episodeID, num, quality, false)
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if token != b.token {
@@ -166,6 +171,13 @@ func (b *PlayerBridge) playLocked(seriesID, episodeID string, num int, resumeAt 
 		if playback == nil {
 			return
 		}
+		requested := b.current.Quality
+		quality = playback.Quality
+		if requested != "" {
+			quality = requested
+		} else if quality == "" {
+			quality = b.current.Quality
+		}
 		state := b.current
 		state.EpisodeID, state.EpisodeNum, state.StreamURL = playback.EpisodeID, playback.EpisodeNum, playback.StreamURL
 		state.Position = playback.LastPosition
@@ -173,6 +185,7 @@ func (b *PlayerBridge) playLocked(seriesID, episodeID string, num int, resumeAt 
 			state.Position = resumeAt
 		}
 		state.Duration = float64(playback.DurationSec)
+		state.Quality = quality
 		if state.Title == "" {
 			state.Title = playback.Title
 		}
@@ -246,6 +259,41 @@ func (b *PlayerBridge) Seek(position float64) {
 	defer b.mu.Unlock()
 	b.current.Position = math.Max(0, position)
 	b.enqueueLocked(map[string]any{"event": "seek", "position": b.current.Position})
+}
+
+func (b *PlayerBridge) SelectQuality(quality string) {
+	if quality == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := b.current
+	if s.SeriesID == "" || s.Quality == quality {
+		return
+	}
+	b.current.Quality = quality
+	b.playLocked(s.SeriesID, s.EpisodeID, s.EpisodeNum, s.Position, s.Playing)
+	b.current.Quality = quality
+}
+
+func (b *PlayerBridge) SelectSpeed(speed float64) {
+	allowed := false
+	for _, value := range []float64{.75, 1, 1.25, 1.5, 2} {
+		if speed == value {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.current.Speed == speed {
+		return
+	}
+	b.current.Speed = speed
+	b.enqueueLocked(map[string]any{"event": "speed", "value": speed})
 }
 func (b *PlayerBridge) PictureInPicture() {
 	b.mu.RLock()
@@ -325,6 +373,12 @@ func (b *PlayerBridge) MediaCommandPayload(p native.MediaCommandPayload) {
 	b.MediaCommand(p.Command, p.Position)
 }
 func (b *PlayerBridge) state() PlaybackState { b.mu.RLock(); defer b.mu.RUnlock(); return b.current }
+
+func (b *PlayerBridge) commandsForTest() []playerCommand {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return append([]playerCommand(nil), b.commands...)
+}
 
 // Commands are queued in state order. Never hold a UI-state lock while waiting for Page.Eval.
 func (b *PlayerBridge) enqueueLocked(payload map[string]any) {

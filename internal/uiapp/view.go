@@ -75,7 +75,9 @@ func (a *App) Render(c *ui.Context) {
 	}
 	ui.Box(c.Key("app-shell")).Fill().Children(func() {
 		ui.Split(c, &width, func() { a.renderSidebar(c) }, func() { a.renderBody(c) }).Fill().Background(c.Theme().Background).OnChange(func() { a.SetSidebarWidth(width) })
-		a.renderWindowDragRegions(c, width)
+		if a.hostedScene() || a.playerFixture {
+			a.renderNativePlayerControls(c)
+		}
 	})
 }
 
@@ -195,7 +197,7 @@ func (a *App) renderBody(c *ui.Context) {
 	// Keep this parent stable, but give native pages and the media surface distinct
 	// identities. A removed WebView must not retain a hole over the next page.
 	ui.Column(c.Key("content-host")).Fill().MinWidth(0).MinHeight(0).Background(c.Theme().Background).Children(func() {
-		if a.hostedScene() {
+		if a.hostedScene() || a.playerFixture {
 			if a.playerFixture {
 				ui.Column(c.Key("fixture-frame")).Fill().Children(func() {
 					a.renderPlayerVisualFixture(c)
@@ -208,9 +210,6 @@ func (a *App) renderBody(c *ui.Context) {
 			})
 			if a.view == "recommend" && !a.mediaOn {
 				a.renderFeedChannels(c)
-			}
-			if a.mediaOn {
-				a.renderNativePlayerControls(c)
 			}
 			return
 		}
@@ -518,11 +517,6 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 			bottomRightBadge = "完结"
 		}
 	} else if a.view == "history" {
-		if item.ResumeEpisode > 0 {
-			topLeftBadge = fmt.Sprintf("看到第 %d 集", item.ResumeEpisode)
-		} else {
-			topLeftBadge = "看到第 1 集"
-		}
 		if item.EpisodeCount > 0 {
 			bottomRightBadge = fmt.Sprintf("共%d集", item.EpisodeCount)
 		}
@@ -565,11 +559,11 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 
 		if a.view == "history" {
 			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Width(width).Children(func() {
-				badge := fmt.Sprintf("看到第%d集", max(1, item.ResumeEpisode))
-				if item.Completed {
-					badge = "已看完"
+				if item.EpisodeCount > 0 {
+					ui.Text(c, fmt.Sprintf("%d / %d 集", max(1, item.ResumeEpisode), item.EpisodeCount)).FontSize(12).Bold().TextColor(ui.Hex("#ff3358"))
+				} else {
+					ui.Box(c).Height(0)
 				}
-				ui.Text(c, badge).FontSize(12).Bold().TextColor(ui.Hex("#ff3358"))
 				relTime := formatRelativeTime(item.UpdatedAt)
 				ui.Text(c, relTime).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50))
 			})

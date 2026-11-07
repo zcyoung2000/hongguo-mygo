@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -20,6 +21,7 @@ func TestPlayerDrawerDefaultsToThreeRowsAndClosesOnOutsideClick(t *testing.T) {
 	app.detail = Detail{ID: "123456"}
 	app.PlayDetail()
 	app.mu.Lock()
+	app.playerFixture = true
 	app.mediaOn = true
 	app.mediaSession = 1
 	app.playerChrome = PlayerChrome{
@@ -85,7 +87,7 @@ func TestPlayerBackButtonMatchesDetailNavigationLayout(t *testing.T) {
 	}
 }
 
-func TestPlayerChromeStaysInsideFittedVideoAndHasNoDuplicateNativeControls(t *testing.T) {
+func TestPlayerChromeStaysInsideFittedVideoAndNativeControlsOwnHitTesting(t *testing.T) {
 	css, err := os.ReadFile("../../frontend/styles.css")
 	if err != nil {
 		t.Fatalf("read frontend stylesheet: %v", err)
@@ -95,31 +97,33 @@ func TestPlayerChromeStaysInsideFittedVideoAndHasNoDuplicateNativeControls(t *te
 	}
 
 	app := NewTestApp(nil)
-	view := &mygo.WebView{}
-	app.SetMediaHost(&MediaHost{view: view})
+	app.SetMediaHost(&MediaHost{})
 	app.TogglePlayerFixture()
 	app.detail = Detail{ID: "123456"}
 	app.mu.Lock()
 	app.view = "detail"
 	app.mediaOn = true
 	app.mediaSession = 1
-	app.playerChrome = PlayerChrome{Visible: true, ControlsVisible: true}
+	app.playerChrome = PlayerChrome{
+		Visible: true, ControlsVisible: true,
+		Quality: ControlFrame{X: 410, Y: 536, W: 52, H: 28},
+		Speed:   ControlFrame{X: 470, Y: 536, W: 52, H: 28},
+		Drawer:  ControlFrame{X: 630, Y: 536, W: 72, H: 28},
+	}
 	app.playerChromeKnown = true
+	app.playerDrawerOpen = false
 	app.mu.Unlock()
 
-	tt := ui.NewTester(app.Render, 988, 604)
+	tt := ui.NewTester(app.renderPlayerControlsAcceptance, 988, 604)
 	tt.SetScale(1)
 	tt.Frame()
 	if center := tt.WebViewAt(594, 262); center != nil {
 		t.Fatal("headless visual fixture must not retain an invisible WebView hole")
 	}
-	for _, nativeOnlyControl := range []string{"清晰度", "倍速", "关闭选集"} {
-		if tt.HasText(nativeOnlyControl) {
-			t.Fatalf("native controls duplicate WebView chrome: %v", tt.Texts())
+	for _, label := range []string{"清晰度", "倍速", "选集"} {
+		if err := tt.Click(label); err != nil {
+			t.Fatalf("native %s control is not clickable: %v", label, err)
 		}
-	}
-	if !tt.HasText("720P") || !tt.HasText("1.0x") || !tt.HasText("选集") {
-		t.Fatalf("native controls duplicate WebView chrome: %v", tt.Texts())
 	}
 
 	screenshot := writePlayerScreenshot(t, tt, filepath.Join(os.TempDir(), "mygo-player-right-rail-fixed.png"))
@@ -155,32 +159,80 @@ func TestPlayerDrawer812EpisodesPreservesCompleteContinuousCollection(t *testing
 	}
 	app.detail.Episodes = episodes
 	app.view = "detail"
+	app.SetMediaHost(&MediaHost{})
 	app.PlayDetail()
+	host := app.media
+	if host == nil {
+		t.Fatal("media host missing after player start")
+	}
+	host.ready = true
+	host.mu.Lock()
+	host.draining = true
+	host.sent = nil
+	host.mu.Unlock()
 	app.mu.Lock()
 	app.mediaOn = true
 	app.mediaSession = 1
+	app.playerFixture = true
 	app.resume = CatalogItem{ID: "812", ResumeEpisode: 22}
 	app.playerChrome = PlayerChrome{Visible: true, ControlsVisible: true, Episode: 22, TotalEpisodes: 812}
+	app.playerChrome.Quality = ControlFrame{X: 410, Y: 536, W: 52, H: 28}
+	app.playerChrome.Speed = ControlFrame{X: 470, Y: 536, W: 52, H: 28}
+	app.playerChrome.Drawer = ControlFrame{X: 630, Y: 536, W: 72, H: 28}
 	app.playerChromeKnown = true
 	app.mu.Unlock()
 
 	tt := ui.NewTester(app.Render, 988, 604)
 	tt.SetScale(1)
 	tt.Frame()
-	if _, found := tt.Find("继续观看第 22 集"); !found {
-		t.Fatal("resume metadata missing")
+	if err := tt.Click("选集"); err != nil {
+		t.Fatalf("native episode button is not clickable: %v", err)
 	}
-	if _, found := tt.Find("22"); found {
-		t.Fatal("collapsed episode list must render only the first three rows, not substitute episode 22")
+	app.mu.Lock()
+	opened := app.playerDrawerOpen
+	app.mu.Unlock()
+	if !opened {
+		t.Fatal("native episode button must open the episode drawer")
 	}
+	tt.Frame()
 	for number := 1; number <= 12; number++ {
 		if !tt.HasText(fmt.Sprintf("%d", number)) {
 			t.Fatalf("collapsed drawer omitted episode %d: %v", number, tt.Texts())
 		}
 	}
+	if !tt.HasText(fmt.Sprintf("%d", 812)) {
+		t.Fatal("episode drawer must expose the continuous virtual collection, not truncate it to 12")
+	}
+	app.playerDrawerGrid.ScrollIntoView(21)
+	tt.Frame()
+	target, targetFound := tt.Find("第22集")
+	if !targetFound {
+		t.Fatal("episode 22 accessible control is missing")
+	}
+	openScreenshot := writePlayerScreenshot(t, tt, filepath.Join(os.TempDir(), "mygo-player-drawer-812-open.png"))
+	t.Logf("open drawer screenshot: %s", openScreenshot)
+	tt.ClickAt(target.X+target.W/2, target.Y+target.H/2)
+	waitFor(time.Second, func() bool { return len(host.SentControls()) == 1 })
+	commands := host.SentControls()
+	if len(commands) < 1 || commands[len(commands)-1]["event"] != "command" || commands[len(commands)-1]["command"] != "episode" || commands[len(commands)-1]["value"] != 22 {
+		t.Fatalf("episode click sent %v, want episode 22", commands)
+	}
+	app.mu.Lock()
+	closed := !app.playerDrawerOpen
+	app.mu.Unlock()
+	if !closed {
+		t.Fatal("selecting an episode must close the native drawer")
+	}
 
-	screenshot := writePlayerScreenshot(t, tt, filepath.Join(os.TempDir(), "mygo-player-drawer-812-fixed.png"))
-	t.Logf("drawer screenshot: %s", screenshot)
+	selectedScreenshot := writePlayerScreenshot(t, tt, filepath.Join(os.TempDir(), "mygo-player-drawer-812-selected.png"))
+	t.Logf("selected screenshot: %s", selectedScreenshot)
+}
+
+func (a *App) renderPlayerControlsAcceptance(c *ui.Context) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.renderPlayerVisualFixture(c)
+	a.renderNativePlayerControls(c)
 }
 
 func writePlayerScreenshot(t *testing.T, tt *ui.Tester, path string) string {

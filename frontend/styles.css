@@ -2558,6 +2558,16 @@ body.is-resizing-sidebar * {
   transform: translateY(10px);
 }
 
+/* Native shell owns hit testing and menus for these controls. The WebView
+   keeps their geometry for chrome synchronization, but cannot receive clicks
+   or keyboard focus underneath the native layer. */
+body.native-media #player-quality,
+body.native-media #player-speed,
+body.native-media #player-drawer-toggle {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 .player-topbar {
   height: 52px;
   display: grid;

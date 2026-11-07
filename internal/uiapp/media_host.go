@@ -19,6 +19,7 @@ type MediaHost struct {
 	desired  map[string]any
 	queue    []map[string]any
 	draining bool
+	sent     []map[string]any
 }
 
 func (h *MediaHost) Attach(view *mygo.WebView) {
@@ -78,9 +79,15 @@ func (h *MediaHost) PlayerControl(command string, value any) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.ready {
-		h.queue = append(h.queue, map[string]any{"event": "command", "command": command, "value": value})
-		h.startLocked()
+		h.PlayerControlLocked(command, value)
 	}
+}
+
+func (h *MediaHost) PlayerControlLocked(command string, value any) {
+	payload := map[string]any{"event": "command", "command": command, "value": value}
+	h.sent = append(h.sent, payload)
+	h.queue = append(h.queue, payload)
+	h.startLocked()
 }
 func (h *MediaHost) startLocked() {
 	if !h.draining && h.view != nil {
@@ -168,4 +175,10 @@ func (h *MediaHost) markReady() {
 		h.queue = append(h.queue, h.desired)
 	}
 	h.startLocked()
+}
+
+func (h *MediaHost) SentControls() []map[string]any {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]map[string]any(nil), h.sent...)
 }
