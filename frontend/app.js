@@ -1953,7 +1953,8 @@ const state = {
     loading: false,
     detailReady: false,
     seasonSwitching: false,
-    userPaused: false
+    userPaused: false,
+    episodesExpanded: false
   }
 };
 
@@ -4642,6 +4643,55 @@ function renderEpisodeGrid({ grid, count, total, current, onSelect }) {
   }
 }
 
+function createEpisodeCollapseController({ grid, toggleWrap, toggle, collapsedClass = 'is-collapsed', rows = 3, rowHeight = 28, gap = 6 }) {
+  const collapsedHeight = rows * rowHeight + (rows - 1) * gap;
+  let expanded = false;
+  let overflow = false;
+
+  const sync = () => {
+    grid.classList.toggle(collapsedClass, !expanded);
+    toggleWrap.style.display = overflow ? 'flex' : 'none';
+    toggle.setAttribute('aria-expanded', String(expanded));
+    const label = toggle.querySelector('[data-collapse-text]');
+    if (label) label.textContent = expanded ? '收起选集' : '展开全部';
+    const icon = toggle.querySelector('svg');
+    if (icon) icon.style.transform = expanded ? 'rotate(180deg)' : '';
+    if (!expanded) grid.scrollTop = 0;
+  };
+
+  const setExpanded = (nextExpanded) => {
+    expanded = Boolean(nextExpanded);
+    sync();
+    if (expanded) {
+      const active = grid.querySelector('.ep-btn.active');
+      if (active) {
+        const activeTop = active.offsetTop - grid.offsetTop;
+        grid.scrollTop = Math.max(0, activeTop - (grid.clientHeight - active.offsetHeight) / 2);
+      }
+    }
+  };
+
+  const measure = () => {
+    if (grid.clientHeight > 0 && !expanded) {
+      overflow = grid.scrollHeight > collapsedHeight + 1;
+    } else {
+      overflow = grid.children.length > rows * 12;
+    }
+    sync();
+  };
+
+  toggle.addEventListener('click', () => setExpanded(!expanded));
+  measure();
+
+  return {
+    expand: () => setExpanded(true),
+    collapse: () => setExpanded(false),
+    measure,
+    get expanded() { return expanded; },
+    get overflow() { return overflow; },
+  };
+}
+
 function scrollActiveDrawerEpisode(gridId, episodeNum) {
   const grid = document.getElementById(gridId);
   if (!grid) return;
@@ -4651,6 +4701,11 @@ function scrollActiveDrawerEpisode(gridId, episodeNum) {
   // Never invoke element.scrollIntoView() which causes ancestor horizontal scrolling in WebKit.
   const targetTop = btn.offsetTop - grid.offsetTop;
   grid.scrollTop = Math.max(0, targetTop - (grid.clientHeight - btn.clientHeight) / 2);
+}
+
+function collapsePlayerDrawerEpisodes() {
+  state.player.episodesExpanded = false;
+  state.player.episodeCollapse?.collapse();
 }
 
 function renderFeedQualityMenu() {
@@ -7807,6 +7862,8 @@ function initPlayerControls() {
   const pipBtn = document.getElementById('player-pip');
   const drawerToggle = document.getElementById('player-drawer-toggle');
   const drawer = document.getElementById('player-playlist-drawer');
+  const drawerController = createPlayerDrawerController({ drawer, drawerToggle });
+  const closeDrawer = drawerController.close;
   const closeDrawerBtn = document.getElementById('player-close-drawer');
   const speedBtn = document.getElementById('player-speed');
   const speedMenu = document.getElementById('player-speed-menu');
@@ -8214,12 +8271,7 @@ function initPlayerControls() {
 
   fullBtn.addEventListener('click', togglePlayerFullscreen);
 
-  if (closeDrawerBtn) {
-    closeDrawerBtn.addEventListener('click', () => {
-      drawer.classList.remove('open');
-      drawerToggle.setAttribute('aria-expanded', 'false');
-    });
-  }
+  if (closeDrawerBtn) closeDrawerBtn.addEventListener('click', closeDrawer);
 
   // Toggle Drawer
   drawerToggle.addEventListener('click', () => {
@@ -8227,9 +8279,14 @@ function initPlayerControls() {
     drawer.classList.toggle('open', willOpen);
     drawerToggle.setAttribute('aria-expanded', String(willOpen));
     if (willOpen) {
+      state.player.episodeCollapse?.measure();
       scrollActiveDrawerEpisode('player-drawer-grid', state.player.episodeNum);
     }
     wakePlayerControls();
+  });
+
+  document.addEventListener('click', (event) => {
+    drawerController.handleDocumentClick(event);
   });
 
   // Favorite toggle
@@ -8343,6 +8400,21 @@ function initPlayerControls() {
       persistProgress();
     }
   }, 5000);
+}
+
+function createPlayerDrawerController({ drawer, drawerToggle }) {
+  const close = () => {
+    drawer.classList.remove('open');
+    drawerToggle.setAttribute('aria-expanded', 'false');
+  };
+
+  const handleDocumentClick = (event) => {
+    if (!drawer.classList.contains('open')) return;
+    if (event.target?.closest?.(`#${drawer.id}, .drawer-collapse-wrap, .drawer-collapse`)) return;
+    close();
+  };
+
+  return { close, handleDocumentClick };
 }
 
 async function playNextSeason(seriesId, source = 'player') {
@@ -8537,7 +8609,9 @@ async function playEpisodeNumber(num, requestedQuality = state.player.quality, r
   });
 
   // Scroll active episode button into view safely within the grid only
-  scrollActiveDrawerEpisode('player-drawer-grid', num);
+  if (state.player.episodesExpanded) {
+    scrollActiveDrawerEpisode('player-drawer-grid', num);
+  }
 
   document.getElementById('video-loader').style.display = 'grid';
   document.getElementById('video-container')?.classList.add('is-loading', 'is-buffering');
@@ -8613,13 +8687,26 @@ async function playEpisodeNumber(num, requestedQuality = state.player.quality, r
 }
 
 function renderPlaylistDrawer() {
+  const grid = document.getElementById('player-drawer-grid');
+  const toggleWrap = document.getElementById('player-drawer-collapse-wrap');
+  const toggle = document.getElementById('player-drawer-collapse');
   renderEpisodeGrid({
-    grid: document.getElementById('player-drawer-grid'),
+    grid,
     count: document.getElementById('player-drawer-count'),
     total: state.player.totalEpisodes || state.player.episodes.length || 1,
     current: state.player.episodeNum,
     onSelect: playEpisodeNumber
   });
+
+  if (grid && toggleWrap && toggle) {
+    state.player.episodeCollapse = createEpisodeCollapseController({
+      grid, toggleWrap, toggle
+    });
+    state.player.episodeCollapse.measure();
+    if (state.player.episodesExpanded) {
+      state.player.episodeCollapse.expand();
+    }
+  }
 }
 
 function persistProgress() {
@@ -8680,6 +8767,7 @@ function closePlayer() {
   document.getElementById('video-container')?.classList.remove('is-buffering', 'is-loading');
   document.getElementById('player-stage')?.classList.remove('player-fullscreen');
   document.getElementById('player-playlist-drawer')?.classList.remove('open');
+  collapsePlayerDrawerEpisodes();
   playerModal?.classList.remove('controls-hidden');
   const modalToClose = document.getElementById('player-modal');
   const finishClosePlayer = () => {

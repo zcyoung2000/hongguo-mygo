@@ -119,7 +119,7 @@ func (a *App) renderNativePlayerControls(c *ui.Context) {
 	}
 }
 
-const playerDrawerMaxWidth = 320
+const playerDrawerMaxWidth = 248
 
 func (a *App) renderPlayerDrawerScrim(c *ui.Context) {
 	// The drawer opens on top of the media WebView. A transparent native
@@ -188,7 +188,7 @@ func (a *App) renderNativeEpisodeDrawer(c *ui.Context) {
 	windowWidth, windowHeight := c.Size()
 	drawerWidth := min(playerDrawerMaxWidth, max(220, windowWidth*.28))
 	drawer := ui.Box(c.Key("native-player-drawer")).Absolute().Top(0).Right(0).
-		Width(drawerWidth).Height(windowHeight).
+		Width(drawerWidth).Height(min(windowHeight, 618.5)).
 		Background(ui.RGBA(28, 30, 40, .72)).Border(1, ui.RGBA(255, 255, 255, .16)).Shadow(-8, 0, 32, 0, ui.RGBA(0, 0, 0, .35)).
 		Transition(ui.ElementTransition{Duration: 240 * time.Millisecond, Ease: ui.CubicBezier(.32, .72, 0, 1), Position: true, Colors: true}).OnClick(func() {})
 	drawer.Children(func() {
@@ -205,8 +205,11 @@ func (a *App) renderNativeEpisodeDrawer(c *ui.Context) {
 			if chrome.TotalEpisodes == 0 {
 				ui.Text(c, "暂无剧集").TextColor(c.Theme().TextMuted)
 			} else {
-				ui.GridView(c, nil, chrome.TotalEpisodes, 62, 42, func(index int) {
+				ui.GridView(c, nil, min(chrome.TotalEpisodes, 12), 55, 28, func(index int) {
 					number := index + 1
+					if chrome.Episode > 12 && index == 11 {
+						number = chrome.Episode
+					}
 					button := ui.ButtonBase(c).Label(formatEpisode(number)).Fill().Radius(8)
 					if number == chrome.Episode {
 						button.Background(c.Theme().Accent).TextColor(c.Theme().AccentText)

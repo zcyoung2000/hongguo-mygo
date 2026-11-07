@@ -175,6 +175,9 @@ func (a *App) renderBody(c *ui.Context) {
 			if a.view == "recommend" && !a.mediaOn {
 				a.renderFeedChannels(c)
 			}
+			if a.mediaOn {
+				a.renderNativePlayerControls(c)
+			}
 			return
 		}
 		page := ui.Column(c.Key("native-page:"+a.view+":"+a.seriesID)).Fill().MinWidth(0).MinHeight(0).Padding(42, 16, 12, 16).Gap(10)
