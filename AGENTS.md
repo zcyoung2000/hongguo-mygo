@@ -10,7 +10,7 @@ This repository is a native macOS short-drama browsing client. Before starting d
 4. Use responsive `.drama-grid` / `.drama-card`; every drama/poster image must use `handleImgError(this)`.
 5. Integrate catalog, search, detail, episode, and playback behind the OpenHongguo SDK; protected media must flow through local `MediaServer`.
 6. Keep SQLite at `~/Library/Application Support/myguo/userdata.db` in WAL mode; expose IPC through exported service methods called by `apiCall(method, ...args)`.
-7. Delegate implementation tasks with `sc layout run tabs --provider codex --model zhipu/glm-5.3-flash` to a separate app-managed worktree branch, then review and merge it into the current target branch. Start a new child for unrelated tasks; send screenshots by stable absolute path; send follow-ups only while the child is idle.
+7. Delegate implementation tasks with `sc layout run tabs --provider codex --model zhipu/glm-5.3-flash` to a separate app-managed worktree branch, then review and merge it into the current target branch. Start a new child for unrelated tasks; send screenshots by stable absolute path; send follow-ups only while the child is idle. Keep the primary worktree on its target branch; give the child an explicit separate worktree path and permit branch changes only there.
 
 ## Verify
 
