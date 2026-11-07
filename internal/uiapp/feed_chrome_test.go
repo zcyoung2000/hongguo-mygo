@@ -129,4 +129,3 @@ func TestFeedChannelPillWidthNotCollapsed(t *testing.T) {
 		t.Fatalf("selected channel pill width collapsed: width=%v", elem.W)
 	}
 }
-

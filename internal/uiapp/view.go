@@ -155,14 +155,30 @@ func (a *App) hostedScene() bool {
 	return a.media != nil && (a.mediaOn || a.view == "recommend" || a.view == "settings")
 }
 
+// Shared MyGo motion primitives keep feedback under 160 ms, reserve longer
+// springs for surfaces, and animate only the channels that actually change.
+// ElementTransition itself honors the desktop Reduce Motion preference.
+var feedbackTransition = ui.ElementTransition{
+	Duration: 120 * time.Millisecond,
+	Colors:   true,
+}
+
+var selectionTransition = ui.ElementTransition{
+	Duration: 160 * time.Millisecond,
+	Ease:     ui.CubicBezier(0.23, 1, 0.32, 1),
+	Colors:   true,
+}
+
+var layoutTransition = ui.ElementTransition{
+	Duration: 180 * time.Millisecond,
+	Ease:     ui.CubicBezier(0.23, 1, 0.32, 1),
+	Position: true,
+	Size:     true,
+	Colors:   true,
+}
+
 // Match the frontend's feedback token: short, interruptible, and paint-only.
 var (
-	drawerTransition = ui.ElementTransition{
-		Duration: 240 * time.Millisecond,
-		Ease:     ui.CubicBezier(.32, .72, 0, 1),
-		Position: true,
-		Colors:   true,
-	}
 	pageTransition = ui.ElementTransition{
 		Duration: 160 * time.Millisecond,
 		Ease:     ui.CubicBezier(0.23, 1, 0.32, 1),
@@ -228,7 +244,7 @@ func (a *App) sidebarItem(c *ui.Context, id, label string, icon *ui.SVG) {
 	selected := a.view == id
 	row := ui.Row(c.Key(id)).Height(36).Role(ui.RoleButton).Label(label).Focusable().
 		Padding(8, 12).Radius(8).Gap(11).AlignItems(ui.Center).
-		Transition(ui.ElementTransition{Duration: 150 * time.Millisecond, Colors: true})
+		Transition(selectionTransition)
 
 	if selected {
 		row.LinearGradient(ui.LinearGradient{
@@ -263,7 +279,7 @@ func (a *App) sidebarItem(c *ui.Context, id, label string, icon *ui.SVG) {
 func (a *App) pillChip(c *ui.Context, key, label string, selected bool, onClick func()) {
 	chip := ui.Row(c.Key(key)).Height(28).Padding(4, 14).Radius(14).
 		Role(ui.RoleButton).Label(label).Focusable().AlignItems(ui.Center).Justify(ui.Center).
-		Transition(ui.ElementTransition{Duration: 150 * time.Millisecond, Colors: true})
+		Transition(selectionTransition)
 	if selected {
 		chip.LinearGradient(ui.LinearGradient{
 			From:  ui.Hex("#d91b42"),
@@ -331,8 +347,8 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 							Angle: 135,
 						}).Shadow(0, 1, 4, 0, ui.RGBA(0, 0, 0, 0.35)).
 						Transition(ui.ElementTransition{
-							Duration: 240 * time.Millisecond,
-							Ease:     ui.CubicBezier(0.25, 1, 0.5, 1),
+							Duration: drawerTransition.Duration,
+							Ease:     drawerTransition.Ease,
 							Match:    slidingTabMatch{group: group},
 						})
 				}
@@ -359,6 +375,7 @@ func (a *App) renderCatalog(c *ui.Context) {
 	scroll := ui.Scroll(c.Key("catalog-page-scroll")).Grow(1).Gap(14).TrackScroll(&a.catalogScroll)
 	scroll.Children(func() {
 		a.renderSearchBar(c)
+		pageHeader(c, "发现短剧", "按体裁和筛选条件浏览真实目录")
 
 		ui.Column(c.Key("catalog-filter-card")).Padding(14, 18).Gap(10).Radius(14).
 			Material(glass.Glass{Clarity: 0.15}).
@@ -403,7 +420,7 @@ func (a *App) renderCatalog(c *ui.Context) {
 		if catalog.Loading && len(catalog.Items) == 0 {
 			ui.Text(c, "正在加载目录...").TextColor(c.Theme().TextMuted)
 			a.filterSkeleton(c)
-			a.gridSkeleton(c, 12)
+			a.gridSkeleton(c, 12, gridContentWidth(c))
 			return
 		}
 		if catalog.Error != "" {
@@ -421,13 +438,11 @@ func (a *App) renderCatalog(c *ui.Context) {
 		if availWidth <= 0 {
 			availWidth = 980
 		}
-		gap := float32(14)
-		minCardWidth := float32(150)
-		cols := max(2, int((availWidth+gap)/(minCardWidth+gap)))
-		cardWidth := (availWidth - float32(cols-1)*gap) / float32(cols)
-
-		ui.Grid(c.Key("catalog-grid-flow")).Columns(cols).Gap(gap).Children(func() {
-			for _, item := range catalog.Items {
+		cols := dramaColumns(availWidth)
+		cardWidth := dramaCardWidth(availWidth)
+		ui.Grid(c.Key("catalog-grid-flow")).Columns(cols).Gap(dramaCardGap).Children(func() {
+			for index, item := range catalog.Items {
+				c.Key(stableDramaKey(item, index))
 				a.catalogCardSized(c, item, cardWidth)
 			}
 		})
@@ -483,7 +498,7 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 		Width(width).MinWidth(width).MaxWidth(width).Gap(6)
 	shouldOpen := item.Kind != "source_novel" && (a.view != "reservations" || !item.Upcoming)
 	if shouldOpen && card.Hovered() {
-		card.Background(ui.RGBA(255, 255, 255, 0.04))
+		hoverBackground(card, ui.Transparent, ui.RGBA(255, 255, 255, 0.04))
 	}
 	if shouldOpen && (card.Clicked() || card.Shortcut(0, ui.KeyEnter) || card.Shortcut(0, ui.KeySpace)) {
 		go a.OpenItem(item)
@@ -665,6 +680,7 @@ func (a *App) renderSearchBar(c *ui.Context) {
 
 func (a *App) renderSearch(c *ui.Context) {
 	a.renderSearchBar(c)
+	pageHeader(c, "搜索", "短剧、角色和演员")
 	search := a.search
 	if a.query == "" && len(search.Items) == 0 && !search.Loading && search.Error == "" {
 		a.emptyView(c, "搜索短剧", "输入剧名、角色或演员，发现想看的短剧")
@@ -672,7 +688,7 @@ func (a *App) renderSearch(c *ui.Context) {
 	}
 	if search.Loading {
 		ui.Text(c, "正在搜索...").TextColor(c.Theme().TextMuted)
-		a.gridSkeleton(c, 12)
+		a.gridSkeleton(c, 12, gridContentWidth(c))
 		return
 	}
 	if search.Error != "" {
@@ -791,7 +807,7 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 	}
 	if library.Loading && len(library.Items) == 0 {
 		ui.Text(c, "正在加载本地数据...").TextColor(c.Theme().TextMuted)
-		a.gridSkeleton(c, 12)
+		a.gridSkeleton(c, 12, gridContentWidth(c))
 		return
 	}
 
@@ -1171,21 +1187,13 @@ func (a *App) detailSkeleton(c *ui.Context) {
 		})
 		ui.Column(c).Gap(12).Children(func() {
 			ui.Box(c).Width(90).Height(18).Radius(6).Background(c.Theme().SurfaceHover)
-			a.gridSkeleton(c, 4)
+			a.gridSkeleton(c, 4, gridContentWidth(c))
 		})
 	})
 }
 
-func (a *App) gridSkeleton(c *ui.Context, count int) {
-	ui.Row(c).Wrap().Gap(c.Theme().Space(4)).Children(func() {
-		for range count {
-			ui.Column(c).Size(150, 250).Gap(10).Children(func() {
-				ui.Box(c).Size(150, 200).Radius(10).Background(c.Theme().SurfaceHover)
-				ui.Box(c).Height(14).Radius(6).Background(c.Theme().SurfaceHover)
-				ui.Box(c).Width(82).Height(11).Radius(6).Background(c.Theme().SurfaceHover)
-			})
-		}
-	})
+func (a *App) gridSkeleton(c *ui.Context, count int, width float32) {
+	dramaSkeleton(c, count, width)
 }
 
 func (a *App) filterSkeleton(c *ui.Context) {
@@ -1258,15 +1266,13 @@ func (a *App) image(c *ui.Context, source string, width, height float32) {
 	if a.player != nil {
 		bitmap = a.player.Artwork(source)
 	}
-	artworkOpacity := float32(0)
-	if bitmap != nil {
-		artworkOpacity = 1
-	}
-	host.AnimateTo("artwork-fade", artworkOpacity, artworkFade)
 	if bitmap != nil {
 		host.Children(func() {
-			ui.Image(c, bitmap).Size(width, height).Fit(ui.Cover).Radius(10)
+			loaded := host.AnimateTo("artwork", 1, artworkFade)
+			ui.Image(c, bitmap).Size(width, height).Fit(ui.Cover).Radius(10).Opacity(loaded)
 		})
+	} else {
+		host.AnimateTo("artwork", 0, artworkFade)
 	}
 }
 

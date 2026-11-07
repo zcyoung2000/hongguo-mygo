@@ -1,7 +1,6 @@
 package uiapp
 
 import (
-	"math"
 	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
@@ -16,8 +15,9 @@ func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *u
 	gridTheme := baseTheme
 	gridTheme.Spacing = 8 // GridView derives its column and row gaps from Space(2).
 	gap := gridTheme.Space(2)
-	columns := max(1, int(math.Floor(float64((width+gap)/(160+gap)))))
-	cardWidth := max(float32(150), (width-float32(columns-1)*gap)/float32(columns)-4)
+	columns := max(1, int((width+gap)/(dramaMinCardWidth+gap)))
+	cardWidth := max(150, (width-float32(columns-1)*gap)/float32(columns)-4)
+	configureDramaGrid(state, items)
 	height := collectionRowHeight(a.view, items) + (cardWidth-150)*4/3 + extra
 	host.Children(func() {
 		c.SetTheme(&gridTheme)

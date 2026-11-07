@@ -192,9 +192,9 @@ func (a *App) renderNativeEpisodeButton(c *ui.Context, chrome PlayerChrome) {
 func (a *App) renderNativeEpisodeDrawer(c *ui.Context) {
 	chrome := a.playerChrome
 	windowWidth, windowHeight := c.Size()
-	drawerWidth := min(playerDrawerMaxWidth, max(220, windowWidth*.28))
+	drawerWidth := min(float32(playerDrawerMaxWidth), max(220, windowWidth*.28))
 	drawer := ui.Box(c.Key("native-player-drawer")).Absolute().Top(0).Right(0).
-		Width(drawerWidth).Height(min(windowHeight, 618.5)).
+		Width(drawerWidth).Height(windowHeight).
 		Background(ui.RGBA(28, 30, 40, .72)).Border(1, ui.RGBA(255, 255, 255, .16)).Shadow(-8, 0, 32, 0, ui.RGBA(0, 0, 0, .35)).
 		OnClick(func() {})
 	slide := drawerTransition
@@ -215,7 +215,9 @@ func (a *App) renderNativeEpisodeDrawer(c *ui.Context) {
 			if chrome.TotalEpisodes == 0 {
 				ui.Text(c, "暂无剧集").TextColor(c.Theme().TextMuted)
 			} else {
-				ui.GridView(c, nil, min(chrome.TotalEpisodes, 12), 55, 28, func(index int) {
+				a.playerDrawerGrid.Key = func(index int) any { return index + 1 }
+				a.playerDrawerGrid.Label = func(index int) string { return formatEpisode(index + 1) }
+				ui.GridView(c, &a.playerDrawerGrid, min(chrome.TotalEpisodes, 12), 55, 28, func(index int) {
 					number := index + 1
 					if chrome.Episode > 12 && index == 11 {
 						number = chrome.Episode

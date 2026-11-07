@@ -12,6 +12,7 @@ import (
 
 func (a *App) renderRank(c *ui.Context) {
 	rank := a.rank
+	pageHeader(c, "排行榜", "真实热度榜单")
 	a.maybeLoadMore(a.rankScroll.Y, a.rankScroll.MaxY, rank.HasMore, rank.Loading, func() { a.LoadRank(true) })
 
 	// Top Category Switcher Track: [全部] [系列剧] [漫剧] [真人剧] [AI剧] [演员]
@@ -206,6 +207,7 @@ func rankPositionColor(position int, promoted bool) ui.Color {
 
 func (a *App) renderReleases(c *ui.Context) {
 	value := a.releases
+	pageHeader(c, "新剧", "热播剧集和上线日历")
 	a.renderSlidingTabs(c, "releases-track", "releases-kind", []slidingTabItem{
 		{"hot", "热播新剧"},
 		{"calendar", "新剧日历"},
@@ -257,7 +259,7 @@ func (a *App) renderReleases(c *ui.Context) {
 	}
 	if value.Loading {
 		ui.Text(c, "正在加载新剧...").TextColor(c.Theme().TextMuted)
-		a.gridSkeleton(c, 12)
+		a.gridSkeleton(c, 12, gridContentWidth(c))
 		return
 	}
 	if len(value.Items) == 0 {
@@ -268,6 +270,7 @@ func (a *App) renderReleases(c *ui.Context) {
 }
 func (a *App) renderActor(c *ui.Context) {
 	actor := a.actor
+	pageHeader(c, "演员主页", "个人资料和参演短剧")
 	a.maybeLoadMore(a.actorScroll.Y, a.actorScroll.MaxY, actor.HasMore, actor.Loading || actor.Profile == nil, func() { a.loadActor(true) })
 
 	// Top Bar with back button
@@ -318,7 +321,7 @@ func (a *App) renderActor(c *ui.Context) {
 			})
 		})
 		ui.Box(c).Height(18)
-		a.gridSkeleton(c, 12)
+		a.gridSkeleton(c, 12, gridContentWidth(c))
 		return
 	}
 	a.cardGrid(c, "actor-grid", nil, &a.actorScroll, actor.Works, 0, nil).Grow(1)
