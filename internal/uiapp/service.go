@@ -89,6 +89,7 @@ type Library struct {
 	Title       string
 	Description string
 	Empty       bool
+	Loaded      bool
 	Loading     bool
 	Error       string
 	Items       []CatalogItem
@@ -641,7 +642,35 @@ func (a *App) libraryAt(tab LibraryTab) *Library {
 		return &a.library.Reserved
 	}
 }
+
+// Both tabs share a header, so entering either must load both real datasets.
 func (a *App) loadLibrary(tab LibraryTab) {
+	if tab == libraryFavorites || tab == libraryLikes {
+		var pending sync.WaitGroup
+		for _, collection := range []LibraryTab{libraryFavorites, libraryLikes} {
+			pending.Add(1)
+			go func(tab LibraryTab) {
+				defer pending.Done()
+				a.loadLibraryTab(tab)
+			}(collection)
+		}
+		pending.Wait()
+		return
+	}
+	a.loadLibraryTab(tab)
+}
+
+func libraryCountLabel(library Library) string {
+	if library.Loaded || len(library.Items) > 0 || library.Empty {
+		return strconv.Itoa(len(library.Items))
+	}
+	if library.Error != "" {
+		return "—"
+	}
+	return "…"
+}
+
+func (a *App) loadLibraryTab(tab LibraryTab) {
 	a.loadLibraryWithRefresh(tab, false)
 	if !a.testMode && a.service != nil {
 		a.loadLibraryWithRefresh(tab, true)
@@ -702,7 +731,7 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 		return items[i].Rank < items[j].Rank
 	})
 	a.error = ""
-	library.Items, library.Empty = items, len(items) == 0
+	library.Items, library.Empty, library.Loaded = items, len(items) == 0, true
 	library.Title = map[LibraryTab]string{libraryHistory: "观看历史", libraryFavorites: "我的收藏", libraryLikes: "我的点赞", libraryReservations: "新剧预约"}[tab]
 	a.invalidate()
 }
