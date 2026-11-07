@@ -74,9 +74,9 @@ func (a *App) renderRank(c *ui.Context) {
 }
 
 func (a *App) rankItem(c *ui.Context, index int, item ipc.RankItemDTO) {
-	actorID := item.ActorID
+	actorID := item.UserID
 	if actorID == "" {
-		actorID = item.UserID
+		actorID = item.ActorID
 	}
 	id, cover := item.SeriesID, item.CoverURL
 	if item.ItemType == "actor" {
