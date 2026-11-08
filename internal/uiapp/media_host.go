@@ -145,9 +145,6 @@ func (s *NativeShell) ToggleFullscreen() {
 	}
 	native.ToggleWindowFullscreen()
 }
-func (s *NativeShell) PlayerChromeChanged(value PlayerChrome) {
-	s.App.UpdatePlayerChrome(value)
-}
 
 // StopNow uses the same ordered dispatcher as playback. An independent Eval
 // could arrive after a newer Play and leave its visible WebView on native-idle.

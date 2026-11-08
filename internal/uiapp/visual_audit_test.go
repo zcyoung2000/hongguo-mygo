@@ -1,7 +1,6 @@
 package uiapp
 
 import (
-	"fmt"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -87,40 +86,6 @@ func TestVisualAuditPages(t *testing.T) {
 	save(t, "settings", func(c *ui.Context) {
 		app := NewTestApp()
 		app.view = "settings"
-		app.Render(c)
-	})
-	save(t, "player", func(c *ui.Context) {
-		app := NewTestApp()
-		app.SetMediaHost(&MediaHost{})
-		app.view = "detail"
-		app.detail = Detail{ID: "123456", Episodes: []CatalogItem{{ID: "1", EpisodeCount: 1}}}
-		app.PlayDetail()
-		app.mu.Lock()
-		app.playerFixture = true
-		app.mediaOn = true
-		app.mediaSession = 1
-		app.playerChrome = PlayerChrome{Visible: true, ControlsVisible: true, QualityLabel: "1080P", SpeedValue: 1, Episode: 1, TotalEpisodes: 2, Quality: ControlFrame{X: 398, Y: 536, W: 52, H: 28}, Speed: ControlFrame{X: 458, Y: 536, W: 52, H: 28}, Drawer: ControlFrame{X: 618, Y: 536, W: 72, H: 28}, QualityOptions: []PlayerQualityOption{{ID: "1080p", Label: "1080P", Available: true, Active: true}}}
-		app.playerChromeKnown = true
-		app.mu.Unlock()
-		app.Render(c)
-	})
-	save(t, "player-episode-drawer", func(c *ui.Context) {
-		app := NewTestApp()
-		app.SetMediaHost(&MediaHost{})
-		app.view = "detail"
-		app.detail = Detail{ID: "123456", Episodes: make([]CatalogItem, 24)}
-		for index := range app.detail.Episodes {
-			app.detail.Episodes[index] = CatalogItem{ID: fmt.Sprintf("e%d", index+1), EpisodeCount: index + 1}
-		}
-		app.PlayDetail()
-		app.mu.Lock()
-		app.playerFixture = true
-		app.mediaOn = true
-		app.mediaSession = 1
-		app.playerDrawerOpen = true
-		app.playerChrome = PlayerChrome{Visible: true, ControlsVisible: true, Episode: 1, TotalEpisodes: 24, Quality: ControlFrame{X: 398, Y: 536, W: 52, H: 28}, Speed: ControlFrame{X: 458, Y: 536, W: 52, H: 28}, Drawer: ControlFrame{X: 618, Y: 536, W: 72, H: 28}}
-		app.playerChromeKnown = true
-		app.mu.Unlock()
 		app.Render(c)
 	})
 }

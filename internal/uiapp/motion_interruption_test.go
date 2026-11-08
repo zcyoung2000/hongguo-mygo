@@ -21,47 +21,6 @@ func TestHoverFeedbackUsesAnimateColorAndSnappyPress(t *testing.T) {
 	}
 }
 
-func TestPlayerDrawerUsesSymmetricRightSideTransition(t *testing.T) {
-	app := NewTestApp()
-	app.SetMediaHost(&MediaHost{})
-	app.PlayDetail()
-	app.mu.Lock()
-	app.mediaOn = true
-	app.playerChrome = PlayerChrome{
-		Visible: true, ControlsVisible: true, Episode: 1, TotalEpisodes: 2,
-		Quality: ControlFrame{X: 500, Y: 700, W: 52, H: 28},
-		Speed:   ControlFrame{X: 560, Y: 700, W: 52, H: 28},
-		Drawer:  ControlFrame{X: 760, Y: 700, W: 72, H: 28},
-	}
-	app.playerChromeKnown = true
-	app.playerDrawerOpen = true
-	app.mu.Unlock()
-
-	tester := ui.NewTester(app.Render, 1000, 720)
-	tester.Frame()
-	drawer, visible := tester.Find("选集播放")
-	if !visible {
-		t.Fatal("drawer did not enter")
-	}
-	if drawer.X+drawer.W <= float32(1000-playerDrawerMaxWidth) {
-		t.Fatalf("drawer lost its right-side geometry: %+v", drawer)
-	}
-
-	app.closePlayerDrawer()
-	tester.Frame()
-	tester.Advance(240 * time.Millisecond)
-	tester.Frame()
-	if tester.HasText("选集播放") {
-		t.Fatal("drawer exit animation did not settle")
-	}
-	if tester.FramePending() {
-		t.Fatal("closed drawer still requested rebuild frames")
-	}
-	if drawerTransition.Duration != 240*time.Millisecond || !drawerTransition.Position || drawerTransition.Size {
-		t.Fatal("drawer transition must be symmetric 240ms position motion")
-	}
-}
-
 func TestInteractionTransitionsSettleWithoutContinuousFrames(t *testing.T) {
 	app := NewTestApp()
 	app.search.Items = []CatalogItem{{ID: "123456", EpisodeID: "654321", Title: "反馈稳定样本"}}

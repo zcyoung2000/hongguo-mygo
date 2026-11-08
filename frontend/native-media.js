@@ -5,7 +5,6 @@
   document.addEventListener('DOMContentLoaded', () => {
     document.body.classList.add('native-media');
     observeFeedChrome();
-    observePlayerChrome();
     notify('MediaReady');
     const width = Number(localStorage.getItem('hongguo_sidebar_width'));
     if (width >= 160 && width <= 420) notify('ImportSidebarWidth', width);
@@ -24,14 +23,12 @@
     const bar = document.getElementById('feed-cat-bar');
     const feed = document.getElementById('feed-container');
     const page = document.getElementById('view-recommend');
-    const player = document.getElementById('player-modal');
     if (!bar || !feed || !page) return;
     let last = '';
     const sync = () => {
       const rect = bar.getBoundingClientRect();
       const visible = state.currentView === 'recommend'
         && !document.fullscreenElement
-        && (!player || player.style.display === 'none')
         && !feed.classList.contains('clearscreen')
         && !bar.classList.contains('clearscreen')
         && getComputedStyle(bar).display !== 'none';
@@ -43,61 +40,11 @@
       notify('FeedChromeChanged', value);
     };
     const observer = new MutationObserver(sync);
-    for (const node of [document.body, feed, page, bar, player]) {
+    for (const node of [document.body, feed, page, bar]) {
       if (node) observer.observe(node, {attributes: true, attributeFilter: ['class', 'style']});
     }
     window.addEventListener('resize', sync);
     document.addEventListener('fullscreenchange', sync);
-    sync();
-  }
-  const frameOf = node => {
-    if (!node) return {x: 0, y: 0, w: 0, h: 0};
-    const rect = node.getBoundingClientRect();
-    return {
-      x: Math.max(0, Math.round(rect.left)),
-      y: Math.max(0, Math.round(rect.top)),
-      w: Math.round(rect.width),
-      h: Math.round(rect.height)
-    };
-  };
-  function observePlayerChrome() {
-    const modal = document.getElementById('player-modal');
-    if (!modal) return;
-    let last = '';
-    const hidden = () => ({
-      visible: false, controlsVisible: false, quality: frameOf(), speed: frameOf(),
-      drawer: frameOf(), qualityLabel: '', qualityOptions: [], speedValue: 1, episode: 0, totalEpisodes: 0
-    });
-    const sync = () => {
-      const value = modal.style.display === 'none' ? hidden() : (() => {
-        const quality = document.getElementById('player-quality');
-        const speed = document.getElementById('player-speed');
-        const drawerToggle = document.getElementById('player-drawer-toggle');
-        const controls = document.querySelector('#player-stage .feed-controls');
-        const activeQuality = state.player.qualityOptions.find(option => option.active)
-          || {label: qualityLabel(state.player.quality)};
-        return {
-          visible: true,
-          controlsVisible: Boolean(controls && controls.getBoundingClientRect().height > 0 && getComputedStyle(controls).visibility !== 'hidden' && !modal.classList.contains('controls-hidden')),
-          quality: frameOf(quality),
-          speed: frameOf(speed),
-          drawer: frameOf(drawerToggle),
-          qualityLabel: activeQuality.label || '720P',
-          qualityOptions: state.player.qualityOptions || [],
-          speedValue: Number(state.player.playbackSpeed) || 1,
-          episode: Number(state.player.episodeNum) || 1,
-          totalEpisodes: Number(state.player.totalEpisodes) || 0
-        };
-      })();
-      const signature = JSON.stringify(value);
-      if (signature === last) return;
-      last = signature;
-      notify('PlayerChromeChanged', value);
-    };
-    window.__syncPlayerChromeState = sync;
-    const observer = new MutationObserver(sync);
-    for (const node of [modal, document.body]) observer.observe(node, {attributes: true, attributeFilter: ['class', 'style']});
-    window.addEventListener('resize', sync);
     sync();
   }
   window.nativeMediaEvent = payload => {
@@ -107,13 +54,11 @@
           changingScene = true;
           // Change view first so closePlayer cannot resume the hidden feed.
           switchView('native-idle', false);
-          closePlayer();
           changingScene = false;
           break;
         case 'recommend':
           changingScene = true;
           switchView('native-idle', false);
-          closePlayer();
           changingScene = false;
           // Preserve the selected native channel across navigation and renderer
           // recovery. loadRecommend keeps using the existing feed loader.
@@ -127,16 +72,22 @@
         case 'settings':
           changingScene = true;
           switchView('native-idle', false);
-          closePlayer();
           changingScene = false;
           switchView('settings', false);
           break;
         case 'play':
           activeSession = payload.session || 0;
-          switchView('native-idle', false);
-          openPlayer(payload.seriesId, payload.episodeNum || 1, payload.resumeAt ?? null)
+          switchView('recommend', false);
+          enterSeriesPlayer(payload.seriesId, payload.episodeNum || 1)
+            .then(() => {
+              const resumeAt = Number(payload.resumeAt);
+              if (Number.isFinite(resumeAt) && resumeAt > 0) {
+                const feedVideo = getFeedVideo();
+                if (feedVideo && Number.isFinite(feedVideo.duration)) feedVideo.currentTime = resumeAt;
+              }
+            })
             .catch(error => {
-              console.error('[native-media] openPlayer failed:', error);
+              console.error('[native-media] enterSeriesPlayer failed:', error);
               showToast(String(error));
               closeNativeMedia();
             });
@@ -144,7 +95,6 @@
         case 'detail':
           changingScene = true;
           switchView('native-idle', false);
-          closePlayer();
           changingScene = false;
           switchView('detail', false);
           break;
@@ -165,20 +115,20 @@ function applyPlayerControlPayload(payload) {
   if (payload.event === 'command') {
     switch (payload.command) {
       case 'quality':
-        if (typeof payload.value === 'string') changePlaybackQuality(payload.value);
+        if (typeof payload.value === 'string') changeFeedPlaybackQuality(payload.value);
         return;
       case 'speed': {
         const speed = Number(payload.value);
         if ([0.75, 1, 1.25, 1.5, 2].includes(speed)) {
-          state.player.playbackSpeed = speed;
-          video.playbackRate = speed;
-          window.__syncPlayerChromeState?.();
+          state.feed.playbackSpeed = speed;
+          const feedVideo = getFeedVideo();
+          if (feedVideo) feedVideo.playbackRate = speed;
         }
         return;
       }
       case 'episode': {
         const episode = Number(payload.value);
-        if (Number.isInteger(episode) && episode >= 1 && episode <= state.player.totalEpisodes) playEpisodeNumber(episode);
+        if (Number.isInteger(episode) && episode >= 1 && episode <= state.feed.totalEpisodes) enterSeriesPlayer(state.feed.seriesId, episode);
         return;
       }
       default:
@@ -186,7 +136,7 @@ function applyPlayerControlPayload(payload) {
     }
     return;
   }
-  if (payload.event === 'quality') changePlaybackQuality(payload.value);
+  if (payload.event === 'quality') changeFeedPlaybackQuality(payload.value);
   if (payload.event === 'speed') applyPlayerControlPayload({event: 'command', command: 'speed', value: payload.value});
   if (payload.event === 'episode') applyPlayerControlPayload({event: 'command', command: 'episode', value: payload.value});
 }

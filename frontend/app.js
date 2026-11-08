@@ -725,11 +725,11 @@ let videoFitObserver = null;
 let videoFitFrame = 0;
 
 function playbackVideoFitBox(video) {
-  return video?.closest('.feed-slide-layer, .video-container') || video?.parentElement || null;
+  return video?.closest('.feed-slide-layer') || video?.parentElement || null;
 }
 
 function syncPlaybackVideosFit() {
-  document.querySelectorAll('.feed-video, #main-video').forEach(syncPlaybackVideoFit);
+  document.querySelectorAll('.feed-video').forEach(syncPlaybackVideoFit);
 }
 
 function schedulePlaybackVideoFit() {
@@ -779,10 +779,6 @@ function syncPlaybackVideoFit(video) {
   video.style.height = `${Math.max(1, Math.round(sourceHeight * scale))}px`;
 }
 
-function syncPlayerChromeState() {
-  window.__syncPlayerChromeState?.();
-}
-
 function resetPlaybackVideoFit(video) {
   if (!video) return;
   video.style.removeProperty('width');
@@ -792,10 +788,7 @@ function resetPlaybackVideoFit(video) {
 
 function shouldCaptureFeedScroll() {
   const drawer = document.getElementById('feed-playlist-drawer');
-  const modal = document.getElementById('player-modal');
-  const drawerOpen = Boolean(drawer?.classList.contains('open'));
-  const modalOpen = Boolean(modal && modal.style.display !== 'none');
-  return state.currentView === 'recommend' && !drawerOpen && !modalOpen && !commentState.open;
+  return state.currentView === 'recommend' && !drawer?.classList.contains('open') && !commentState.open;
 }
 
 function syncFeedScrollCapture() {
@@ -986,7 +979,7 @@ function hasWarmFeedHLS(playback) {
     feedWarmupSession?.pendingMedia?.has(key));
 }
 
-async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = null, primeFirstFrame = false, quality = null) {
+async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = null, primeFirstFrame = false, quality = null, episodeNum = 1, episodeId = '') {
   if (!slot || !slot.video) return null;
   if (itemIndex < 0 || itemIndex >= state.feed.items.length) {
     clearFeedSlot(slot);
@@ -996,7 +989,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
   const drama = state.feed.items[itemIndex];
   if (!drama) return null;
   const requestedQuality = quality || feedQualityForItem(itemIndex);
-  const requestedKey = feedAssetKey(drama.id, 1, requestedQuality);
+  const requestedKey = feedAssetKey(drama.id, episodeNum, requestedQuality);
 
   if (slot.preparing && slot.itemIndex === itemIndex && slot.seriesId === drama.id &&
       (slot.quality === requestedQuality || slot.requestedQuality === requestedQuality)) {
@@ -1024,11 +1017,11 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
   slot.metricPreparedAt = performance.now();
   slot.itemIndex = itemIndex;
   slot.seriesId = drama.id;
-  slot.episodeNum = 1;
+  slot.episodeNum = episodeNum;
   slot.quality = requestedQuality;
   slot.requestedQuality = requestedQuality;
   slot.video.dataset.seriesId = String(drama.id);
-  slot.video.dataset.episodeNum = '1';
+    slot.video.dataset.episodeNum = String(episodeNum);
 
   if (slot.poster) {
     slot.poster.style.backgroundImage = safeImageCSS(drama.coverUrl);
@@ -1040,7 +1033,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     // Metadata prefetch and the visible slot share one load. Warm slots keep
     // their HLS rendition; a foreground cold start can consume MP4 fragments
     // before the next source keyframe closes a complete HLS segment.
-    const pb = await prefetchFeedPlaybackInfo(itemIndex, true, requestedQuality);
+    const pb = await prefetchFeedPlaybackInfo(itemIndex, true, requestedQuality, episodeNum, episodeId);
     if (loadToken !== slot.loadToken) return;
     if (!pb || !pb.streamUrl) {
       if (feedSlots[feedSlotCurr] === slot) reportFeedFailure(slot, '获取播放流失败');
@@ -1050,7 +1043,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     const selectedQuality = pb.quality || requestedQuality;
     rememberFeedQuality(drama.id, selectedQuality);
     rememberFeedPlayback(requestedKey, pb);
-    rememberFeedPlayback(feedAssetKey(drama.id, 1, selectedQuality), pb);
+    rememberFeedPlayback(feedAssetKey(drama.id, episodeNum, selectedQuality), pb);
 
     slot.episodeId = pb.episodeId || '';
     slot.episodeNum = pb.episodeNum || 1;
@@ -1281,10 +1274,10 @@ function cancelScheduledFeedWarmup({ releaseMedia = true } = {}) {
   }
 }
 
-function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true, quality = feedQualityForItem(itemIndex)) {
+function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true, quality = feedQualityForItem(itemIndex), episodeNum = 1, episodeId = '') {
   const drama = state.feed.items[itemIndex];
   if (!drama) return null;
-  const key = feedAssetKey(drama.id, 1, quality);
+  const key = feedAssetKey(drama.id, episodeNum, quality);
   const generation = feedPlaybackGeneration;
   const cached = state.feed.preloadMap.get(key);
   if (cached && cached.expiresAt > Date.now() && (!preferHLS || cached.isFullCached || cached.hlsStreamUrl)) return Promise.resolve(cached);
@@ -1301,13 +1294,13 @@ function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true, quality = feedQua
   }
 
   const requestedAt = performance.now();
-  const load = apiCall('PlayEpisode', drama.id, '', 1, quality, preferHLS)
+  const load = apiCall('PlayEpisode', drama.id, episodeId, episodeNum, quality, preferHLS)
     .then(playback => {
       if (generation !== feedPlaybackGeneration) return null;
       if (playback?.streamUrl) {
         playback.expiresAt = Date.now() + 10 * 60 * 1000;
         rememberFeedPlayback(key, playback);
-        rememberFeedPlayback(feedAssetKey(drama.id, 1, playback.quality || quality), playback);
+        rememberFeedPlayback(feedAssetKey(drama.id, episodeNum, playback.quality || quality), playback);
       }
       return playback;
     })
@@ -1883,43 +1876,27 @@ function setPlaybackKeepAwake(active) {
 }
 
 function updatePiPButtons() {
-  const playerModal = document.getElementById('player-modal');
-  const isDetail = playerModal && playerModal.style.display !== 'none';
-  const target = isDetail ? video : getFeedVideo();
+  const target = getFeedVideo();
   const inPiP = !!document.pictureInPictureElement || (target && target.webkitPresentationMode === 'picture-in-picture');
   const feedPipBtn = document.getElementById('feed-pip');
-  const ctrlPipBtn = document.getElementById('player-pip');
   if (feedPipBtn) {
     feedPipBtn.classList.toggle('active', !!inPiP);
     feedPipBtn.title = inPiP ? '退出画中画 (P)' : '画中画 (P)';
   }
-  if (ctrlPipBtn) {
-    ctrlPipBtn.classList.toggle('active', !!inPiP);
-    ctrlPipBtn.title = inPiP ? '退出画中画 (P)' : '画中画 (P)';
-  }
 }
 
 function togglePictureInPicture() {
-  const playerModal = document.getElementById('player-modal');
-  const isDetail = playerModal && playerModal.style.display !== 'none';
-  const targetVideo = isDetail ? video : getFeedVideo();
-
+  const targetVideo = getFeedVideo();
   if (!targetVideo) {
     showToast('未找到可播放视频');
     return;
   }
-
   const inStandardPiP = !!document.pictureInPictureElement;
   const inWebkitPiP = targetVideo.webkitPresentationMode === 'picture-in-picture';
-
   if (inStandardPiP || inWebkitPiP) {
     if (inWebkitPiP && typeof targetVideo.webkitSetPresentationMode === 'function') {
-      try {
-        targetVideo.webkitSetPresentationMode('inline');
-        return;
-      } catch (err) {
-        console.warn('webkitSetPresentationMode(inline) failed:', err);
-      }
+      try { targetVideo.webkitSetPresentationMode('inline'); } catch (err) { console.warn(err); }
+      return;
     }
     if (inStandardPiP && typeof document.exitPictureInPicture === 'function') {
       document.exitPictureInPicture().catch(() => {});
@@ -1928,48 +1905,29 @@ function togglePictureInPicture() {
     apiCall('TogglePictureInPicture').catch(() => {});
     return;
   }
-
   if (!targetVideo.currentSrc && !targetVideo.src) {
     showToast('视频尚未加载');
     return;
   }
-
-  // 1. WebKit presentation mode (Safari/WKWebView native API)
   if (typeof targetVideo.webkitSetPresentationMode === 'function') {
-    try {
-      targetVideo.webkitSetPresentationMode('picture-in-picture');
-      return;
-    } catch (err) {
-      console.warn('webkitSetPresentationMode failed:', err);
-    }
+    try { targetVideo.webkitSetPresentationMode('picture-in-picture'); return; }
+    catch (err) { console.warn(err); }
   }
-
-  // 2. Standard W3C requestPictureInPicture
   if (typeof targetVideo.requestPictureInPicture === 'function') {
-    targetVideo.requestPictureInPicture().catch((err) => {
-      console.warn('requestPictureInPicture failed:', err);
-      // 3. Fallback to MyGo backend toggle
-      apiCall('TogglePictureInPicture').catch((backendErr) => {
-        console.warn('Backend TogglePictureInPicture failed:', backendErr);
-        showToast('画中画启动失败');
-      });
+    targetVideo.requestPictureInPicture().catch(err => {
+      console.warn(err);
+      apiCall('TogglePictureInPicture').catch(() => {});
     });
     return;
   }
-
-  // 3. Fallback to MyGo backend toggle
-  apiCall('TogglePictureInPicture').catch((err) => {
-    console.warn('Backend TogglePictureInPicture failed:', err);
-    showToast('当前环境不支持画中画');
-  });
+  apiCall('TogglePictureInPicture').catch(() => {});
 }
 
 function handleMediaCommand(payload) {
       const cmd = payload?.command;
       if (!cmd) return;
 
-      const playerModal = document.getElementById('player-modal');
-      const isDetailOpen = playerModal && playerModal.style.display !== 'none';
+          const isDetailOpen = playerModal && playerModal.style.display !== 'none';
 
       if (cmd === 'toggle') {
         if (isDetailOpen) {
@@ -2043,14 +2001,8 @@ document.addEventListener('DOMContentLoaded', () => {
     target: document.getElementById('feed-container'),
     drawerTitle: '选集播放'
   });
-  mountPlayerChrome({
-    prefix: 'player',
-    target: document.getElementById('player-stage'),
-    drawerTitle: '选集播放'
-  });
   initFeedVideoPool();
   initFeedControls();
-  initPlayerControls();
   initCommentSheet();
   initDanmaku();
   initSettingsEvents();
@@ -2078,10 +2030,9 @@ function applyFavoriteState(seriesId, favorite) {
   window.nativeMediaNotify?.("LibraryChanged");
   const changes = state.favoriteChanges || (state.favoriteChanges = {});
   changes[seriesId] = { revision: (changes[seriesId]?.revision || 0) + 1, value: favorite };
-  for (const [scene, buttonId] of [['feed', 'feed-fav'], ['player', 'player-fav']]) {
-    if (state[scene]?.seriesId !== seriesId) continue;
-    state[scene].isFavorite = favorite;
-    document.getElementById(buttonId)?.classList.toggle('active', favorite);
+  if (state.feed.seriesId === seriesId) {
+    state.feed.isFavorite = favorite;
+    document.getElementById('feed-fav')?.classList.toggle('active', favorite);
   }
   if (!favorite) {
   }
@@ -2089,10 +2040,9 @@ function applyFavoriteState(seriesId, favorite) {
 
 function applyLikeState(seriesId, episodeId, liked) {
   window.nativeMediaNotify?.("LibraryChanged");
-  for (const [scene, buttonId] of [['feed', 'feed-like'], ['player', 'player-like']]) {
-    if (state[scene]?.seriesId !== seriesId || state[scene]?.episodeId !== episodeId) continue;
-    state[scene].isLiked = liked;
-    document.getElementById(buttonId)?.classList.toggle('active', liked);
+  if (state.feed.seriesId === seriesId && state.feed.episodeId === episodeId) {
+    state.feed.isLiked = liked;
+    document.getElementById('feed-like')?.classList.toggle('active', liked);
   }
   if (!liked) {
   }
@@ -2136,8 +2086,6 @@ let feedNextDramaTimer = null;
 
 function resumeFeedPlayback() {
   if (state.currentView !== 'recommend') return;
-  const modal = document.getElementById('player-modal');
-  if (modal && modal.style.display !== 'none') return;
   if (state.feed.userPaused) {
     updateFeedPlayIndicator();
     return;
@@ -2756,7 +2704,7 @@ function loadFeedDramaMetadata(drama) {
   }).catch(() => false);
 }
 
-async function playFeedIndex(idx, resumeAt = null) {
+async function playFeedIndex(idx, resumeAt = null, episodeNum = 1, episodeId = '') {
   if (idx < 0 || idx >= state.feed.items.length) return;
   const drama = state.feed.items[idx];
   if (!drama) return;
@@ -2766,7 +2714,7 @@ async function playFeedIndex(idx, resumeAt = null) {
 
   if (state.currentView !== 'recommend') return;
 
-  await prepareFeedSlot(currentSlot, idx, true, resumeAt);
+  await prepareFeedSlot(currentSlot, idx, true, resumeAt, false, null, episodeNum, episodeId);
 
   if (
     state.currentView === 'recommend' &&
@@ -3324,35 +3272,37 @@ function switchFeedDrama(dir, request = null) {
 }
 
 async function enterSeriesPlayer(seriesId, episodeNum) {
-  const modal = document.getElementById('player-modal');
-  if (!seriesId || (modal && modal.style.display !== 'none')) return;
-
-  // If feed (or another element) is currently in fullscreen mode, exit it
-  // so the player modal can take over the viewport without being trapped.
-  if (document.fullscreenElement && document.fullscreenElement !== document.getElementById('player-stage')) {
-    try {
-      await document.exitFullscreen();
-    } catch (err) {
-      console.warn('exitFullscreen failed in enterSeriesPlayer:', err);
-    }
-  }
-
+  if (!seriesId) return;
   clearCommentSceneLayout();
-  inheritFeedPlaybackSpeed();
-
   feedPlayToken++;
   cancelScheduledFeedWarmup();
   cancelPendingFeedSwitch();
   pauseFeedPlayback();
-  state.feed.userPaused = true;
+  state.feed.userPaused = false;
 
   const drawer = document.getElementById('feed-playlist-drawer');
   drawer?.classList.remove('open');
 
-  openPlayer(seriesId, episodeNum).catch(err => {
-    console.error('enterSeriesPlayer error:', err);
-    showToast('打开播放器失败: ' + err);
-  });
+  let index = state.feed.seriesId === seriesId ? state.feed.index : state.feed.items.findIndex(item => item.id === seriesId);
+  let episodes = state.feed.seriesId === seriesId ? state.feed.episodes : [];
+  if (index < 0) {
+    const detail = await apiCall('GetSeriesDetail', seriesId);
+    if (!detail) throw new Error('获取短剧详情失败');
+    episodes = detail.episodes || [];
+    index = Math.max(0, state.feed.index || 0);
+    state.feed.items.splice(index, 0, {
+      id: seriesId,
+      title: detail.title || seriesId,
+      coverUrl: detail.coverUrl || '',
+      description: detail.description || '',
+      heat: detail.heat || ''
+    });
+  }
+
+  const targetEpisode = Math.max(1, Number(episodeNum) || 1);
+  const episodeId = episodes.find(episode => episode.number === targetEpisode)?.id || '';
+  state.feed.episodes = episodes;
+  await playFeedIndex(index, null, targetEpisode, episodeId);
 }
 
 function clearCommentSceneLayout() {
@@ -3365,19 +3315,6 @@ function clearCommentSceneLayout() {
   if (overlay) overlay.style.display = 'none';
   restoreCommentOverlay();
   document.body.classList.remove('comments-open');
-}
-
-function inheritFeedPlaybackSpeed() {
-  const speed = Number(state.feed.playbackSpeed) || 1;
-  state.player.playbackSpeed = speed;
-
-  const speedButton = document.getElementById('player-speed');
-  const speedMenu = document.getElementById('player-speed-menu');
-  if (speedButton) speedButton.textContent = `${speed}x`;
-  if (!speedMenu) return;
-  speedMenu.querySelectorAll('.speed-opt').forEach(option => {
-    option.classList.toggle('active', Number(option.dataset.speed) === speed);
-  });
 }
 
 function renderFeedPlaylistDrawer() {
@@ -3465,11 +3402,6 @@ function scrollActiveDrawerEpisode(gridId, episodeNum) {
   grid.scrollTop = Math.max(0, targetTop - (grid.clientHeight - btn.clientHeight) / 2);
 }
 
-function collapsePlayerDrawerEpisodes() {
-  state.player.episodesExpanded = false;
-  state.player.episodeCollapse?.collapse();
-}
-
 function renderFeedQualityMenu() {
   const qualityBtn = document.getElementById('feed-quality');
   const qualityMenu = document.getElementById('feed-quality-menu');
@@ -3514,13 +3446,7 @@ async function changeFeedPlaybackQuality(quality) {
   await playFeedIndex(state.feed.index || 0, resumeAt);
 }
 
-function danmakuContext(source) {
-  if (source === 'player') {
-    const modal = document.getElementById('player-modal');
-    if (!modal || modal.style.display === 'none' ||
-        !state.player.seriesId || !state.player.episodeId) return null;
-    return { seriesId: state.player.seriesId, episodeId: state.player.episodeId };
-  }
+function danmakuContext() {
   if (!state.feed.seriesId || !state.feed.episodeId) return null;
   return { seriesId: state.feed.seriesId, episodeId: state.feed.episodeId };
 }
@@ -3541,7 +3467,7 @@ function initDanmaku() {
     likeItem: async (item, liked) => {
       if (String(item.id || '').startsWith('local-')) return undefined;
       try {
-        return await apiCall('LikeDanmaku', danmakuContext('feed')?.episodeId || state.player.episodeId, item.id, liked);
+        return await apiCall('LikeDanmaku', state.feed.episodeId, item.id, liked);
       } catch (err) {
         showToast(String(err.message || err));
         return undefined;
@@ -3556,31 +3482,13 @@ function initDanmaku() {
     getVideo: getFeedVideo,
     getContext: () => danmakuContext('feed'),
   });
-  danmakuControllers.player = new DanmakuController({
-    ...common,
-    host: document.getElementById('video-container'),
-    getVideo: () => (document.getElementById('player-modal')?.style.display !== 'none' ? video : null),
-    getContext: () => danmakuContext('player'),
-  });
-  danmakuControllers.player.likeItem = async (item, liked) => {
-    if (String(item.id || '').startsWith('local-')) return undefined;
-    try {
-      return await apiCall('LikeDanmaku', state.player.episodeId, item.id, liked);
-    } catch (err) {
-      showToast(String(err.message || err));
-      return undefined;
-    }
-  };
-
   bindDanmakuControls('feed', danmakuControllers.feed, 'feed');
-  bindDanmakuControls('player', danmakuControllers.player, 'player');
 
   document.addEventListener('keydown', event => {
     if (event.key !== 'b' && event.key !== 'B') return;
     const target = event.target;
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-    const source = document.getElementById('player-modal')?.style.display !== 'none' ? 'player' : 'feed';
-    const controller = danmakuControllers[source];
+    const controller = danmakuControllers.feed;
     if (controller) setDanmakuEnabled(source, controller, !controller.enabled);
   });
 }
@@ -3686,7 +3594,7 @@ async function sendDanmakuInput(source, controller, input) {
   if (!controller || !input) return;
   const text = input.value.trim();
   if (!text) return;
-  const playbackVideo = source === 'player' ? document.getElementById('main-video') : getFeedVideo();
+  const playbackVideo = getFeedVideo();
   input.disabled = true;
   try {
     await controller.send(text, (playbackVideo?.currentTime || 0) * 1000);
@@ -3706,12 +3614,6 @@ function updateFeedCommentCount(count) {
   state.feed.commentCount = Number(count) || 0;
   const label = document.getElementById('feed-comment-count');
   if (label) label.textContent = formatCount(state.feed.commentCount, '评论');
-}
-
-function updatePlayerCommentCount(count) {
-  state.player.commentCount = Number(count) || 0;
-  const label = document.getElementById('player-comment-count');
-  if (label) label.textContent = formatCount(state.player.commentCount, '评论');
 }
 
 function commentRelativeTime(timestamp) {
@@ -3772,26 +3674,11 @@ function restoreCommentOverlay() {
   }
 }
 
-function mountCommentOverlay(source) {
-  const overlay = document.getElementById('comment-sheet-overlay');
-  if (!overlay) return;
-
-  const stage = document.getElementById('player-stage');
-  const modal = document.getElementById('player-modal');
-  modal?.classList.toggle('comments-open', source === 'player');
-  const isFullscreenPlayer = source === 'player' && stage
-    && (document.fullscreenElement === stage || stage.classList.contains('player-fullscreen'));
-  if (isFullscreenPlayer) {
-    stage.appendChild(overlay);
-  } else {
-    restoreCommentOverlay();
-  }
+function mountCommentOverlay() {
+  restoreCommentOverlay();
 }
-
-function getCommentVideo(source) {
-  return source === 'player'
-    ? document.getElementById('main-video')
-    : getFeedVideo();
+function getCommentVideo() {
+  return getFeedVideo();
 }
 
 function animateCommentVideo(source, fromRect) {
@@ -3893,9 +3780,6 @@ function applyCommentPage(page) {
   commentState.error = '';
   if (commentState.episodeNum === state.feed.episodeNum && commentState.seriesId === state.feed.seriesId) {
     updateFeedCommentCount(commentState.total);
-  }
-  if (commentState.episodeNum === state.player.episodeNum && commentState.seriesId === state.player.seriesId) {
-    updatePlayerCommentCount(commentState.total);
   }
 }
 
@@ -4169,7 +4053,6 @@ function renderCommentSheet() {
 
 function closeCommentSheet() {
   const source = commentState.source;
-  const playerModal = document.getElementById('player-modal');
   const fromVideoRect = getCommentVideo(source)?.getBoundingClientRect();
   const closeToken = commentState.requestToken + 1;
   commentState.open = false;
@@ -4178,7 +4061,6 @@ function closeCommentSheet() {
   const overlay = document.getElementById('comment-sheet-overlay');
   restoreCommentOverlay();
   document.body.classList.remove('comments-open');
-  playerModal?.classList.remove('comments-open');
   animateCommentVideo(source, fromVideoRect);
 
   if (overlay) {
@@ -4465,8 +4347,7 @@ function initFeedControls() {
         window.ambientGlow.stop();
       }
       if (state.currentView !== 'recommend') return;
-      const playerModal = document.getElementById('player-modal');
-      if (playerModal && playerModal.style.display !== 'none') return;
+          if (playerModal && playerModal.style.display !== 'none') return;
       persistFeedProgress();
       state.feed.playbackPositions.delete(
         feedPlaybackKey(state.feed.seriesId, state.feed.episodeNum, state.feed.quality)
@@ -4891,1001 +4772,20 @@ function initFeedControls() {
   }, 5000);
 }
 
-// ==========================================================================
-// Embedded Video Player Controller (WebView Player)
-// ==========================================================================
-
-const video = document.getElementById('main-video');
-
-function syncMainVideoOrientation() {
-  syncPlaybackVideoFit(video);
-}
-
-function updatePlayerPlayBadge() {
-  const centerBadge = document.getElementById('center-play-badge');
-  const videoContainer = document.getElementById('video-container');
-  const loader = document.getElementById('video-loader');
-  if (!centerBadge) return;
-
-  const isBuffering = state.player.loading || (loader && loader.style.display !== 'none');
-  if (videoContainer) {
-    videoContainer.classList.toggle('is-buffering', Boolean(isBuffering));
-    videoContainer.classList.toggle('is-loading', Boolean(state.player.loading));
-  }
-
-  // Never show play button when video is buffering, loading, or not user-paused
-  if (
-    state.player.userPaused &&
-    !isBuffering &&
-    video &&
-    video.src &&
-    video.readyState >= 2 &&
-    video.paused
-  ) {
-    centerBadge.style.display = 'flex';
-  } else {
-    centerBadge.style.display = 'none';
-  }
-}
-
-function clearPlayerVideo() {
-  playerPlaybackIdentity = null;
-  state.player.loading = true;
-  video.pause();
-  video.onloadedmetadata = null;
-  video.removeAttribute('src');
-  video.load();
-  resetPlaybackVideoFit(video);
-  updatePlayerPlayBadge();
-}
-
-function initPlayerControls() {
-  const modal = document.getElementById('player-modal');
-  const stageWrap = document.getElementById('player-stage');
-  const closeBtn = document.getElementById('btn-close-player');
-  const playPauseBtn = document.getElementById('player-play');
-  const iconPlay = playPauseBtn.querySelector('.icon-play');
-  const iconPause = playPauseBtn.querySelector('.icon-pause');
-  const prevBtn = document.getElementById('player-prev-ep');
-  const nextBtn = document.getElementById('player-next-ep');
-  const fullBtn = document.getElementById('player-fullscreen');
-  const pipBtn = document.getElementById('player-pip');
-  const drawerToggle = document.getElementById('player-drawer-toggle');
-  const drawer = document.getElementById('player-playlist-drawer');
-  const drawerController = createPlayerDrawerController({ drawer, drawerToggle });
-  const closeDrawer = drawerController.close;
-  const closeDrawerBtn = document.getElementById('player-close-drawer');
-  const speedBtn = document.getElementById('player-speed');
-  const speedMenu = document.getElementById('player-speed-menu');
-  const qualityBtn = document.getElementById('player-quality');
-  const qualityMenu = document.getElementById('player-quality-menu');
-  const centerBadge = document.getElementById('center-play-badge');
-  const progressBarWrap = document.getElementById('player-progress-wrap');
-  const progressCurrent = document.getElementById('player-progress-current');
-  const progressBuffer = document.getElementById('player-progress-buffer');
-  const timeDisplay = document.getElementById('player-time-display');
-  const timeTooltip = document.getElementById('player-time-tooltip');
-  const syncPlayerBufferIndicator = () => {
-    updatePlaybackBufferIndicator(video, progressBuffer, video.duration);
-  };
-
-  // Prevent any modal container accidental horizontal scrolling
-  modal.scrollLeft = 0;
-  modal.addEventListener('scroll', () => {
-    if (modal.scrollLeft !== 0) modal.scrollLeft = 0;
-  });
-  if (stageWrap) {
-    stageWrap.scrollLeft = 0;
-    stageWrap.addEventListener('scroll', () => {
-      if (stageWrap.scrollLeft !== 0) stageWrap.scrollLeft = 0;
-    });
-  }
-  const playerBody = modal.querySelector('.player-body');
-  if (playerBody) {
-    playerBody.scrollLeft = 0;
-    playerBody.addEventListener('scroll', () => {
-      if (playerBody.scrollLeft !== 0) playerBody.scrollLeft = 0;
-    });
-  }
-
-  let controlsHovered = false;
-  const controlsHoverTargets = [
-    document.querySelector('#player-stage .feed-rail'),
-    document.querySelector('#player-stage .feed-controls')
-  ].filter(Boolean);
-
-  const controlsAreLocked = () => (
-    video.paused ||
-    state.player.loading ||
-    document.body.classList.contains('comments-open') ||
-    modal.classList.contains('comments-open') ||
-    drawer.classList.contains('open') ||
-    qualityMenu.style.display !== 'none' ||
-    speedMenu.style.display !== 'none'
-  );
-
-  const clearControlsTimer = () => {
-    clearTimeout(modal.__controlsTimer);
-    modal.__controlsTimer = null;
-  };
-
-  const showPlayerControls = () => {
-    clearControlsTimer();
-    modal.classList.remove('controls-hidden');
-  };
-
-  const hidePlayerControls = () => {
-    clearControlsTimer();
-    if (controlsAreLocked()) return;
-    modal.classList.add('controls-hidden');
-  };
-
-  const schedulePlayerControlsHide = (delay = 3000) => {
-    clearControlsTimer();
-    if (modal.style.display === 'none' || controlsAreLocked()) return;
-    modal.__controlsTimer = setTimeout(() => {
-      if (controlsHovered || controlsAreLocked()) return;
-      hidePlayerControls();
-    }, delay);
-  };
-
-  const wakePlayerControls = () => {
-    showPlayerControls();
-    schedulePlayerControlsHide();
-  };
-
-  modal.addEventListener('pointermove', wakePlayerControls);
-  modal.addEventListener('pointerleave', schedulePlayerControlsHide);
-  controlsHoverTargets.forEach((target) => {
-    target.addEventListener('pointerenter', () => {
-      controlsHovered = true;
-      wakePlayerControls();
-    });
-    target.addEventListener('pointerleave', () => {
-      controlsHovered = false;
-      schedulePlayerControlsHide();
-    });
-  });
-
-  // Close player
-  if (closeBtn) closeBtn.addEventListener('click', closePlayer);
-
-  // Play/Pause
-  function togglePlay() {
-    if (video.paused) {
-      state.player.userPaused = false;
-      video.play().catch(e => console.log('play error:', e));
-    } else {
-      state.player.userPaused = true;
-      video.pause();
-    }
-    updatePlayerPlayBadge();
-  }
-
-  if (pipBtn) {
-    pipBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      togglePictureInPicture();
-    });
-  }
-
-  playPauseBtn.addEventListener('click', togglePlay);
-  document.getElementById('video-container').addEventListener('click', (e) => {
-    // Keep clicks on the drawer, rail, progress bar, menus and every other
-    // interactive descendant out of the media surface toggle.
-    const interactiveTarget = e.target?.closest?.(
-      '.feed-rail, .feed-controls, .feed-playlist-drawer, .danmaku-composer, .danmaku-settings-panel'
-    );
-    if (interactiveTarget || e.target !== video) return;
-    // One tap on the picture itself switches playback; double click keeps
-    // its fullscreen shortcut separate.
-    if (e.detail === 2) return;
-    togglePlay();
-    wakePlayerControls();
-  });
-
-  video.addEventListener('play', () => {
-    if (window.ambientGlow) {
-      window.ambientGlow.attach(video).start();
-    }
-    iconPlay.style.display = 'none';
-    iconPause.style.display = 'block';
-    state.player.userPaused = false;
-    updatePlayerPlayBadge();
-    wakePlayerControls();
-    setPlaybackKeepAwake(true);
-    const detail = state.player.seriesDetail || {};
-    updateNowPlayingState({
-      title: detail.title || state.player.seriesTitle || '红果短剧',
-      series: detail.title || state.player.seriesTitle || '红果短剧',
-      episode: state.player.episodeNum || 1,
-      duration: video.duration || 0,
-      position: video.currentTime || 0,
-      playing: true,
-      rate: video.playbackRate || 1.0,
-      coverUrl: detail.coverUrl || state.player.seriesCover || ''
-    });
-  });
-
-  video.addEventListener('pause', () => {
-    if (window.ambientGlow) {
-      window.ambientGlow.pause();
-    }
-    iconPlay.style.display = 'block';
-    iconPause.style.display = 'none';
-    updatePlayerPlayBadge();
-    setPlaybackKeepAwake(false);
-    const detail = state.player.seriesDetail || {};
-    updateNowPlayingState({
-      title: detail.title || state.player.seriesTitle || '红果短剧',
-      series: detail.title || state.player.seriesTitle || '红果短剧',
-      episode: state.player.episodeNum || 1,
-      duration: video.duration || 0,
-      position: video.currentTime || 0,
-      playing: false,
-      rate: video.playbackRate || 1.0,
-      coverUrl: detail.coverUrl || state.player.seriesCover || ''
-    });
-    wakePlayerControls();
-    persistProgress();
-  });
-
-  video.addEventListener('seeked', () => {
-    const detail = state.player.seriesDetail || {};
-    updateNowPlayingState({
-      title: detail.title || state.player.seriesTitle || '红果短剧',
-      series: detail.title || state.player.seriesTitle || '红果短剧',
-      episode: state.player.episodeNum || 1,
-      duration: video.duration || 0,
-      position: video.currentTime || 0,
-      playing: !video.paused,
-      rate: video.playbackRate || 1.0,
-      coverUrl: detail.coverUrl || state.player.seriesCover || ''
-    });
-  });
-
-  video.addEventListener('loadedmetadata', syncMainVideoOrientation);
-  attachPlaybackVideoFit(video);
-
-  video.addEventListener('waiting', () => {
-    if (window.ambientGlow) {
-      window.ambientGlow.pause();
-    }
-    document.getElementById('video-loader').style.display = 'grid';
-    document.getElementById('video-container')?.classList.add('is-buffering');
-    updatePlayerPlayBadge();
-  });
-
-  video.addEventListener('error', () => {
-    if (!state.player.loading) return;
-    const attempt = (state.player.loadRetries || 0) + 1;
-    if (attempt > 2) {
-      state.player.loading = false;
-      state.player.loadRetries = 0;
-      document.getElementById('video-loader').style.display = 'none';
-      document.getElementById('video-container')?.classList.remove('is-buffering', 'is-loading');
-      updatePlayerPlayBadge();
-      showToast('播放失败，请稍后重试');
-      return;
-    }
-    state.player.loadRetries = attempt;
-    showToast(`网络波动，自动重试 ${attempt}/2`);
-    setTimeout(() => {
-      if (!state.player.loading) return;
-      playEpisodeNumber(state.player.episodeNum, state.player.quality, video.currentTime || null, !state.player.userPaused);
-    }, 800);
-  });
-
-  video.addEventListener('playing', () => {
-    state.player.loading = false;
-    state.player.loadRetries = 0;
-    if (window.ambientGlow) {
-      window.ambientGlow.attach(video).start();
-    }
-    document.getElementById('video-loader').style.display = 'none';
-    document.getElementById('video-container')?.classList.remove('is-buffering', 'is-loading');
-    updatePlayerPlayBadge();
-  });
-
-  video.addEventListener('canplay', updatePlayerPlayBadge);
-  video.addEventListener('loadeddata', updatePlayerPlayBadge);
-
-  // Time & progress update
-  video.addEventListener('timeupdate', () => {
-    if (video.duration) {
-      const pct = (video.currentTime / video.duration) * 100;
-      progressCurrent.style.width = pct + '%';
-      timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
-    }
-  });
-
-  ['durationchange', 'loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'progress', 'seeking', 'seeked', 'timeupdate'].forEach(event => {
-    video.addEventListener(event, syncPlayerBufferIndicator);
-  });
-
-  ['emptied', 'loadstart'].forEach(event => {
-    video.addEventListener(event, () => updatePlaybackBufferIndicator(video, progressBuffer, 0));
-  });
-
-  ['enterpictureinpicture', 'leavepictureinpicture', 'webkitpresentationmodechanged'].forEach(evt => {
-    video.addEventListener(evt, updatePiPButtons);
-  });
-
-  // Seek on click
-  progressBarWrap.addEventListener('click', (e) => {
-    const rect = progressBarWrap.getBoundingClientRect();
-    const pos = (e.clientX - rect.left) / rect.width;
-    if (video.duration) {
-      video.currentTime = pos * video.duration;
-    }
-  });
-
-  progressBarWrap.addEventListener('mousemove', (e) => {
-    if (!video.duration || !timeTooltip) return;
-    const rect = progressBarWrap.getBoundingClientRect();
-    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    timeTooltip.textContent = formatTime(pos * video.duration);
-    timeTooltip.style.left = `${pos * 100}%`;
-    timeTooltip.style.display = 'block';
-  });
-
-  progressBarWrap.addEventListener('mouseleave', () => {
-    if (timeTooltip) timeTooltip.style.display = 'none';
-  });
-
-  // Next / Prev episode
-  nextBtn.addEventListener('click', () => {
-    if (state.player.episodeNum < state.player.totalEpisodes) {
-      playEpisodeNumber(state.player.episodeNum + 1);
-    } else if (state.player.seriesId) {
-      playNextSeason(state.player.seriesId, 'player').then(started => {
-        if (!started && state.player.seriesId) showToast('已经是最后一集');
-      });
-    } else {
-      showToast('已经是最后一集');
-    }
-  });
-
-  prevBtn.addEventListener('click', () => {
-    if (state.player.episodeNum > 1) {
-      playEpisodeNumber(state.player.episodeNum - 1);
-    } else {
-      showToast('已经是第一集');
-    }
-  });
-
-  // Autoplay next episode on video end
-  video.addEventListener('ended', () => {
-    if (window.ambientGlow) {
-      window.ambientGlow.stop();
-    }
-    persistProgress();
-    if (state.player.episodeNum < state.player.totalEpisodes) {
-      playEpisodeNumber(state.player.episodeNum + 1);
-    } else {
-      const seriesId = state.player.seriesId;
-      playNextSeason(seriesId, 'player').then(started => {
-        if (!started && state.player.seriesId === seriesId) showToast('全剧播放完毕');
-      });
-    }
-  });
-
-  // Speed selection
-  speedBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    speedMenu.style.display = speedMenu.style.display === 'none' ? 'block' : 'none';
-  });
-
-  speedMenu.querySelectorAll('.speed-opt').forEach(opt => {
-    opt.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const spd = parseFloat(opt.dataset.speed);
-      state.player.playbackSpeed = spd;
-      video.playbackRate = spd;
-      speedBtn.textContent = spd + 'x';
-      speedMenu.querySelectorAll('.speed-opt').forEach(o => o.classList.remove('active'));
-      opt.classList.add('active');
-      speedMenu.style.display = 'none';
-      wakePlayerControls();
-    });
-  });
-
-  document.addEventListener('click', (event) => {
-    if (!speedBtn.contains(event.target) && !speedMenu.contains(event.target)) {
-      speedMenu.style.display = 'none';
-    }
-  });
-
-  // Quality selection
-  if (qualityBtn && qualityMenu) {
-    qualityBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isOpen = qualityMenu.style.display === 'none';
-      qualityMenu.style.display = isOpen ? 'block' : 'none';
-      qualityBtn.setAttribute('aria-expanded', String(isOpen));
-    });
-
-    document.addEventListener('click', (event) => {
-      if (!qualityBtn.contains(event.target) && !qualityMenu.contains(event.target)) {
-        qualityMenu.style.display = 'none';
-        qualityBtn.setAttribute('aria-expanded', 'false');
-        wakePlayerControls();
-      }
-    });
-  }
-
-  // Fullscreen contains only the video stage and its controls. The browser
-  // hides sibling player chrome (topbar and playlist drawer) natively; the
-  // class fallback covers WebViews where Element Fullscreen is unavailable.
-  function togglePlayerFullscreen() {
-    if (!stageWrap) return;
-    const isFull = stageWrap.classList.contains('player-fullscreen');
-    if (isFull) {
-      stageWrap.classList.remove('player-fullscreen');
-      modal?.classList.remove('player-is-fullscreen');
-      if (document.fullscreenElement) {
-        document.exitFullscreen?.().catch(() => {});
-      }
-    } else {
-      stageWrap.classList.add('player-fullscreen');
-      modal?.classList.add('player-is-fullscreen');
-    }
-    schedulePlaybackVideoFit();
-    try {
-      if (window.mygo?.window?.toggleFullScreen) {
-        window.mygo.window.toggleFullScreen();
-      } else if (window.mygo?.currentWindow?.toggleFullScreen) {
-        window.mygo.currentWindow.toggleFullScreen();
-      } else if (window.nativeMediaNotify) {
-        window.nativeMediaNotify('ToggleFullscreen');
-      } else {
-        window.mygo?.call?.('NativeShell.ToggleFullscreen');
-      }
-    } catch (e) {
-      console.warn('toggleFullScreen failed:', e);
-    }
-  }
-
-  const vContainer = document.getElementById('video-container');
-  if (vContainer) {
-    vContainer.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      togglePlayerFullscreen();
-    });
-  }
-
-  document.addEventListener('fullscreenchange', () => {
-    if (!document.fullscreenElement) {
-      stageWrap.classList.remove('player-fullscreen');
-    }
-    wakePlayerControls();
-  });
-
-  fullBtn.addEventListener('click', togglePlayerFullscreen);
-
-  if (closeDrawerBtn) closeDrawerBtn.addEventListener('click', closeDrawer);
-
-  // Toggle Drawer
-  drawerToggle.addEventListener('click', () => {
-    const willOpen = !drawer.classList.contains('open');
-    drawer.classList.toggle('open', willOpen);
-    drawerToggle.setAttribute('aria-expanded', String(willOpen));
-    if (willOpen) {
-      state.player.episodeCollapse?.measure();
-    }
-    wakePlayerControls();
-  });
-
-  document.addEventListener('click', (event) => {
-    drawerController.handleDocumentClick(event);
-  });
-
-  // Favorite toggle
-  const favBtn = document.getElementById('player-fav');
-  const commentBtn = document.getElementById('player-comment');
-  favBtn.addEventListener('click', async () => {
-    if (!state.player.seriesId || state.player.detailLoading || favBtn.disabled) return;
-    const { seriesId, seriesTitle, seriesCover, totalEpisodes } = state.player;
-    favBtn.disabled = true;
-    try {
-      const isNowFav = await apiCall('ToggleFavorite', seriesId, seriesTitle, seriesCover, '', totalEpisodes);
-      applyFavoriteState(seriesId, Boolean(isNowFav));
-      showToast(isNowFav ? '已加入收藏' : '已取消收藏');
-    } catch (err) {
-      showToast('收藏失败: ' + err);
-    } finally {
-      favBtn.disabled = false;
-    }
-  });
-
-  // Like toggle
-  const likeBtn = document.getElementById('player-like');
-  likeBtn.addEventListener('click', async () => {
-    if (!state.player.episodeId || state.player.detailLoading || likeBtn.disabled) return;
-    const { seriesId, episodeId, seriesTitle, seriesCover, episodeNum } = state.player;
-    likeBtn.disabled = true;
-    try {
-      const isNowLiked = await apiCall('ToggleLike', seriesId, episodeId, seriesTitle, seriesCover, episodeNum);
-      applyLikeState(seriesId, episodeId, Boolean(isNowLiked));
-      showToast(isNowLiked ? '已点赞' : '已取消点赞');
-    } catch (err) {
-      showToast('点赞失败: ' + err);
-    } finally {
-      likeBtn.disabled = false;
-    }
-  });
-
-  commentBtn.addEventListener('click', () => {
-    openCommentSheet({
-      source: 'player',
-      seriesId: state.player.seriesId,
-      episodeId: state.player.episodeId,
-      episodeNum: state.player.episodeNum,
-      title: state.player.seriesTitle,
-      count: state.player.commentCount
-    });
-  });
-
-  // Keyboard shortcuts
-  document.addEventListener('keydown', (e) => {
-    if (modal.style.display === 'none') return;
-    const targetTag = e.target.tagName;
-    if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || e.target.isContentEditable) return;
-
-    switch (e.code) {
-      case 'Space':
-        e.preventDefault();
-        togglePlay();
-        break;
-      case 'ArrowLeft':
-        e.preventDefault();
-        video.currentTime = Math.max(0, video.currentTime - 5);
-        showToast('-5s');
-        break;
-      case 'ArrowRight':
-        e.preventDefault();
-        video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
-        showToast('+5s');
-        break;
-      case 'ArrowUp':
-        e.preventDefault();
-        video.volume = Math.min(1, video.volume + 0.1);
-        showToast(`音量: ${Math.round(video.volume * 100)}%`);
-        break;
-      case 'ArrowDown':
-        e.preventDefault();
-        video.volume = Math.max(0, video.volume - 0.1);
-        showToast(`音量: ${Math.round(video.volume * 100)}%`);
-        break;
-      case 'KeyF':
-        e.preventDefault();
-        fullBtn.click();
-        break;
-      case 'KeyP':
-        e.preventDefault();
-        togglePictureInPicture();
-        break;
-      case 'Escape':
-        e.preventDefault();
-        if (drawer.classList.contains('open')) {
-          drawer.classList.remove('open');
-          drawerToggle.setAttribute('aria-expanded', 'false');
-          return;
-        }
-        if (stageWrap.classList.contains('player-fullscreen')) {
-          togglePlayerFullscreen();
-          return;
-        }
-        if (document.fullscreenElement) {
-          document.exitFullscreen().catch(err => console.log(err));
-          return;
-        }
-        closePlayer();
-        break;
-    }
-  });
-
-  // Auto-save progress every 5 seconds
-  setInterval(() => {
-    if (modal.style.display !== 'none' && !video.paused) {
-      persistProgress();
-    }
-  }, 5000);
-}
-
-function createPlayerDrawerController({ drawer, drawerToggle }) {
-  const close = () => {
-    drawer.classList.remove('open');
-    drawerToggle.setAttribute('aria-expanded', 'false');
-  };
-
-  const handleDocumentClick = (event) => {
-    if (!drawer.classList.contains('open')) return;
-    if (event.target?.closest?.(`#${drawer.id}, .drawer-collapse-wrap, .drawer-collapse`)) return;
-    close();
-  };
-
-  return { close, handleDocumentClick };
-}
-
-async function playNextSeason(seriesId, source = 'player') {
-  if (!seriesId || state.player.seasonSwitching) return false;
-  const requestToken = playerRequestToken;
-  state.player.seasonSwitching = true;
-
+async function playNextSeason(seriesId, source = 'feed') {
+  if (!seriesId || state.feed.seasonSwitching) return false;
+  state.feed.seasonSwitching = true;
   try {
     const next = await apiCall('GetNextSeason', seriesId);
-    if (!next?.id || (source === 'player' &&
-      (!isPlayerRequestCurrent(requestToken) || state.player.seriesId !== seriesId))) return false;
-
-    if (source === 'feed') {
-      enterSeriesPlayer(next.id, 1);
-    } else {
-      await openPlayer(next.id, 1);
-    }
+    if (!next?.id || state.feed.seriesId !== seriesId) return false;
+    await enterSeriesPlayer(next.id, 1);
     return true;
   } catch (err) {
     console.warn('load next season failed:', err);
     return false;
   } finally {
-    if (source !== 'player' || requestToken === playerRequestToken) state.player.seasonSwitching = false;
+    state.feed.seasonSwitching = false;
   }
-}
-
-async function openPlayer(seriesId, initialEpisodeNum = 1, initialPosition = null) {
-  persistProgress();
-  const requestToken = ++playerRequestToken;
-
-  if (window.ambientGlow) {
-    window.ambientGlow.stop();
-  }
-
-  // Pause recommend feed video if active
-  pauseFeedPlayback();
-  clearCommentSceneLayout();
-
-  state.player.seriesId = seriesId;
-  state.player.episodeId = '';
-  state.player.episodes = [];
-  state.player.detailReady = false;
-  state.player.episodeNum = initialEpisodeNum;
-  state.player.loading = true;
-  state.player.seasonSwitching = false;
-  state.player.userPaused = false;
-
-  const modal = document.getElementById('player-modal');
-  modal.classList.add('is-opening');
-  modal.style.display = 'flex';
-  modal.classList.remove('controls-hidden');
-  requestAnimationFrame(() => modal.classList.remove('is-opening'));
-  modal.scrollLeft = 0;
-  const stage = document.getElementById('player-stage');
-  if (stage) stage.scrollLeft = 0;
-  const playerBody = modal.querySelector('.player-body');
-  if (playerBody) playerBody.scrollLeft = 0;
-  document.documentElement.scrollLeft = 0;
-  document.body.scrollLeft = 0;
-  clearTimeout(modal.__controlsTimer);
-  modal.__controlsTimer = null;
-  syncFeedScrollCapture();
-  document.getElementById('video-loader').style.display = 'grid';
-  document.getElementById('video-container')?.classList.add('is-loading', 'is-buffering');
-  updatePlayerPlayBadge();
-
-  clearPlayerVideo();
-
-  try {
-    if (document.fullscreenElement && document.fullscreenElement !== document.getElementById('player-stage')) {
-      try {
-        await document.exitFullscreen();
-      } catch (err) {
-        console.warn('exitFullscreen failed in openPlayer:', err);
-      }
-      if (!isPlayerRequestCurrent(requestToken)) return;
-    }
-    // 1. Fetch series detail and episode list
-    const detail = await apiCall('GetSeriesDetail', seriesId);
-    if (!isPlayerRequestCurrent(requestToken)) return;
-    if (!detail) {
-      showToast('获取短剧详情失败');
-      closePlayer();
-      return;
-    }
-
-    state.player.seriesTitle = detail.title;
-    state.player.seriesCover = detail.coverUrl;
-    state.player.totalEpisodes = detail.episodeCount || detail.episodes?.length || 1;
-    state.player.episodes = detail.episodes || [];
-    state.player.detailReady = true;
-    state.player.isFavorite = detail.isFavorite;
-    state.player.qualityOptions = fallbackQualityOptions(state.player.quality);
-    renderQualityMenu();
-
-    document.getElementById('player-series-title').textContent = detail.title;
-    document.getElementById('player-drawer-count').textContent = `共 ${state.player.totalEpisodes} 集`;
-    document.getElementById('player-fav').classList.toggle('active', detail.isFavorite);
-    updatePlayerCommentCount(0);
-
-    // Render episode playlist drawer
-    renderPlaylistDrawer();
-
-    // 2. Play initial episode
-    await playEpisodeNumber(initialEpisodeNum, state.player.quality, initialPosition);
-  } catch (err) {
-    if (!isPlayerRequestCurrent(requestToken)) return;
-    showToast('打开播放器失败: ' + err);
-    closePlayer();
-  }
-}
-
-function renderQualityMenu() {
-  const qualityBtn = document.getElementById('player-quality');
-  const qualityMenu = document.getElementById('player-quality-menu');
-  if (!qualityBtn || !qualityMenu) return;
-
-  const active = state.player.qualityOptions.find(opt => opt.active) || { label: qualityLabel(state.player.quality) };
-  qualityBtn.textContent = active.label;
-  qualityMenu.innerHTML = '';
-  state.player.qualityOptions.forEach(opt => {
-    const item = document.createElement('div');
-    item.className = `quality-opt ${opt.active ? 'active' : ''} ${opt.available ? '' : 'disabled'}`;
-    item.textContent = opt.label;
-    if (opt.available) {
-      item.addEventListener('click', () => {
-        qualityMenu.style.display = 'none';
-        qualityBtn.setAttribute('aria-expanded', 'false');
-        changePlaybackQuality(opt.id);
-      });
-    }
-    qualityMenu.appendChild(item);
-  });
-  syncPlayerChromeState();
-}
-
-function updateQualityControls(playback) {
-  if (playback.quality) state.player.quality = playback.quality;
-  if (Array.isArray(playback.qualities) && playback.qualities.length > 0) {
-    state.player.qualityOptions = playback.qualities;
-  } else {
-    state.player.qualityOptions = fallbackQualityOptions(state.player.quality);
-  }
-  renderQualityMenu();
-}
-
-function fallbackQualityOptions(selected) {
-  return ['1080p', '720p', '540p', '480p', '360p'].map(quality => ({
-    id: quality,
-    label: qualityLabel(quality),
-    available: quality === selected,
-    active: quality === selected
-  }));
-}
-
-function qualityLabel(quality) {
-  return String(quality || '720p').toUpperCase();
-}
-
-async function changePlaybackQuality(quality) {
-  if (!quality || quality === state.player.quality) return;
-
-  const currentTime = video.currentTime || 0;
-  const wasPlaying = !video.paused;
-  const success = await playEpisodeNumber(state.player.episodeNum, quality, currentTime, wasPlaying);
-  if (success) {
-    const selected = state.player.qualityOptions.find(opt => opt.active) || { label: qualityLabel(state.player.quality) };
-    showToast(`已切换到 ${selected.label}`);
-  }
-}
-
-async function playEpisodeNumber(num, requestedQuality = state.player.quality, resumeAt = null, autoPlay = true) {
-  if (!isPlayerRequestCurrent(playerRequestToken) || state.player.detailReady === false) return false;
-  persistProgress();
-  const requestToken = ++playerRequestToken;
-  const seriesId = state.player.seriesId;
-  state.player.episodeNum = num;
-  state.player.loading = true;
-  state.player.userPaused = !autoPlay;
-  document.getElementById('player-episode-badge').textContent = `第 ${num} 集`;
-
-  // Find episode ID
-  let targetEp = state.player.episodes.find(e => e.number === num);
-  const epId = targetEp ? targetEp.id : '';
-  state.player.episodeId = epId;
-  updatePlayerCommentCount(targetEp ? targetEp.commentCount : 0);
-
-  // Highlight in drawer
-  document.querySelectorAll('#player-drawer-grid .ep-btn').forEach(btn => {
-    btn.classList.toggle('active', parseInt(btn.dataset.num) === num);
-  });
-
-  // Scroll active episode button into view safely within the grid only
-  if (state.player.episodesExpanded) {
-    scrollActiveDrawerEpisode('player-drawer-grid', num);
-  }
-
-  document.getElementById('video-loader').style.display = 'grid';
-  document.getElementById('video-container')?.classList.add('is-loading', 'is-buffering');
-  updatePlayerPlayBadge();
-
-  // Drop the previous media immediately so episode switches cannot leave the
-  // old decoded frame visible (or its stream connected) while the next one loads.
-  clearPlayerVideo();
-
-  try {
-    const pb = await apiCall('PlayEpisode', seriesId, epId, num, requestedQuality, false);
-    if (!isPlayerRequestCurrent(requestToken)) return false;
-    if (!pb || !pb.streamUrl) {
-      throw new Error('获取播放地址失败');
-    }
-
-    state.player.episodeId = pb.episodeId || epId;
-    state.player.episodeNum = pb.episodeNum || num;
-    document.getElementById('player-episode-badge').textContent = `第 ${state.player.episodeNum} 集`;
-    const identity = Object.freeze({
-      requestToken, seriesId, episodeId: state.player.episodeId,
-      episodeNum: state.player.episodeNum, title: state.player.seriesTitle,
-      cover: state.player.seriesCover, totalEpisodes: state.player.totalEpisodes,
-      durationSec: Number(pb.durationSec) || 0
-    });
-
-    document.getElementById('player-like').classList.toggle('active', pb.isLiked);
-    if (Number(pb.commentCount) > 0) {
-      updatePlayerCommentCount(pb.commentCount);
-    }
-    updateQualityControls(pb);
-
-    video.crossOrigin = 'anonymous';
-    playerPlaybackIdentity = identity;
-
-    // Auto-resume from last progress if available
-    video.onloadedmetadata = () => {
-      if (!isPlayerRequestCurrent(requestToken) || playerPlaybackIdentity !== identity) return;
-      syncMainVideoOrientation();
-      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : identity.durationSec;
-      if (resumeAt !== null && resumeAt >= 0) {
-        video.currentTime = Math.min(resumeAt, duration || resumeAt);
-      } else if (pb.lastPosition > 3 && pb.lastPosition < (duration - 5)) {
-        video.currentTime = pb.lastPosition;
-        showToast(`已为您自动跳转到上次播放位置 ${formatTime(pb.lastPosition)}`);
-      }
-      video.playbackRate = state.player.playbackSpeed;
-      syncPlayerChromeState();
-      if (autoPlay && !state.player.userPaused) {
-        state.player.userPaused = false;
-        video.play().catch(e => console.log('play error:', e));
-      } else {
-        state.player.loading = false;
-        state.player.userPaused = true;
-        document.getElementById('video-loader').style.display = 'none';
-        document.getElementById('video-container')?.classList.remove('is-buffering', 'is-loading');
-        updatePlayerPlayBadge();
-      }
-    };
-
-    video.src = pb.streamUrl;
-    video.load();
-
-    return true;
-  } catch (err) {
-    if (!isPlayerRequestCurrent(requestToken)) return false;
-    state.player.loading = false;
-    document.getElementById('video-loader').style.display = 'none';
-    document.getElementById('video-container')?.classList.remove('is-buffering', 'is-loading');
-    updatePlayerPlayBadge();
-    showToast('播放失败: ' + err);
-    return false;
-  }
-}
-
-function renderPlaylistDrawer() {
-  const grid = document.getElementById('player-drawer-grid');
-  const toggleWrap = document.getElementById('player-drawer-collapse-wrap');
-  const toggle = document.getElementById('player-drawer-collapse');
-  renderEpisodeGrid({
-    grid,
-    count: document.getElementById('player-drawer-count'),
-    total: state.player.totalEpisodes || state.player.episodes.length || 1,
-    current: state.player.episodeNum,
-    onSelect: playEpisodeNumber
-  });
-
-  if (grid && toggleWrap && toggle) {
-    state.player.episodeCollapse = createEpisodeCollapseController({
-      grid, toggleWrap, toggle
-    });
-    state.player.episodeCollapse.measure();
-    if (state.player.episodesExpanded) {
-      state.player.episodeCollapse.expand();
-    }
-  }
-}
-
-function persistProgress() {
-  const identity = playerPlaybackIdentity;
-  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : identity?.durationSec;
-  if (!identity || identity.requestToken !== playerRequestToken ||
-    Number.isNaN(video.duration) || !Number.isFinite(duration) || duration <= 0 || !Number.isFinite(video.currentTime)) return;
-  apiCall('SaveProgress',
-    identity.seriesId,
-    identity.episodeId,
-    identity.title,
-    identity.cover,
-    identity.episodeNum,
-    identity.totalEpisodes,
-    video.currentTime,
-    duration
-  ).catch(err => console.warn('save playback progress failed:', err));
-}
-
-function isPlayerRequestCurrent(requestToken) {
-  const modal = document.getElementById('player-modal');
-  return requestToken === playerRequestToken && Boolean(modal && modal.style.display !== 'none');
-}
-
-function closePlayer() {
-  if (window.ambientGlow) {
-    window.ambientGlow.stop();
-  }
-  const playerModal = document.getElementById('player-modal');
-  clearTimeout(playerModal?.__controlsTimer);
-  if (playerModal) playerModal.__controlsTimer = null;
-  setPlaybackKeepAwake(false);
-  clearNowPlayingState();
-  persistProgress();
-  ++playerRequestToken;
-  playerPlaybackIdentity = null;
-  video.onloadedmetadata = null;
-  state.player.detailReady = false;
-  state.player.seasonSwitching = false;
-  if (commentState.open) closeCommentSheet();
-  // A stale scene class can leave the feed stage narrowed after returning.
-  // Clear it unconditionally here because the whole player is going away.
-  const commentOverlay = document.getElementById('comment-sheet-overlay');
-  if (commentOverlay) commentOverlay.style.display = 'none';
-  restoreCommentOverlay();
-  document.body.classList.remove('comments-open');
-  danmakuControllers.player?.reset();
-  const playerComposer = document.getElementById('player-danmaku-composer');
-  if (playerComposer) playerComposer.classList.remove('open');
-  document.getElementById('player-modal')?.classList.remove('comments-open');
-  state.player.loading = false;
-  state.player.userPaused = false;
-  video.pause();
-  video.removeAttribute('src');
-  video.load();
-  resetPlaybackVideoFit(video);
-  updatePlayerPlayBadge();
-  document.getElementById('video-container')?.classList.remove('is-buffering', 'is-loading');
-  document.getElementById('player-stage')?.classList.remove('player-fullscreen');
-  document.getElementById('player-playlist-drawer')?.classList.remove('open');
-  collapsePlayerDrawerEpisodes();
-  playerModal?.classList.remove('controls-hidden');
-  const modalToClose = document.getElementById('player-modal');
-  const finishClosePlayer = () => {
-    modalToClose.style.display = 'none';
-    modalToClose.classList.remove('is-opening');
-    modalToClose.removeEventListener('transitionend', finishClosePlayer);
-  };
-  modalToClose.classList.add('is-opening');
-  modalToClose.addEventListener('transitionend', finishClosePlayer);
-  setTimeout(finishClosePlayer, 280);
-  if (playerModal) playerModal.scrollLeft = 0;
-  const stage = document.getElementById('player-stage');
-  if (stage) stage.scrollLeft = 0;
-  const playerBody = playerModal?.querySelector('.player-body');
-  if (playerBody) playerBody.scrollLeft = 0;
-  document.documentElement.scrollLeft = 0;
-  document.body.scrollLeft = 0;
-  syncFeedScrollCapture();
-  if (document.fullscreenElement) {
-    document.exitFullscreen().catch(err => console.log(err));
-  }
-  // Resume recommend feed video if on recommend view
-  if (state.currentView === 'recommend') {
-    state.feed.userPaused = false;
-    resumeFeedPlayback();
-  }
-  window.nativeMediaClosed?.();
 }
 
 function formatTime(sec) {

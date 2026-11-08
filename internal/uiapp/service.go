@@ -141,12 +141,7 @@ type App struct {
 	catalogScroll               ui.ScrollState
 	rankScroll                  ui.ScrollState
 	actorScroll                 ui.ScrollState
-	playerChrome                PlayerChrome
-	playerChromeKnown           bool
 	playerFixture               bool
-	playerDrawerOpen            bool
-	playerDrawerSelection       int
-	playerDrawerGrid            ui.GridState
 	detailEpisodesExpanded      bool
 	detailScroll                ui.ScrollState
 	sidebarWidth                float32

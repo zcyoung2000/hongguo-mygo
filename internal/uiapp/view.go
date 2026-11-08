@@ -73,9 +73,6 @@ func (a *App) Render(c *ui.Context) {
 	}
 	ui.Box(c.Key("app-shell")).Fill().Children(func() {
 		ui.Split(c, &width, func() { a.renderSidebar(c) }, func() { a.renderBody(c) }).Fill().Background(c.Theme().Background).OnChange(func() { a.SetSidebarWidth(width) })
-		if a.hostedScene() || a.playerFixture {
-			a.renderNativePlayerControls(c)
-		}
 	})
 }
 

@@ -291,52 +291,6 @@
 
     </main>
 
-    <!-- Embedded High-Definition Video Player View (WebView Player) -->
-    <div class="player-overlay" id="player-modal" role="dialog" aria-modal="true" aria-label="短剧播放器" style="display: none;">
-      <div class="player-topbar">
-        <button class="player-back-btn" id="btn-close-player" title="返回浏览">
-          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
-          <span>返回</span>
-        </button>
-        <div class="player-title-info">
-          <span class="player-series-title" id="player-series-title">短剧标题</span>
-          <span class="player-episode-badge" id="player-episode-badge">第 1 集</span>
-        </div>
-      </div>
-
-      <div class="player-body">
-        <div class="player-stage-wrap" id="player-stage">
-          <div class="video-container" id="video-container">
-            <video id="main-video" class="portrait" preload="auto" playsinline webkit-playsinline crossorigin="anonymous"></video>
-            <div class="center-play-badge" id="center-play-badge" style="display: none;">
-              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
-            </div>
-            <div class="video-loader" id="video-loader" style="display: none;" role="status" aria-label="加载中">
-              <div class="video-top-loader-bar"></div>
-              <div class="macos-loader-hud">
-                <svg class="macos-spinner" viewBox="0 0 32 32" width="20" height="20" fill="none" aria-hidden="true">
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="1.0" transform="rotate(0 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.93" transform="rotate(30 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.86" transform="rotate(60 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.8" transform="rotate(90 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.73" transform="rotate(120 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.66" transform="rotate(150 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.59" transform="rotate(180 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.52" transform="rotate(210 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.45" transform="rotate(240 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.39" transform="rotate(270 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.32" transform="rotate(300 16 16)" />
-                  <line x1="16" y1="3" x2="16" y2="8.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity="0.25" transform="rotate(330 16 16)" />
-                </svg>
-              </div>
-            </div>
-          </div>
-
-          <!-- Shared rail, controls and episode drawer are mounted by player-chrome.js -->
-        </div>
-      </div>
-    </div>
-
     <!-- Notification Toast -->
     <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
