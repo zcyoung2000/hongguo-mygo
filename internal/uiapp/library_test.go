@@ -168,3 +168,69 @@ func TestCollectionCountDistinguishesEmptyFailedAndCached(t *testing.T) {
 		}
 	}
 }
+
+func TestVisibleLibraryIsTheSingleSourceForCountsAndGrid(t *testing.T) {
+	items := []CatalogItem{
+		{ID: "favorite-1", Title: "可见收藏一"},
+		{ID: "favorite-2", Title: "可见收藏二"},
+		{ID: "favorite-3", Title: "被过滤收藏"},
+	}
+	app := NewTestApp()
+	app.SetInvalidator(func() {})
+	app.library.Favorites = Library{Loaded: true, Items: items}
+	app.library.History = Library{Loaded: true, Items: items}
+	app.historyQuery = "可见"
+	app.refreshVisibleLibraryLocked(libraryHistory)
+	app.refreshVisibleLibraryLocked(libraryFavorites)
+	if got := app.visibleLibrary(libraryHistory); len(got) != 2 || got[0].ID != "favorite-1" || got[1].ID != "favorite-2" {
+		t.Fatalf("filtered favorites = %+v", got)
+	}
+	if len(app.library.Favorites.Items) != 3 {
+		t.Fatalf("snapshot mutated: %+v", app.library.Favorites.Items)
+	}
+}
+
+func TestHistoryHeaderMatchesFilteredGrid(t *testing.T) {
+	items := []CatalogItem{
+		{ID: "history-1", Title: "可见历史", Completed: false},
+		{ID: "history-2", Title: "其他历史", Completed: true},
+	}
+	app := NewTestApp()
+	app.SetInvalidator(func() {})
+	app.library.History = Library{Loaded: true, Items: items}
+	app.refreshVisibleLibraryLocked(libraryHistory)
+
+	app.historyQuery = "可见"
+	app.refreshVisibleLibraryLocked(libraryHistory)
+	visible := app.visibleLibrary(libraryHistory)
+	if len(visible) != 1 || visible[0].ID != "history-1" {
+		t.Fatalf("filtered history = %#v", visible)
+	}
+
+	app.historyQuery = ""
+	app.historyFilter = "completed"
+	app.refreshVisibleLibraryLocked(libraryHistory)
+	visible = app.visibleLibrary(libraryHistory)
+	if len(visible) != 1 || visible[0].ID != "history-2" {
+		t.Fatalf("completed history = %#v", visible)
+	}
+}
+
+func TestReservationVisibleListAndCountsShareFilteredData(t *testing.T) {
+	items := []CatalogItem{
+		{ID: "online-1", Title: "已上线", Upcoming: false},
+		{ID: "pending-1", Title: "待上线", Upcoming: true},
+	}
+	app := NewTestApp()
+	app.SetInvalidator(func() {})
+	app.library.Reserved = Library{Loaded: true, Items: items}
+	app.reservationsPending = true
+	app.refreshVisibleLibraryLocked(libraryReservations)
+	visible := app.visibleLibrary(libraryReservations)
+	if len(visible) != 1 || visible[0].ID != "pending-1" {
+		t.Fatalf("pending reservations = %+v", visible)
+	}
+	if len(app.library.Reserved.Items) != 2 {
+		t.Fatalf("reservation snapshot mutated: %+v", app.library.Reserved.Items)
+	}
+}

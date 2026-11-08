@@ -537,6 +537,7 @@ func (a *App) RemoveLibraryItem(tab LibraryTab, item CatalogItem) {
 		rows = append(rows, row)
 	}
 	library.Items, library.Empty = rows, len(rows) == 0
+	a.refreshVisibleLibraryLocked(tab)
 	a.invalidate()
 	a.mu.Unlock()
 }
@@ -544,24 +545,58 @@ func (a *App) SetLibraryFilter(filter, query string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.historyFilter, a.historyQuery = filter, query
+	a.refreshVisibleLibraryLocked(libraryHistory)
 	a.invalidate()
 }
 func (a *App) visibleLibrary(tab LibraryTab) []CatalogItem {
+	if visible := a.libraryVisible[tab]; visible != nil {
+		return visible
+	}
 	library := a.libraryAt(tab)
 	items := make([]CatalogItem, 0, len(library.Items))
 	for _, it := range library.Items {
-		if tab == libraryHistory {
-			if a.historyFilter == "completed" && !it.Completed || a.historyFilter == "unwatched" && it.Completed {
-				continue
-			}
-			if !strings.Contains(strings.ToLower(it.Title), strings.ToLower(strings.TrimSpace(a.historyQuery))) {
-				continue
-			}
+		if a.libraryItemVisible(tab, it) {
+			items = append(items, it)
 		}
-		if tab == libraryReservations && it.Upcoming != a.reservationsPending {
-			continue
+	}
+	return items
+}
+
+func (a *App) refreshVisibleLibraryLocked(tab LibraryTab) {
+	library := a.libraryAt(tab)
+	items := make([]CatalogItem, 0, len(library.Items))
+	for _, it := range library.Items {
+		if a.libraryItemVisible(tab, it) {
+			items = append(items, it)
 		}
-		items = append(items, it)
+	}
+	a.libraryVisible[tab] = items
+}
+
+func (a *App) libraryItemVisible(tab LibraryTab, item CatalogItem) bool {
+	switch tab {
+	case libraryHistory:
+		if a.historyFilter == "completed" && !item.Completed {
+			return false
+		}
+		if a.historyFilter == "unwatched" && item.Completed {
+			return false
+		}
+		return strings.Contains(strings.ToLower(item.Title), strings.ToLower(strings.TrimSpace(a.historyQuery)))
+	case libraryReservations:
+		return item.Upcoming == a.reservationsPending
+	default:
+		return true
+	}
+}
+
+func (a *App) visibleLibraryFallback(tab LibraryTab) []CatalogItem {
+	library := a.libraryAt(tab)
+	items := make([]CatalogItem, 0, len(library.Items))
+	for _, it := range library.Items {
+		if a.libraryItemVisible(tab, it) {
+			items = append(items, it)
+		}
 	}
 	return items
 }
@@ -614,6 +649,7 @@ func (a *App) SetHistoryQuery(query string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.historyQuery = query
+	a.refreshVisibleLibraryLocked(libraryHistory)
 	a.invalidate()
 }
 

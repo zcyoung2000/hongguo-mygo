@@ -226,6 +226,7 @@ func (a *App) renderBody(c *ui.Context) {
 			case "likes":
 				a.renderLibrary(c, libraryLikes)
 			case "reservations":
+				a.refreshVisibleLibraryLocked(libraryReservations)
 				a.renderLibrary(c, libraryReservations)
 			case "detail":
 				a.renderDetail(c)
@@ -760,8 +761,9 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		})
 	}
 	if tab == libraryFavorites || tab == libraryLikes {
-		favCount := libraryCountLabel(state.Favorites)
-		likeCount := libraryCountLabel(state.Likes)
+		favorites, likes := a.libraryAt(libraryFavorites), a.libraryAt(libraryLikes)
+		favCount := libraryCountLabel(*favorites)
+		likeCount := libraryCountLabel(*likes)
 		ui.Row(c.Key("fav-header")).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				ui.Row(c).Padding(3, 10).Radius(12).Background(ui.RGBA(255, 255, 255, 0.06)).Children(func() {
@@ -777,19 +779,13 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		})
 	}
 	if tab == libraryReservations {
-		online, pending := 0, 0
-		for _, item := range library.Items {
-			if item.Upcoming {
-				pending++
-			} else {
-				online++
-			}
-		}
-		total := len(library.Items)
+		reservations := a.visibleLibrary(libraryReservations)
+		onlineCount, pendingCount := reservationCounts(reservations)
+		total := len(reservations)
 		ui.Row(c.Key("res-header")).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
 			ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
 				ui.Row(c).Padding(3, 10).Radius(12).Background(ui.RGBA(255, 255, 255, 0.06)).Children(func() {
-					ui.Textf(c, "新剧预约 · 共 %d 部 · 已上线 %d · 待上线 %d", total, online, pending).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
+					ui.Textf(c, "新剧预约 · 共 %d 部 · 已上线 %d · 待上线 %d", total, onlineCount, pendingCount).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
 				})
 			})
 			resSelected := "online"
@@ -797,10 +793,11 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 				resSelected = "pending"
 			}
 			a.renderSlidingTabs(c, "res-tabs", "res-pending", []slidingTabItem{
-				{"online", fmt.Sprintf("已上线 %d", online)},
-				{"pending", fmt.Sprintf("待上线 %d", pending)},
+				{"online", fmt.Sprintf("已上线 %d", onlineCount)},
+				{"pending", fmt.Sprintf("待上线 %d", pendingCount)},
 			}, resSelected, func(pKey string) {
 				a.reservationsPending = (pKey == "pending")
+				a.refreshVisibleLibraryLocked(libraryReservations)
 			})
 		})
 	}
@@ -820,17 +817,32 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		a.emptyView(c, "暂无记录", "浏览和播放后才会形成真实记录")
 		return
 	}
-	library.Items = a.visibleLibrary(tab)
-	if len(library.Items) == 0 {
+	visibleItems := a.visibleLibrary(tab)
+	if len(visibleItems) == 0 {
 		a.emptyView(c, "暂无匹配记录", "可以调整筛选条件")
 		return
 	}
 	if a.library.Grids[grid] == nil {
 		a.library.Grids[grid] = &ui.GridState{}
 	}
-	a.library.Grids[grid].Key = func(item int) any { return library.Items[item].ID + "|" + library.Items[item].EpisodeID }
-	a.library.Grids[grid].Label = func(item int) string { return library.Items[item].Title }
-	a.cardGrid(c, "library-grid", a.library.Grids[grid], nil, library.Items, 40, func(item CatalogItem) {
+	a.library.Grids[grid].Key = func(item int) any { return visibleItems[item].ID + "|" + visibleItems[item].EpisodeID }
+	a.library.Grids[grid].Label = func(item int) string {
+		title := visibleItems[item].Title
+		cut := len(title)
+		runes := 0
+		for index := range title {
+			if runes == 18 {
+				cut = index
+				break
+			}
+			runes++
+		}
+		if cut == len(title) {
+			return title
+		}
+		return title[:cut] + "…"
+	}
+	a.cardGrid(c, "library-grid", a.library.Grids[grid], nil, visibleItems, 40, func(item CatalogItem) {
 		if tab == libraryHistory {
 			return
 		}
@@ -853,6 +865,18 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 			}
 		})
 	}).Grow(1)
+}
+
+func reservationCounts(items []CatalogItem) (int, int) {
+	online, pending := 0, 0
+	for _, item := range items {
+	if item.Upcoming {
+		pending++
+	} else {
+		online++
+	}
+	}
+	return online, pending
 }
 
 func (a *App) renderDetail(c *ui.Context) {

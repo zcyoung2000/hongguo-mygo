@@ -160,6 +160,7 @@ type App struct {
 	rank                        RankingState
 	releases                    ReleaseState
 	actor                       ActorState
+	libraryVisible              [4][]CatalogItem
 	searchGrid                  *ui.GridState
 	catalogGrid                 *ui.GridState
 	releaseGrid                 *ui.GridState
@@ -669,6 +670,7 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	generation := a.libraryGeneration[tab]
 	library := a.libraryAt(tab)
 	library.Loading, library.Error, library.Empty = true, "", false
+	a.refreshVisibleLibraryLocked(tab)
 	provider := a.libraryProvider()
 	a.invalidate()
 	a.mu.Unlock()
@@ -720,6 +722,7 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	a.error = ""
 	library.Items, library.Empty, library.Loaded = items, len(items) == 0, true
 	library.Title = map[LibraryTab]string{libraryHistory: "观看历史", libraryFavorites: "我的收藏", libraryLikes: "我的点赞", libraryReservations: "新剧预约"}[tab]
+	a.refreshVisibleLibraryLocked(tab)
 	a.invalidate()
 }
 func (a *App) libraryProvider() libraryProvider {
