@@ -28,6 +28,9 @@ import (
 func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
 	session := s.currentSyncSession()
 	seriesID = strings.TrimSpace(seriesID)
+	if strings.TrimSpace(title) == "" {
+		title = "未知短剧"
+	}
 	if !mediautil.ValidContentID(seriesID) {
 		return fmt.Errorf("历史 ID 无效")
 	}
@@ -470,6 +473,9 @@ func (s *Service) ToggleFavorite(ctx context.Context, seriesID, title, coverURL,
 	}
 	s.favMutationMu.Lock()
 	defer s.favMutationMu.Unlock()
+	if strings.TrimSpace(title) == "" {
+		title = "未知短剧"
+	}
 	wasAdded, err := s.store.ToggleFavorite(FavoriteItem{
 		SeriesID:      seriesID,
 		Title:         title,
@@ -845,6 +851,9 @@ func (s *Service) ToggleLike(ctx context.Context, seriesID, episodeID, title, co
 	}
 	s.likeMu.Lock()
 	defer s.likeMu.Unlock()
+	if strings.TrimSpace(title) == "" {
+		title = "未知短剧"
+	}
 	err := s.store.SetLike(LikeItem{
 		SeriesID:   seriesID,
 		EpisodeID:  episodeID,
@@ -1212,6 +1221,9 @@ func (s *Service) ToggleReservation(ctx context.Context, seriesID, title, coverU
 	}
 	if userCookies == "" {
 		return false, fmt.Errorf("请先登录后预约")
+	}
+	if strings.TrimSpace(title) == "" {
+		title = "未知短剧"
 	}
 
 	// The reservation list is the source of truth; mutations are confirmed by

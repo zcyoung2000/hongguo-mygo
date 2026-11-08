@@ -179,6 +179,7 @@ type App struct {
 	rank                        RankingState
 	releases                    ReleaseState
 	actor                       ActorState
+	libraryVisible              [4][]CatalogItem
 	searchGrid                  *ui.GridState
 	catalogGrid                 *ui.GridState
 	releaseGrid                 *ui.GridState
@@ -691,6 +692,7 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	generation := a.libraryGeneration[tab]
 	library := a.libraryAt(tab)
 	library.Loading, library.Error, library.Empty = true, "", false
+	a.refreshVisibleLibraryLocked(tab)
 	provider := a.libraryProvider()
 	a.invalidate()
 	a.mu.Unlock()
@@ -742,6 +744,7 @@ func (a *App) loadLibraryWithRefresh(tab LibraryTab, refresh bool) {
 	a.error = ""
 	library.Items, library.Empty, library.Loaded = items, len(items) == 0, true
 	library.Title = map[LibraryTab]string{libraryHistory: "观看历史", libraryFavorites: "我的收藏", libraryLikes: "我的点赞", libraryReservations: "新剧预约"}[tab]
+	a.refreshVisibleLibraryLocked(tab)
 	a.invalidate()
 }
 func (a *App) libraryProvider() libraryProvider {
@@ -807,7 +810,11 @@ func convertHistory(items []ipc.HistoryItem, err error) ([]CatalogItem, error) {
 	for index, item := range items {
 		title := item.Title
 		if title == "" {
-			title = "第" + strconv.Itoa(item.EpisodeNum) + "集"
+			if item.EpisodeNum > 0 {
+				title = "第" + strconv.Itoa(item.EpisodeNum) + "集"
+			} else {
+				title = "未知短剧"
+			}
 		}
 		out = append(out, CatalogItem{
 			ID: item.SeriesID, Title: title,
@@ -825,8 +832,12 @@ func convertFavorites(items []ipc.FavoriteItem, err error) ([]CatalogItem, error
 	}
 	out := make([]CatalogItem, 0, len(items))
 	for index, item := range items {
+		title := item.Title
+		if title == "" {
+			title = "未知短剧"
+		}
 		out = append(out, CatalogItem{
-			ID: item.SeriesID, Title: item.Title, Description: item.Description, CoverURL: item.CoverURL,
+			ID: item.SeriesID, Title: title, Description: item.Description, CoverURL: item.CoverURL,
 			EpisodeCount: item.TotalEpisodes, Rank: index,
 		})
 	}
@@ -839,8 +850,12 @@ func convertReservations(items []ipc.ReservationItem, err error) ([]CatalogItem,
 	}
 	out := make([]CatalogItem, 0, len(items))
 	for index, item := range items {
+		title := item.Title
+		if title == "" {
+			title = "未知短剧"
+		}
 		out = append(out, CatalogItem{
-			ID: item.SeriesID, Title: item.Title, Description: item.Note, CoverURL: item.CoverURL,
+			ID: item.SeriesID, Title: title, Description: item.Note, CoverURL: item.CoverURL,
 			PublishAt: item.PublishAt, Upcoming: !item.IsOnline, Reserved: true, Rank: index,
 		})
 	}
@@ -853,8 +868,12 @@ func convertLikes(items []ipc.LikeItem, err error) ([]CatalogItem, error) {
 	}
 	out := make([]CatalogItem, 0, len(items))
 	for index, item := range items {
+		title := item.Title
+		if title == "" {
+			title = "未知短剧"
+		}
 		out = append(out, CatalogItem{
-			ID: item.SeriesID, EpisodeID: item.EpisodeID, ResumeEpisode: item.EpisodeNum, ResumePosition: -1, Title: item.Title, Description: item.Description, CoverURL: item.CoverURL,
+			ID: item.SeriesID, EpisodeID: item.EpisodeID, ResumeEpisode: item.EpisodeNum, ResumePosition: -1, Title: title, Description: item.Description, CoverURL: item.CoverURL,
 			EpisodeCount: item.TotalEpisodes, Rank: index,
 		})
 	}

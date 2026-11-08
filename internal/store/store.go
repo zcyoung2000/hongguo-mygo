@@ -190,6 +190,11 @@ func NewStore(dir string) (*Store, error) {
 		}
 	}
 
+	if err := s.migrateEmptyLibraryTitles(); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	// Do this after legacy import too, because old JSON may contain the same
 	// synthesized placeholders.
 	_, _ = s.db.Exec(`DELETE FROM likes WHERE episode_id LIKE 'ep\_%' ESCAPE '\'`)
@@ -484,6 +489,26 @@ func (s *Store) initSchema() error {
 		return err
 	}
 	return s.initSyncQueues()
+}
+
+func (s *Store) migrateEmptyLibraryTitles() error {
+	_, err := s.db.Exec(`
+		UPDATE history SET title = CASE
+			WHEN episode_num > 0 THEN '第' || episode_num || '集'
+			ELSE '未知短剧'
+		END
+		WHERE trim(title) = '';
+
+		UPDATE favorites SET title = '未知短剧'
+		WHERE trim(title) = '';
+
+		UPDATE likes SET title = '未知短剧'
+		WHERE trim(title) = '';
+
+		UPDATE reservations SET title = '未知短剧'
+		WHERE trim(title) = '';
+	`)
+	return err
 }
 
 type CachedEpisode struct {

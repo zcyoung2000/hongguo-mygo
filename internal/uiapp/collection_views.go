@@ -1,7 +1,7 @@
 package uiapp
 
 import (
-	"unicode/utf8"
+	"fmt"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -18,7 +18,8 @@ func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *u
 	columns := max(1, int((width+gap)/(dramaMinCardWidth+gap)))
 	cardWidth := max(150, (width-float32(columns-1)*gap)/float32(columns)-4)
 	configureDramaGrid(state, items)
-	height := collectionRowHeight(a.view, items) + cardWidth*posterAspectRatio + extra
+	textHeight := a.collectionRowHeight(c, cardWidth, items)
+	height := textHeight + cardWidth*posterAspectRatio + extra
 	host.Children(func() {
 		c.SetTheme(&gridTheme)
 		defer c.SetTheme(&baseTheme)
@@ -38,23 +39,14 @@ func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *u
 const (
 	catalogButtonHeight   float32 = 28
 	catalogTextLineHeight float32 = 20
+	catalogRowGap         float32 = 6
 )
 
-// Titles render one line for the first 18 CJK-sized characters and wrap once
-// beyond that, so the row estimate tracks the rendered title block.
-func catalogTitleHeight(title string) float32 {
-	length := utf8.RuneCountInString(title)
-	if length <= 18 {
-		return catalogTextLineHeight
-	}
-	return catalogTextLineHeight * float32((length+19)/20)
-}
-
-func collectionRowHeight(view string, items []CatalogItem) float32 {
+func (a *App) collectionRowHeight(c *ui.Context, cardWidth float32, items []CatalogItem) float32 {
 	var tallest float32
 	for _, item := range items {
-		height := catalogTitleHeight(item.Title) + catalogTextLineHeight
-		switch view {
+		height := catalogTextLineHeight
+		switch a.view {
 		case "history", "reservations":
 			height += 8
 		case "new":
@@ -66,21 +58,42 @@ func collectionRowHeight(view string, items []CatalogItem) float32 {
 			} else {
 				height += catalogTextLineHeight
 				if item.Heat != "" {
-					height += catalogTextLineHeight
+					_, heatHeight := c.MeasureText(cardWidth, ui.Span{Text: item.Heat, Size: 12, Weight: 700})
+					height += max(catalogTextLineHeight, heatHeight)
 				}
 			}
 		default:
-			height = catalogTitleHeight(item.Title)
 			if item.Upcoming {
-				height += catalogTextLineHeight + catalogButtonHeight
+				height += measuredTextHeight(c, cardWidth, formatPublishDate(item.PublishAt), 13) + catalogButtonHeight
 			} else {
-				height += catalogTextLineHeight
-				if item.Heat != "" {
-					height += catalogTextLineHeight
+				meta := item.Heat
+				if item.EpisodeCount > 0 {
+					meta = fmt.Sprintf("%d集", item.EpisodeCount)
+					if item.Heat != "" {
+						meta += " · " + item.Heat
+					}
 				}
+				height += measuredTextHeight(c, cardWidth, meta, 13)
 			}
 		}
 		tallest = max(tallest, height)
 	}
 	return tallest
+}
+
+func measuredTitleHeight(c *ui.Context, width float32, title string) float32 {
+	_, height := c.MeasureText(width, ui.Span{Text: title, Size: 13, Weight: 700})
+	return max(catalogTextLineHeight, height)
+}
+
+func measuredTextHeight(c *ui.Context, width float32, text string, size float32, weight ...int) float32 {
+	if text == "" {
+		return 0
+	}
+	spanWeight := 400
+	if len(weight) > 0 {
+		spanWeight = weight[0]
+	}
+	_, height := c.MeasureText(width, ui.Span{Text: text, Size: size, Weight: spanWeight})
+	return max(catalogTextLineHeight, height)
 }
