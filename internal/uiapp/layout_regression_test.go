@@ -220,12 +220,16 @@ func TestHistoryRowsFitMultiLineTitlesAcrossRows(t *testing.T) {
 	}
 }
 
-func TestSettingsUsesExistingInteractiveHost(t *testing.T) {
+func TestSettingsUsesNativeBodyInsteadOfWebViewHost(t *testing.T) {
 	a := NewTestApp()
-	a.SetMediaHost(&MediaHost{})
+	host := &MediaHost{}
+	a.SetMediaHost(host)
 	a.OpenView("settings")
-	if !a.hostedScene() {
+	if a.hostedScene() {
 		t.Fatal("settings command sent but its interactive document is hidden")
+	}
+	if host.desired["event"] == "settings" {
+		t.Fatal("settings routed to the WebView media host")
 	}
 	a.OpenView("discover")
 	if a.hostedScene() {

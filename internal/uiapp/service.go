@@ -130,6 +130,22 @@ type LibraryView struct {
 	Selected  int
 }
 
+type Settings struct {
+	Profile        ipc.UserProfile
+	CacheSize      int64
+	DeviceID       string
+	DeviceVersion  string
+	DeviceArch     string
+	LegacyNickname string
+	LegacyUserID   string
+	HasLegacy      bool
+	Loading        bool
+	LoginOpen      bool
+	LoginCookie    string
+	LoginToken     string
+	Error          string
+}
+
 // App state and all render snapshots are protected by mu. Network work never holds it.
 type App struct {
 	ambientActive               bool
@@ -156,6 +172,7 @@ type App struct {
 	libraryMutations            libraryMutations
 	confirm                     func(string) bool
 	mutations                   map[string]bool
+	settingsMutations           map[string]bool
 	detailRevisions             map[string]uint64
 	rank                        RankingState
 	releases                    ReleaseState
@@ -190,13 +207,15 @@ type App struct {
 	error    string
 	notice   string
 
-	query       string
-	search      CatalogPage
-	catalog     Catalog
-	detail      Detail
-	libraryData libraryProvider
-	library     LibraryView
-	playerOn    bool
+	query                string
+	search               CatalogPage
+	catalog              Catalog
+	detail               Detail
+	libraryData          libraryProvider
+	settingsTestProvider settingsProvider
+	library              LibraryView
+	settings             Settings
+	playerOn             bool
 }
 
 func NewApp(service *ipc.HongguoService) *App {
@@ -274,6 +293,7 @@ func (a *App) SearchState() CatalogPage  { a.mu.Lock(); defer a.mu.Unlock(); ret
 func (a *App) CatalogState() Catalog     { a.mu.Lock(); defer a.mu.Unlock(); return a.catalog }
 func (a *App) LibraryState() LibraryView { a.mu.Lock(); defer a.mu.Unlock(); return a.library }
 func (a *App) DetailState() Detail       { a.mu.Lock(); defer a.mu.Unlock(); return a.detail }
+func (a *App) SettingsState() Settings   { a.mu.Lock(); defer a.mu.Unlock(); return a.settings }
 func (a *App) SeriesID() string          { a.mu.Lock(); defer a.mu.Unlock(); return a.seriesID }
 
 // Called under mu, including by Render. Published slices are replaced, never edited.

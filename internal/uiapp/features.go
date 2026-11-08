@@ -171,8 +171,11 @@ func (a *App) navigateLocked(entry navigationEntry, record bool) {
 			a.media.RecommendChannel(a.feedChannel)
 		}
 	case "settings":
-		if a.media != nil {
-			a.media.Settings()
+		a.settings = Settings{Profile: a.settings.Profile, Loading: true, LoginOpen: a.settings.LoginOpen, LoginCookie: a.settings.LoginCookie, LoginToken: a.settings.LoginToken}
+		hasSettingsService := a.settingsTestProvider != nil || a.service != nil
+		if !a.testMode && hasSettingsService {
+			loadSettings := a.LoadSettings
+			go loadSettings()
 		}
 	case "discover":
 		if !a.testMode {

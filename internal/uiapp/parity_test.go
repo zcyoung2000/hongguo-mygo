@@ -81,8 +81,8 @@ func TestNativeMediaRoutesUseFullMediaHostAndExplicitPlayback(t *testing.T) {
 		t.Fatal("recommend scene not reachable")
 	}
 	app.OpenView("settings")
-	if host.desired["event"] != "settings" {
-		t.Fatal("settings scene not reachable")
+	if host.desired["event"] == "settings" {
+		t.Fatal("settings must not enter the WebView host path")
 	}
 	app.OpenDetail("123456")
 	app.loadDetail("123456")
@@ -524,8 +524,8 @@ func TestSkeletonsMatchOriginalPageShapes(t *testing.T) {
 	app.SetMediaHost(&MediaHost{view: &mygo.WebView{}})
 	app.OpenView("settings")
 	tt.Frame()
-	if tt.WebViewAt(700, 400) == nil {
-		t.Fatalf("settings fixture did not expose its interactive WebView host")
+	if tt.WebViewAt(700, 400) != nil {
+		t.Fatalf("settings fixture exposed an unexpected WebView host")
 	}
 }
 
@@ -642,10 +642,16 @@ func TestNativePageScreens(t *testing.T) {
 			app.actor = ActorState{ID: "actor-id", Profile: provider.profile, Works: []CatalogItem{{ID: "123456", Title: "演员作品一", EpisodeCount: 32}}, HasMore: true}
 		}},
 		{name: "settings", view: "settings", prepare: func(app *App) {
-			app.SetMediaHost(&MediaHost{view: &mygo.WebView{}})
-			app.OpenView("settings")
-			if !app.hostedScene() {
-				t.Fatalf("settings lost its interactive host")
+			app.settings = Settings{
+				Profile:        ipc.UserProfile{UserID: "710000000000001", Nickname: "视觉审查账号", LoggedIn: true},
+				CacheSize:      5 << 20,
+				DeviceID:       "visual-device",
+				DeviceVersion:  "2.0.0",
+				DeviceArch:     "darwin-arm64",
+				LegacyNickname: "Old Account",
+				LoginOpen:      true,
+				LoginCookie:    "sessionid=visual",
+				LoginToken:     "token",
 			}
 		}},
 	}
