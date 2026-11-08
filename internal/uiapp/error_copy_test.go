@@ -60,12 +60,13 @@ func TestUserFacingErrorMapsAuthNetworkAndUnknownErrors(t *testing.T) {
 	}{
 		{name: "auth sentinel", err: sdk.ErrAuthenticationRequired, want: "会话已失效，请重新登录"},
 		{name: "http unauthorized", err: errors.Join(sdk.ErrTransport, apiErr), want: "会话已失效，请重新登录"},
+		{name: "raw ranking unauthorized", err: errors.New("ranking API returned 401"), want: "会话已失效，请重新登录"},
 		{name: "rate limited", err: sdk.ErrRateLimited, want: "网络异常或访问受限，请稍后重试；匿名访问受限时可在设置中重置设备"},
 		{name: "anonymous limited", err: sdk.ErrAnonymousLimited, want: "网络异常或访问受限，请稍后重试；匿名访问受限时可在设置中重置设备"},
 		{name: "device rejected", err: sdk.ErrDeviceRejected, want: "网络异常或访问受限，请稍后重试；匿名访问受限时可在设置中重置设备"},
 		{name: "network timeout", err: &net.OpError{Op: "get", Err: timeoutErr}, want: "网络异常，请检查网络后重试"},
-		{name: "deadline", err: context.DeadlineExceeded, want: "网络异常或访问受限，请稍后重试；匿名访问受限时可在设置中重置设备"},
-		{name: "unknown english", err: errors.New("ranking API returned 401"), want: "加载失败，请稍后重试"},
+		{name: "deadline", err: context.DeadlineExceeded, want: "网络异常，请检查网络后重试"},
+		{name: "unknown english", err: errors.New("failed to fetch actor profile"), want: "加载失败，请稍后重试"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -96,7 +97,7 @@ func waitFeature(t *testing.T, app *App, done func() bool) {
 
 func TestFeatureErrorsUseUnifiedChineseCopy(t *testing.T) {
 	provider := &resultErrorProvider{
-		rankErr:    errors.New("ranking API returned 401"),
+		rankErr:    errors.New("ranking API returned code 999"),
 		releaseErr: sdk.ErrAuthenticationRequired,
 		profileErr: &sdk.APIError{HTTPStatus: http.StatusUnauthorized},
 	}
