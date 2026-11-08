@@ -58,8 +58,9 @@ passed. Vet, the CGO-disabled build and whitespace checks also passed. Six minim
 actions remain visible, including rank playback, history deletion, favorites
 and likes removal, and the single reservation-cancellation action.
 
-The existing `e2e/run_e2e.py` targets the old document-owned shell. It is not
-used as proof that the new native navigation has been exercised.
+The legacy document-shell runner has been removed. The retained Node suite is
+the JavaScript/controller regression suite; it does not replace native
+navigation acceptance with a live rendered application.
 
 Native page layouts and loading states are additionally audited through
 `TestSkeletonsMatchOriginalPageShapes` and the optional
