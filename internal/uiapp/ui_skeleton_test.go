@@ -69,7 +69,7 @@ func TestRepresentativeLoadingViewsShareShimmer(t *testing.T) {
 		{"library", "正在加载本地数据", func(a *App) { a.library.History.Loading = true; a.OpenView("history") }},
 		{"rank", "正在加载排行榜", func(a *App) { a.rank.Loading = true; a.OpenView("rank") }},
 		{"new", "正在加载新剧", func(a *App) { a.releases.Loading = true; a.OpenView("new") }},
-		{"detail", "正在加载详情", func(a *App) { a.detail.Loading = true; a.OpenDetail("123456") }},
+		{"detail", "短剧详情", func(a *App) { a.detail.Loading = true; a.OpenDetail("123456") }},
 		{"actor", "正在加载演员主页", func(a *App) { a.actor.Loading = true; a.OpenActor("actor-id") }},
 	}
 	for _, test := range tests {

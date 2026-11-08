@@ -510,7 +510,7 @@ func TestSkeletonsMatchOriginalPageShapes(t *testing.T) {
 	app.library.History.Loading = false
 	app.detail.Loading = true
 	tt.Frame()
-	if !tt.HasText("正在加载详情") {
+	if !tt.HasText("短剧详情") {
 		t.Fatalf("detail skeleton text missing: %v", tt.Texts())
 	}
 

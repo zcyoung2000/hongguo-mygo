@@ -858,7 +858,6 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 func (a *App) renderDetail(c *ui.Context) {
 	detail := a.detail
 	if detail.Loading && detail.Title == "" {
-		a.loadingView(c, "正在加载详情...")
 		a.detailSkeleton(c)
 		return
 	}
@@ -1134,18 +1133,16 @@ func (a *App) renderDetailEpisodes(c *ui.Context, episodes []CatalogItem) {
 	}
 }
 
-func (a *App) loadingView(c *ui.Context, message string) {
-	ui.Row(c).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Spinner(c)
-		ui.Text(c, message)
-	})
-}
-
 func (a *App) detailSkeleton(c *ui.Context) {
+	pageHeader(c, "短剧详情", "")
 	skeleton := pageShimmer(c)
 	wide := detailTwoColumn(c.Size())
-	scroll := ui.Scroll(c).Grow(1).Gap(c.Theme().Space(4))
+	scroll := ui.Scroll(c.Key("detail-page-scroll-skeleton")).Grow(1).Gap(c.Theme().Space(2) + 2)
 	scroll.Children(func() {
+		ui.Row(c.Key("detail-top-bar-skeleton")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).
+			Children(func() {
+				skeleton.bone(c.Key("detail-nav-back-skeleton"), 7).Height(30).Width(78)
+			})
 		layout := ui.Row(c.Key("detail-layout-skeleton")).Gap(28).AlignItems(ui.Start)
 		if wide {
 			layout.FillWidth()
@@ -1205,19 +1202,14 @@ func (a *App) detailSkeleton(c *ui.Context) {
 			right.Children(func() {
 				for _, collection := range []struct {
 					key, title string
-					rows       int
 				}{
-					{"seasons", "同系列短剧", 1}, {"adaptations", "同一剧本改编", 1},
+					{"seasons", "同系列短剧"}, {"adaptations", "同一剧本改编"},
 				} {
 					ui.Column(c.Key(collection.key + "-skeleton")).Gap(8).Children(func() {
 						ui.Text(c, collection.title).FontSize(15).Bold().TextColor(ui.Hex("#ffffff"))
-						ui.Row(c.Key("cards")).Gap(14).Children(func() {
-							for index := range 3 {
-								ui.Column(c.Key(index)).Width(132).Gap(6).Children(func() {
-									skeleton.bone(c.Key("poster"), 8).Size(132, 99)
-									skeleton.text(c.Key("title"), 13, 1.3).WidthPercent(90)
-								})
-							}
+						ui.Row(c.Key("cards")).Gap(c.Theme().Space(3)).Children(func() {
+							skeleton.bone(c.Key("poster"), 8).Size(150, 200)
+							skeleton.text(c.Key("title"), 13, 1.3).Width(150)
 						})
 					})
 				}
@@ -1228,11 +1220,12 @@ func (a *App) detailSkeleton(c *ui.Context) {
 					})
 					ui.Row(c.Key("episodes")).Wrap().Gap(10).Children(func() {
 						size := float32(68)
+						height := float32(44)
 						if wide {
-							size = 88
+							size, height = 88, 48
 						}
 						for index := range 12 {
-							skeleton.bone(c.Key(index), 8).Size(size, 44)
+							skeleton.bone(c.Key(index), 10).Size(size, height)
 						}
 					})
 				})

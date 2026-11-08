@@ -64,6 +64,44 @@ func TestDetailWideLayoutPlacesEpisodesBesideHero(t *testing.T) {
 	}
 }
 
+func TestDetailSkeletonAlignsToReadyHeaderAndCardShapes(t *testing.T) {
+	loading := NewTestApp()
+	loading.view = "detail"
+	loading.detail = Detail{Loading: true}
+	loadingTester := ui.NewTester(loading.Render, 1600, 1000)
+	loadingTester.Frame()
+	loadingTester.Advance(shimmerSampleOffset)
+	loadingTester.Frame()
+	skeletonBone, skeletonBoneOK := loadingTester.Find("短剧详情")
+	if !skeletonBoneOK {
+		t.Fatal("first detail skeleton bone missing")
+	}
+	loadingTester.Advance(shimmerSampleOffset)
+	loadingTester.Frame()
+	if loadingTester.HasText("正在加载详情") {
+		t.Fatal("detail skeleton duplicated the standalone loading spinner")
+	}
+	if loadingTester.HasText("← 返回") {
+		t.Fatal("detail skeleton included the ready back control")
+	}
+
+	ready := NewTestApp()
+	ready.view = "detail"
+	ready.detail = detailWideFixture()
+	readyTester := renderTesterAndAdvance(t, ready, 1600, 1000)
+	header, headerOK := readyTester.Find("短剧详情")
+	if !headerOK {
+		t.Fatal("ready detail header missing")
+	}
+	if absFloat(skeletonBone.Y-header.Y) > 8 {
+		t.Fatalf("skeleton top does not match ready content top: bone=%v header=%v", skeletonBone, header)
+	}
+
+	if !loadingTester.HasText("同系列短剧") || !loadingTester.HasText("同一剧本改编") {
+		t.Fatal("right column skeleton sections missing")
+	}
+}
+
 func TestDetailNarrowLayoutStaysSingleColumn(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
