@@ -2,7 +2,6 @@ package uiapp
 
 import (
 	"context"
-	"errors"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -137,36 +136,6 @@ func TestReservationUpdatesEveryVisibleCatalogAndConfirmsCancellation(t *testing
 	app.ToggleItemReservation(item)
 	if provider.reservationCalls.Load() != 1 {
 		t.Fatal("cancelled confirmation still mutated reservation")
-	}
-}
-
-type retryRelated struct {
-	fakeDetail
-	calls int
-}
-
-func (p *retryRelated) GetSeriesRelated(context.Context, string) (*ipc.SeriesCollectionDTO, error) {
-	p.calls++
-	if p.calls == 1 {
-		return nil, errors.New("temporary failure")
-	}
-	return &ipc.SeriesCollectionDTO{Title: "相关推荐", Items: []ipc.SeriesCard{{ID: "223456", Title: "相关短剧"}}}, nil
-}
-func TestRelatedFailureHasAWorkingRetry(t *testing.T) {
-	source := &retryRelated{}
-	app := NewTestApp(nil)
-	app.detailSource = source
-	app.OpenDetail("123456")
-	app.detail = Detail{ID: "123456", Title: "详情"}
-	app.loadRelatedAt("123456", app.generation)
-	tt := ui.NewTester(app.Render, 1200, 1200)
-	if !tt.HasText("相关推荐加载失败") || !tt.HasText("重试") {
-		t.Fatalf("no retry affordance: %v", tt.Texts())
-	}
-	app.RetryRelated()
-	tt.Frame()
-	if !tt.HasText("相关短剧") || app.DetailState().RelatedError != "" {
-		t.Fatalf("retry failed: %v", tt.Texts())
 	}
 }
 

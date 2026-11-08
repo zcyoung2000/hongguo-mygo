@@ -33,9 +33,7 @@ func TestDetailCollectionVerticalSpacingAudit(t *testing.T) {
 			Title: "同一剧本改编",
 			Items: []CatalogItem{{ID: "adaptation-1", Title: "十八岁的二次回响漫画版", EpisodeCount: 80, Heat: "300万热度"}},
 		},
-		Episodes:     []CatalogItem{{ID: "episode-1", EpisodeID: "episode-1", EpisodeCount: 1}},
-		RelatedTitle: "相关推荐",
-		Related:      []CatalogItem{{ID: "related-1", Title: "相关推荐剧", EpisodeCount: 24, Heat: "80万热度"}},
+		Episodes: []CatalogItem{{ID: "episode-1", EpisodeID: "episode-1", EpisodeCount: 1}},
 	}
 	tt := ui.NewTester(app.Render, 1200, 1080)
 	tt.SetDark(true)

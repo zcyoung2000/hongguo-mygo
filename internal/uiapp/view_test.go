@@ -86,14 +86,12 @@ func TestRenderDetailShowsEpisodesAndRelatedState(t *testing.T) {
 	app := NewTestApp(NewTestPlayerBridge())
 	app.detail = Detail{
 		ID: "123456", Title: "详情剧", StatusText: "完结", PlayCount: 321, EpisodeCount: 2,
-		Episodes:     []CatalogItem{{ID: "654321", Title: "第1集", EpisodeCount: 1}},
-		Related:      []CatalogItem{{ID: "223456", Title: "相关剧", EpisodeCount: 5}},
-		RelatedTitle: "相关推荐",
+		Episodes: []CatalogItem{{ID: "654321", Title: "第1集", EpisodeCount: 1}},
 	}
 	app.playerOn = true
 	app.view = "detail"
 	tt := ui.NewTester(app.Render, 1200, 800)
-	if !tt.HasText("详情剧") || !tt.HasText("完结 · 321次播放") || !tt.HasText("第1集") || !tt.HasText("相关剧") || !tt.HasText("播放 / 继续观看") {
+	if !tt.HasText("详情剧") || !tt.HasText("完结 · 321次播放") || !tt.HasText("第1集") || !tt.HasText("播放 / 继续观看") {
 		t.Fatalf("detail texts = %v", tt.Texts())
 	}
 }

@@ -544,7 +544,6 @@ func TestNativePageScreens(t *testing.T) {
 		Tags: []string{"古装", "逆袭"}, Heat: "312万热度", FollowCount: 12000, LikeCount: 34000,
 		PublishText: "2026-11-06 更新", StatusText: "连载中", PlayCount: 560000, EpisodeCount: 12,
 		Episodes: []CatalogItem{{ID: "e1", Title: "第1集", EpisodeCount: 1}, {ID: "e2", Title: "第2集", EpisodeCount: 2}},
-		Related:  []CatalogItem{{ID: "333456", Title: "相关推荐剧", EpisodeCount: 24, Heat: "80万热度"}}, RelatedTitle: "相关推荐",
 	}
 	save := func(name string, app *App) {
 		t.Helper()
