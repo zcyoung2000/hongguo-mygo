@@ -874,7 +874,7 @@ func (a *App) renderDetail(c *ui.Context) {
 		a.errorView(c, detail.Error, func() { go a.OpenDetail(detail.ID) })
 		return
 	}
-	pageHeader(c, "短剧详情", "真实剧集信息")
+	pageHeader(c, "短剧详情", "")
 	scroll := ui.Scroll(c.Key("detail-page-scroll")).Grow(1).Gap(c.Theme().Space(2) + 2).TrackScroll(&a.detailScroll)
 	scroll.Children(func() {
 		// Top Bar with a single back navigation entry.
@@ -891,7 +891,6 @@ func (a *App) renderDetail(c *ui.Context) {
 				backBtn.Children(func() {
 					ui.Text(c, "← 返回").FontSize(13).TextColor(ui.Hex("#ffffff")).Bold()
 				})
-				ui.Text(c, "短剧详情").FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.50))
 			})
 		})
 
@@ -907,9 +906,6 @@ func (a *App) renderDetail(c *ui.Context) {
 				ui.Textf(c, "%s · %d 人在追 · %d 赞", detail.Heat, detail.FollowCount, detail.LikeCount).FontSize(12).TextColor(c.Theme().TextMuted)
 				if detail.PublishText != "" {
 					ui.Text(c, detail.PublishText).FontSize(12).TextColor(c.Theme().TextMuted)
-				}
-				if detail.Description != "" {
-					ui.Text(c, detail.Description).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.82))
 				}
 				if detail.StatusText != "" || detail.PlayCount > 0 {
 					ui.Textf(c, "%s · %d次播放", detail.StatusText, detail.PlayCount).FontSize(12).TextColor(c.Theme().TextMuted)
