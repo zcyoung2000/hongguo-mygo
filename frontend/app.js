@@ -2132,6 +2132,8 @@ function pauseFeedPlayback() {
   updateFeedPlayIndicator();
 }
 
+let feedNextDramaTimer = null;
+
 function resumeFeedPlayback() {
   if (state.currentView !== 'recommend') return;
   const modal = document.getElementById('player-modal');

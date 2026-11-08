@@ -40,6 +40,18 @@ test('native host announces readiness only after its scene handler is installed'
   h.ready();
   assert.deepEqual(h.calls, [['NativeShell.MediaReady']]);
 });
+
+test('media host keeps runtime state required by recommend playback', () => {
+  const source = fs.readFileSync('frontend/app.js', 'utf8');
+  for (const declaration of [
+    'let feedNextDramaTimer = null',
+    'let feedPlayPromise = null',
+    'let feedPlaybackGeneration = 0',
+    "const video = document.getElementById('main-video')"
+  ]) {
+    assert.ok(source.includes(declaration), `${declaration} must remain in the media host`);
+  }
+});
 test('native scenes stop outgoing media before selecting feed or settings', () => {
   const h = host();
   h.send({event:'recommend'});
