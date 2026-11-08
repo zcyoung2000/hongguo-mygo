@@ -89,3 +89,38 @@ func TestVisualAuditPages(t *testing.T) {
 		app.Render(c)
 	})
 }
+
+func TestExportNewReleaseReady1600(t *testing.T) {
+	dir := os.Getenv("MYGUO_VISUAL_AUDIT_DIR")
+	if dir == "" {
+		t.Skip("set MYGUO_VISUAL_AUDIT_DIR to write visual audit screenshots")
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	item := CatalogItem{
+		ID: "123456", EpisodeID: "1", Title: "视觉审查待播新剧",
+		Category: "真人剧", EpisodeCount: 36, Description: "剧情简介",
+		PublishAt: "20261106", Upcoming: true,
+	}
+	app := NewTestApp()
+	app.view = "new"
+	app.releases = ReleaseState{
+		Calendar: true, Dates: []string{"20261106"}, Date: "20261106",
+		Items: []CatalogItem{item},
+	}
+	tester := ui.NewTester(app.Render, 1600, 1000)
+	tester.SetDark(true)
+	tester.Frame()
+	file, err := os.Create(filepath.Join(dir, "new-ready-1600.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(file, tester.Image()); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

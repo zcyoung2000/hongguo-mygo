@@ -16,7 +16,19 @@ const (
 	pageContentBottomPad float32 = 12
 )
 
-const newReleaseMaxCardWidth float32 = 480
+const (
+	newReleaseMaxCardWidth        float32 = 340
+	newReleaseSparsePosterWidth   float32 = 340
+	newReleaseSparseContentRatio  float32 = 0.60
+	newReleaseSparseGroup3Ratio   float32 = 0.85
+	newReleaseSparseMaxGroupRatio float32 = 1.02
+	newReleaseSparseChromeHeight  float32 = 320
+)
+
+func newReleasePosterWidth(height float32) float32 {
+	available := max(newReleaseSparsePosterWidth*posterAspectRatio, height-newReleaseSparseChromeHeight)
+	return min(newReleaseSparsePosterWidth, available/posterAspectRatio)
+}
 
 var (
 	artworkFade             = ui.Animation{Duration: 320 * time.Millisecond, NonMotion: true}

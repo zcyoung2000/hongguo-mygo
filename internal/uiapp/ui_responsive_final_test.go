@@ -2,6 +2,7 @@ package uiapp
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"testing"
@@ -177,22 +178,46 @@ func TestNewReleasesUseVisibleWidthWhenFewCards(t *testing.T) {
 				}
 				tester := ui.NewTester(app.Render, size[0], size[1])
 				tester.Frame()
-				first, ok := tester.Find("少卡新剧0")
-				if !ok {
-					t.Fatalf("release card missing: %v", tester.Texts())
-				}
-				if first.W < float32(size[0])/4 {
-					t.Fatalf("sparse release content too narrow at %dx%d: card=%+v", size[0], size[1], first)
-				}
-				if count > 1 {
-					second, ok := tester.Find("少卡新剧1")
-					if !ok {
-						t.Fatalf("second release card missing: %v", tester.Texts())
+				contentWidth := max(float64(newReleaseSparsePosterWidth), float64(size[0])-float64(defaultSidebarWidth)-32)
+				minRatio := float32(1)
+				visibleCount := 0
+				var narrowPanel ui.Rect
+				for index := range count {
+					panel, panelOK := tester.Find(fmt.Sprintf("release-feature-bounds:new-%d|1", index))
+					if !panelOK {
+						t.Fatalf("sparse release feature panel missing: %v", tester.Texts())
 					}
-					gap := second.X - first.X - first.W
-					if gap < 0 || gap > 24 {
-						t.Fatalf("large release cards unstable: first=%+v second=%+v gap=%.2f", first, second, gap)
+					posterWidth := newReleasePosterWidth(float32(min(size[1], 700)))
+					posterHeight := posterWidth * posterAspectRatio
+					if math.Abs(float64(posterWidth-newReleaseSparsePosterWidth)) > 0.01 ||
+						math.Abs(float64(posterAspectRatio-float32(4)/float32(3))) > 0.001 {
+						t.Fatalf("sparse poster size or ratio changed at %dx%d: posterWidth=%.2f ratio=%.4f", size[0], size[1], posterWidth, posterAspectRatio)
 					}
+					if panel.H > posterHeight+0.01 {
+						t.Fatalf("feature panel exceeds poster group height at %dx%d: panel=%+v posterHeight=%.2f", size[0], size[1], panel, posterHeight)
+					}
+					if panel.W <= 0 || panel.H <= 0 {
+						continue
+					}
+					visibleCount++
+					minRatio = min(minRatio, panel.W/float32(contentWidth))
+					if index == 0 || panel.W < narrowPanel.W {
+						narrowPanel = panel
+					}
+				}
+				wantRatio := float64(newReleaseSparseContentRatio)
+				if count == 3 {
+					wantRatio = float64(newReleaseSparseGroup3Ratio)
+				}
+				ratio := float64(minRatio)
+				if ratio < wantRatio {
+					t.Fatalf("sparse release group too narrow at %dx%d: panel=%+v ratio=%.3f want>=%.3f", size[0], size[1], narrowPanel, ratio, wantRatio)
+				}
+				if visibleCount == 0 {
+					t.Fatalf("no sparse release feature rows visible at %dx%d", size[0], size[1])
+				}
+				if ratio > float64(newReleaseSparseMaxGroupRatio) {
+					t.Fatalf("sparse release group exceeds available width at %dx%d: panel=%+v ratio=%.3f want<=%.3f", size[0], size[1], narrowPanel, ratio, float64(newReleaseSparseMaxGroupRatio))
 				}
 			})
 		}
