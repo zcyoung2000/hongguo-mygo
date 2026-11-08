@@ -89,10 +89,10 @@ func TestVisualAuditPages(t *testing.T) {
 		app.view = "settings"
 		app.Render(c)
 	})
-	save(t, "detail-related", func(c *ui.Context) {
+	save(t, "detail", func(c *ui.Context) {
 		app := NewTestApp(nil)
 		app.view = "detail"
-		app.detail = Detail{ID: "123456", Title: "详情页短剧", Description: "详情简介", Tags: []string{"都市", "逆袭"}, Heat: "312万热度", EpisodeCount: 12, Episodes: []CatalogItem{{ID: "e1", EpisodeCount: 1}, {ID: "e2", EpisodeCount: 2}}, Related: []CatalogItem{item}, RelatedTitle: "相关推荐"}
+		app.detail = Detail{ID: "123456", Title: "详情页短剧", Description: "详情简介", Tags: []string{"都市", "逆袭"}, Heat: "312万热度", EpisodeCount: 12, Episodes: []CatalogItem{{ID: "e1", EpisodeCount: 1}, {ID: "e2", EpisodeCount: 2}}}
 		app.Render(c)
 	})
 	save(t, "player", func(c *ui.Context) {

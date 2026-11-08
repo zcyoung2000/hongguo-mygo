@@ -1117,28 +1117,6 @@ func (a *App) renderDetail(c *ui.Context) {
 				})
 			}
 		}
-
-		ui.Text(c, detail.RelatedTitle).Bold()
-		if detail.RelatedLoading {
-			a.loadingView(c, "正在加载相关推荐...")
-		} else if detail.RelatedError != "" {
-			a.errorView(c, detail.RelatedError, func() { go a.RetryRelated() })
-		} else if len(detail.Related) == 0 {
-			ui.Text(c, "暂无相关推荐").TextColor(c.Theme().TextMuted)
-		} else {
-			ui.Row(c.Key("detail-related-wrap")).Wrap().Gap(14).Children(func() {
-				for _, item := range detail.Related {
-					a.catalogCard(c, item)
-				}
-			})
-		}
-	})
-}
-
-func (a *App) loadingView(c *ui.Context, message string) {
-	ui.Row(c).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Spinner(c)
-		ui.Text(c, message)
 	})
 }
 
