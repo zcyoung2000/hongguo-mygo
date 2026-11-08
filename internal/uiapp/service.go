@@ -788,7 +788,11 @@ func convertHistory(items []ipc.HistoryItem, err error) ([]CatalogItem, error) {
 	for index, item := range items {
 		title := item.Title
 		if title == "" {
-			title = "第" + strconv.Itoa(item.EpisodeNum) + "集"
+			if item.EpisodeNum > 0 {
+				title = "第" + strconv.Itoa(item.EpisodeNum) + "集"
+			} else {
+				title = "未知短剧"
+			}
 		}
 		out = append(out, CatalogItem{
 			ID: item.SeriesID, Title: title,
@@ -806,8 +810,12 @@ func convertFavorites(items []ipc.FavoriteItem, err error) ([]CatalogItem, error
 	}
 	out := make([]CatalogItem, 0, len(items))
 	for index, item := range items {
+		title := item.Title
+		if title == "" {
+			title = "未知短剧"
+		}
 		out = append(out, CatalogItem{
-			ID: item.SeriesID, Title: item.Title, Description: item.Description, CoverURL: item.CoverURL,
+			ID: item.SeriesID, Title: title, Description: item.Description, CoverURL: item.CoverURL,
 			EpisodeCount: item.TotalEpisodes, Rank: index,
 		})
 	}
@@ -820,8 +828,12 @@ func convertReservations(items []ipc.ReservationItem, err error) ([]CatalogItem,
 	}
 	out := make([]CatalogItem, 0, len(items))
 	for index, item := range items {
+		title := item.Title
+		if title == "" {
+			title = "未知短剧"
+		}
 		out = append(out, CatalogItem{
-			ID: item.SeriesID, Title: item.Title, Description: item.Note, CoverURL: item.CoverURL,
+			ID: item.SeriesID, Title: title, Description: item.Note, CoverURL: item.CoverURL,
 			PublishAt: item.PublishAt, Upcoming: !item.IsOnline, Reserved: true, Rank: index,
 		})
 	}
@@ -834,8 +846,12 @@ func convertLikes(items []ipc.LikeItem, err error) ([]CatalogItem, error) {
 	}
 	out := make([]CatalogItem, 0, len(items))
 	for index, item := range items {
+		title := item.Title
+		if title == "" {
+			title = "未知短剧"
+		}
 		out = append(out, CatalogItem{
-			ID: item.SeriesID, EpisodeID: item.EpisodeID, ResumeEpisode: item.EpisodeNum, ResumePosition: -1, Title: item.Title, Description: item.Description, CoverURL: item.CoverURL,
+			ID: item.SeriesID, EpisodeID: item.EpisodeID, ResumeEpisode: item.EpisodeNum, ResumePosition: -1, Title: title, Description: item.Description, CoverURL: item.CoverURL,
 			EpisodeCount: item.TotalEpisodes, Rank: index,
 		})
 	}
