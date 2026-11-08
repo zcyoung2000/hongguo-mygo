@@ -5,6 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../frontend/app.js'), 'utf8');
+const functionNames = [...source.matchAll(/^(?:async )?function (\w+)\(/gm)].map(match => match[1]);
 
 function commandHarness({detailOpen = false, currentView = 'recommend'} = {}) {
   const calls = [];
@@ -22,7 +23,7 @@ function commandHarness({detailOpen = false, currentView = 'recommend'} = {}) {
     state: {currentView}, video: mainVideo, getFeedVideo: () => feedVideo,
     toggleFeedPlay() { calls.push(['toggleFeedPlay']); },
     togglePictureInPicture() { calls.push(['togglePictureInPicture']); },
-    swipeFeed(direction) { calls.push(['swipeFeed', direction]); },
+    requestFeedSwitch(direction, source) { calls.push(['requestFeedSwitch', direction, source]); },
   };
   vm.createContext(context);
   const start = source.indexOf('function handleMediaCommand(');
@@ -47,9 +48,25 @@ test('system media commands work in the unified feed without a stale detail play
   h.context.handleMediaCommand({command: 'pause'});
   assert.equal(h.feedVideo.paused, true);
   h.context.handleMediaCommand({command: 'next'});
-  assert.deepEqual(h.calls.at(-1), ['swipeFeed', 'up']);
+  assert.deepEqual(h.calls.at(-1), ['requestFeedSwitch', 1, 'media-command']);
+  h.context.handleMediaCommand({command: 'prev'});
+  assert.deepEqual(h.calls.at(-1), ['requestFeedSwitch', -1, 'media-command']);
   h.context.handleMediaCommand({command: 'seek', position: 30});
   assert.equal(h.feedVideo.currentTime, 30);
   h.context.handleMediaCommand({command: 'pip'});
   assert.deepEqual(h.calls.at(-1), ['togglePictureInPicture']);
+});
+
+test('media navigation uses declared feed switch and ended handling stays active', () => {
+  assert.ok(functionNames.includes('requestFeedSwitch'), 'requestFeedSwitch must be declared');
+  assert.doesNotMatch(source, /\bswipeFeed\s*\(/, 'the removed swipeFeed path must stay removed');
+  assert.doesNotMatch(source, /\bplayerModal\b/, 'ended handling must not read a stale modal global');
+  const endedBody = source.slice(source.indexOf("video.addEventListener('ended'"), source.indexOf('if (progressWrap)', source.indexOf("video.addEventListener('ended'")));
+  assert.match(endedBody, /state\.currentView !== 'recommend' \|\| feedSlots\[feedSlotCurr\] !== slot/);
+});
+
+test('quality fallback helpers are declared for the real command path', () => {
+  for (const name of ['normalizeFeedQuality', 'qualityLabel', 'fallbackQualityOptions']) {
+    assert.ok(functionNames.includes(name), `${name} must be declared`);
+  }
 });

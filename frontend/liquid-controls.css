@@ -148,12 +148,12 @@ body.feed-ambient-glowing .cat-bar {
     inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
 }
 
-/* Ambient video glow around player modal stage & container */
-body.player-ambient-glowing #player-stage {
+/* Ambient video glow around the shared player stage. */
+body.player-ambient-glowing #feed-stage {
   box-shadow: 0 0 80px var(--feed-ambient-top, rgba(226, 26, 68, 0.25)) !important;
 }
 
-body.player-ambient-glowing .video-container::before {
+body.player-ambient-glowing .feed-stage::before {
   content: '';
   position: absolute;
   inset: -20px;
