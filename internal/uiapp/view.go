@@ -153,7 +153,7 @@ func (a *App) renderSidebar(c *ui.Context) {
 	})
 }
 func (a *App) hostedScene() bool {
-	return a.media != nil && (a.mediaOn || a.view == "recommend" || a.view == "settings")
+	return a.media != nil && (a.mediaOn || a.view == "recommend")
 }
 
 // Shared MyGo motion primitives keep feedback under 160 ms, reserve longer
@@ -217,6 +217,8 @@ func (a *App) renderBody(c *ui.Context) {
 				ui.Text(c, a.notice).TextColor(c.Theme().Accent)
 			}
 			switch a.view {
+			case "settings":
+				a.renderSettings(c)
 			case "search":
 				a.renderSearch(c)
 			case "history":
@@ -1291,8 +1293,4 @@ func catalogRowHeight(items []CatalogItem) float32 {
 		tallest = max(tallest, height)
 	}
 	return tallest
-}
-
-func (a *App) renderSettings(c *ui.Context) {
-	ui.WebView(c.Key("settings-surface"), a.media.WebView()).Fill()
 }
