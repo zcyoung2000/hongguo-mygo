@@ -56,6 +56,28 @@ const MACOS_SPINNER_SVG = `
 
 const LOADER_GRAPHIC = MACOS_SPINNER_SVG;
 
+const FEED_QUALITIES = ['1080p', '720p', '540p', '480p', '360p'];
+const FEED_DEFAULT_QUALITY = '720p';
+
+function normalizeFeedQuality(quality) {
+  const requested = String(quality || '').trim().toLowerCase();
+  return FEED_QUALITIES.includes(requested) ? requested : FEED_DEFAULT_QUALITY;
+}
+
+function qualityLabel(quality) {
+  return normalizeFeedQuality(quality).toUpperCase();
+}
+
+function fallbackQualityOptions(selected) {
+  const active = normalizeFeedQuality(selected);
+  return FEED_QUALITIES.map(quality => ({
+    id: quality,
+    label: qualityLabel(quality),
+    available: true,
+    active: quality === active
+  }));
+}
+
 function renderCommentSkeleton(count = 4) {
   let html = '';
   for (let i = 0; i < count; i++) {
@@ -1943,11 +1965,11 @@ function handleMediaCommand(payload) {
     return;
   }
   if (command === 'next') {
-    swipeFeed('up');
+    requestFeedSwitch(1, 'media-command');
     return;
   }
   if (command === 'prev') {
-    swipeFeed('down');
+    requestFeedSwitch(-1, 'media-command');
     return;
   }
   if (command === 'seek' && typeof payload.position === 'number') {
@@ -4329,8 +4351,7 @@ function initFeedControls() {
       if (window.ambientGlow) {
         window.ambientGlow.stop();
       }
-      if (state.currentView !== 'recommend') return;
-          if (playerModal && playerModal.style.display !== 'none') return;
+      if (state.currentView !== 'recommend' || feedSlots[feedSlotCurr] !== slot) return;
       persistFeedProgress();
       state.feed.playbackPositions.delete(
         feedPlaybackKey(state.feed.seriesId, state.feed.episodeNum, state.feed.quality)

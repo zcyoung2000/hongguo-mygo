@@ -106,9 +106,58 @@ function loadController(fixture) {
 
 const css = read('frontend/styles.css');
 assert.match(css, /--player-drawer-width:\s*248px/);
+assert.match(css, /--comment-sheet-width:\s*420px/);
 assert.doesNotMatch(css, /\.feed-playlist-drawer\s*\{[^}]*width:\s*320px/);
 assert.match(css, /\.feed-playlist-drawer\s+\.episodes-grid\s*\{[^}]*gap:\s*6px/);
 assert.match(css, /\.feed-playlist-drawer\s+\.episodes-grid\.is-collapsed\s*\{[^}]*height:\s*calc\(3 \* 28px \+ 2 \* 6px\)/);
+
+{
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const selectorNeedsLayout = [
+    'feed-controls', 'progress-bar-wrap', 'progress-bar-bg', 'progress-bar-buffer',
+    'progress-bar-current', 'controls-row', 'controls-left', 'controls-right', 'ctrl-btn',
+    'time-display', 'quality-selector', 'speed-selector', 'ctrl-text-btn', 'quality-menu',
+    'speed-menu', 'speed-opt'
+  ];
+  for (const className of selectorNeedsLayout) {
+    assert.match(
+      cssWithoutComments,
+      new RegExp(`(?:^|[\\s,}])\\.${className}\\s*[,{]|(?:^|[\\s,}])\\.${className}\\s*:`, 'm'),
+      `player chrome class must retain a layout rule: .${className}`
+    );
+  }
+  assert.match(cssWithoutComments, /\.feed-container\.feed-fullscreen\s*\{[^}]*position:\s*fixed/);
+  assert.match(cssWithoutComments, /\.feed-controls\s*\{[^}]*left:\s*var\(--stage-chrome-inset/);
+  assert.match(cssWithoutComments, /\.feed-controls\s*\{[^}]*bottom:\s*var\(--stage-chrome-inset/);
+  assert.match(cssWithoutComments, /body\.comments-open\s+\.feed-stage\s*\{[^}]*inset:\s*0\s+var\(--comment-sheet-width\)/);
+  assert.match(cssWithoutComments, /\.comment-sheet-overlay\s*\{[^}]*position:\s*fixed/);
+  assert.match(cssWithoutComments, /\.comment-sheet\s*\{[^}]*display:\s*flex/);
+  assert.match(cssWithoutComments, /\.comment-list\s*\{[^}]*overflow-y:\s*auto/);
+}
+
+{
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const appSource = read('frontend/app.js');
+  const renderStart = appSource.indexOf('function renderCommentSheet()');
+  const renderEnd = appSource.indexOf('function closeCommentSheet()', renderStart);
+  assert.ok(renderStart >= 0 && renderEnd > renderStart, 'comment renderer must exist');
+  const renderSource = appSource.slice(renderStart, renderEnd);
+  const replyStart = appSource.indexOf('function appendReplyElements()');
+  const replySource = appSource.slice(replyStart, renderEnd);
+  const dynamicCommentClasses = [...renderSource.matchAll(/className\s*=\s*['"`]([^'"`]+)['"`]/g)]
+    .flatMap(match => match[1].trim().split(/\s+/))
+    .filter(Boolean);
+  dynamicCommentClasses.push(...[...replySource.matchAll(/className\s*=\s*['"`]([^'"`]+)['"`]/g)]
+    .flatMap(match => match[1].trim().split(/\s+/))
+    .filter(Boolean));
+  for (const className of new Set(dynamicCommentClasses)) {
+    assert.match(
+      cssWithoutComments,
+      new RegExp(`(?:^|[\\s,}])\\.${className}\\s*[,{]|(?:^|[\\s,}])\\.${className}\\s*:`, 'm'),
+      `comment DOM class must retain a layout rule: .${className}`
+    );
+  }
+}
 
 const app = read('frontend/app.js');
 
