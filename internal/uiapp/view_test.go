@@ -82,7 +82,7 @@ func TestSidebarClickOpensHistory(t *testing.T) {
 	}
 }
 
-func TestRenderDetailShowsEpisodesAndRelatedState(t *testing.T) {
+func TestRenderDetailShowsEpisodes(t *testing.T) {
 	app := NewTestApp(NewTestPlayerBridge())
 	app.detail = Detail{
 		ID: "123456", Title: "详情剧", StatusText: "完结", PlayCount: 321, EpisodeCount: 2,
