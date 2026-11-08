@@ -271,11 +271,11 @@ func (a *App) LoadRank(more bool) {
 	}
 	a.rank.Loading = false
 	if err != nil {
-		a.rank.Error = err.Error()
+		a.rank.Error = featureError("rankings", err)
 		a.invalidate()
 		return
 	}
-	items := result.Items
+	items := append([]ipc.RankItemDTO(nil), result.Items...)
 	if more {
 		items = append(append([]ipc.RankItemDTO(nil), a.rank.Items...), items...)
 	}
@@ -331,7 +331,7 @@ func (a *App) LoadReleases() {
 	}
 	a.releases.Loading = false
 	if err != nil {
-		a.releases.Error = err.Error()
+		a.releases.Error = featureError("new releases", err)
 	} else {
 		a.releases.Items, a.releases.Dates, a.releases.Error = items, dates, ""
 		if a.releases.Date == "" {
@@ -377,7 +377,7 @@ func (a *App) loadActor(more bool) {
 	}
 	a.actor.Loading, a.actor.requesting = false, false
 	if err != nil {
-		a.actor.Error = err.Error()
+		a.actor.Error = featureError("actor", err)
 	} else {
 		if more {
 			works = append(append([]CatalogItem(nil), a.actor.Works...), works...)
