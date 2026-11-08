@@ -1924,56 +1924,39 @@ function togglePictureInPicture() {
 }
 
 function handleMediaCommand(payload) {
-      const cmd = payload?.command;
-      if (!cmd) return;
+  const command = payload?.command;
+  if (!command) return;
+  if (state.currentView !== 'recommend') return;
+  const feedVideo = getFeedVideo();
+  if (!feedVideo) return;
 
-          const isDetailOpen = playerModal && playerModal.style.display !== 'none';
-
-      if (cmd === 'toggle') {
-        if (isDetailOpen) {
-          const playPauseBtn = document.getElementById('player-play');
-          if (playPauseBtn) playPauseBtn.click();
-        } else if (state.currentView === 'recommend') {
-          toggleFeedPlay();
-        }
-      } else if (cmd === 'play') {
-        if (isDetailOpen) {
-          if (video.paused) video.play().catch(e => console.log('play error:', e));
-        } else if (state.currentView === 'recommend') {
-          const feedVideo = getFeedVideo();
-          if (feedVideo.paused) feedVideo.play().catch(e => console.log('play error:', e));
-        }
-      } else if (cmd === 'pause') {
-        if (isDetailOpen) {
-          if (!video.paused) video.pause();
-        } else if (state.currentView === 'recommend') {
-          const feedVideo = getFeedVideo();
-          if (!feedVideo.paused) feedVideo.pause();
-        }
-      } else if (cmd === 'next') {
-        if (isDetailOpen) {
-          const nextBtn = document.getElementById('player-next-ep');
-          if (nextBtn && !nextBtn.disabled) nextBtn.click();
-        } else if (state.currentView === 'recommend') {
-          swipeFeed('up');
-        }
-      } else if (cmd === 'prev') {
-        if (isDetailOpen) {
-          const prevBtn = document.getElementById('player-prev-ep');
-          if (prevBtn && !prevBtn.disabled) prevBtn.click();
-        } else if (state.currentView === 'recommend') {
-          swipeFeed('down');
-        }
-      } else if (cmd === 'seek' && typeof payload.position === 'number') {
-        if (isDetailOpen) {
-          video.currentTime = payload.position;
-        } else if (state.currentView === 'recommend') {
-          const feedVideo = getFeedVideo();
-          feedVideo.currentTime = payload.position;
-        }
-      } else if (cmd === 'pip') {
-        togglePictureInPicture();
-      }
+  if (command === 'toggle') {
+    toggleFeedPlay();
+    return;
+  }
+  if (command === 'play') {
+    if (feedVideo.paused) feedVideo.play().catch(error => console.log('play error:', error));
+    return;
+  }
+  if (command === 'pause') {
+    if (!feedVideo.paused) feedVideo.pause();
+    return;
+  }
+  if (command === 'next') {
+    swipeFeed('up');
+    return;
+  }
+  if (command === 'prev') {
+    swipeFeed('down');
+    return;
+  }
+  if (command === 'seek' && typeof payload.position === 'number') {
+    feedVideo.currentTime = payload.position;
+    return;
+  }
+  if (command === 'pip') {
+    togglePictureInPicture();
+  }
 }
 
 function initNativeBridgeEvents() {
