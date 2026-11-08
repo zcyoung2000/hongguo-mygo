@@ -16,7 +16,8 @@ func TestNewSeriesDetailPagePreservesActorSchemaUserID(t *testing.T) {
 	series := &model.Series{
 		SeriesSummary: model.SeriesSummary{ID: "123456", Title: "演员详情", EpisodeCount: 1},
 		Rows: []model.InfoRow{
-			{Kind: model.InfoTwoActors, Text: "演员·可跳转演员 无ID演员", Schema: "dragon8662://user/710000000000001"},
+			{Kind: model.InfoTwoActors, Text: "演员·可跳转演员", Schema: "dragon8662://user/710000000000001"},
+			{Kind: model.InfoTwoActors, Text: "演员·无ID演员"},
 		},
 	}
 	page := service.newSeriesDetailPage(model.SeriesDetail{Series: series, Episodes: []model.Episode{{ID: "episode", SeriesID: "123456", Number: 1}}}, "123456")

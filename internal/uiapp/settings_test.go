@@ -120,7 +120,7 @@ func TestSettingsRendersNativeSectionsAndActions(t *testing.T) {
 		t.Fatal("settings leaked a WebView surface")
 	}
 	for _, text := range []string{
-		"系统与账号设置", "Henry", "已登录官方账号", "账号 ID:", "42", "刷新资料", "退出登录", "立即登录",
+		"系统与账号设置", "Henry", "已登录官方账号", "账号 ID:", "42", "刷新资料", "退出登录", "切换账号",
 		"设备与存储管理", "本地媒体缓存", "5.0 MB", "清理缓存", "匿名设备指纹", "device-id", "重置设备",
 		"关于", "客户端版本", "2.0.0", "运行平台", "darwin-arm64",
 		"账号凭据登录", "Cookie (必填)", "验证并登录",

@@ -38,7 +38,7 @@ func TestDetailActorsUseSchemaIDOrRemoveButtonAffordance(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.detail = Detail{ID: "123456", Actors: testActorPage()}
-	tt := renderTester(t, app, 1200, 800)
+	tt := renderTesterAndAdvance(t, app, 1200, 800)
 	if _, ok := tt.AccessByRole(ui.RoleButton, "演员主页：可跳转演员"); !ok {
 		t.Fatalf("actor with schema ID missing button role")
 	}
@@ -58,7 +58,7 @@ func TestDetailCollectionEmptyStateDistinguishesFromError(t *testing.T) {
 		Seasons:     DetailCollection{Title: "同系列短剧"},
 		Adaptations: DetailCollection{Title: "同一剧本改编", Error: "加载失败"},
 	}
-	tt := renderTester(t, app, 1200, 800)
+	tt := renderTesterAndAdvance(t, app, 1200, 800)
 	if !tt.HasText("暂无同系列短剧") {
 		t.Fatalf("collection empty state missing")
 	}
@@ -71,7 +71,7 @@ func TestDetailStatsOmitMissingFields(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.detail = Detail{ID: "123456", Title: "字段缺失详情", FollowCount: 12000}
-	tt := renderTester(t, app, 1200, 800)
+	tt := renderTesterAndAdvance(t, app, 1200, 800)
 	if tt.HasText("· 人在追") || tt.HasText("· 0次播放") {
 		t.Fatalf("detail stats rendered empty fragments")
 	}
@@ -121,7 +121,7 @@ func testActorPage() []ipc.ActorInfo {
 	return []ipc.ActorInfo{{Name: "可跳转演员", Role: "演员", UserID: "710000000000001"}, {Name: "无ID演员", Role: "演员"}}
 }
 
-func renderTester(t *testing.T, app *App, width, height int) *ui.Tester {
+func renderTesterAndAdvance(t *testing.T, app *App, width, height int) *ui.Tester {
 	t.Helper()
 	tt := ui.NewTester(app.Render, width, height)
 	if tt.FramePending() {

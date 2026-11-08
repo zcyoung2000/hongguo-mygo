@@ -46,16 +46,22 @@ test('native host announces readiness only after its scene handler is installed'
   assert.deepEqual(h.calls, [['NativeShell.MediaReady']]);
 });
 
-test('media host keeps runtime state required by recommend playback', () => {
+test('media host keeps runtime state and resume bridge required by playback', () => {
   const source = fs.readFileSync('frontend/app.js', 'utf8');
   for (const declaration of [
     'let feedNextDramaTimer = null',
     'let feedPlayPromise = null',
     'let feedPlaybackGeneration = 0',
-    'function getFeedVideo()'
+    'function getFeedVideo()',
+    "window.nativeMediaNotify?.('ResumeProgress', {",
+    'episodeNum: state.feed.episodeNum,',
+    'positionSec: feedVideo.currentTime,',
+    'session: window.nativeMediaSession?.()'
   ]) {
     assert.ok(source.includes(declaration), `${declaration} must remain in the media host`);
   }
+  const bridge = fs.readFileSync('frontend/native-media.js', 'utf8');
+  assert.ok(bridge.includes('window.nativeMediaSession = () => Number(activeSession);'));
 });
 test('native scenes stop outgoing media before selecting feed or settings', () => {
   const h = host();
