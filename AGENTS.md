@@ -14,6 +14,7 @@ This repository is a native macOS short-drama browsing client. Before starting d
 8. UI/rendering/long-list tests must use stable labels, handles or test hooks after two similar failures; never retry fixed pixel coordinates or repeatedly micro-edit patches. Use at least a 30-second timeout, then report matched elements and the failure instead of looping.
 9. Complex UI debugging is allowed, but keep child sessions compact: avoid repetitive screenshot/tool loops, batch diagnostics, and stop/restart into a fresh child session when a turn keeps appending hundreds of tool events without corresponding file changes.
 10. UI changes require two-layer acceptance: assert interaction, data and command behavior with structured tests, and inspect a real rendered screenshot with model vision for overlap, clipping, spacing and aesthetics. Do not replace visual review with repeated headless trial-and-error or string assertions.
+11. General circuit breaker: after three attempts at the same goal, stop that direction when failures are identical/similar or command/query/patch inputs are materially repeated. First record verified facts, remaining assumptions, and at least two different alternative directions. Never evade the breaker by changing parameters, paths, models, or restarting the session. If no materially different direction is available, report the blocker to the user instead of calling the same tool class again.
 
 ## Verify
 
