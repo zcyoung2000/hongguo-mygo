@@ -257,17 +257,33 @@ func (a *App) renderReleases(c *ui.Context) {
 	}
 	if value.Loading {
 		ui.Text(c, "正在加载新剧...").TextColor(c.Theme().TextMuted)
-		a.gridSkeleton(c, 12, gridContentWidth(c))
+		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
 	if len(value.Items) == 0 {
 		a.emptyView(c, "当前新剧热榜暂无剧集", "可以选择其他日期")
 		return
 	}
+	if len(value.Items) <= 3 {
+		a.releaseCardGrid(c, value.Items)
+		return
+	}
 	if a.releaseGrid == nil {
 		a.releaseGrid = &ui.GridState{}
 	}
 	a.cardGrid(c, "releases-grid", a.releaseGrid, nil, value.Items, 0, nil).Grow(1)
+}
+
+func (a *App) releaseCardGrid(c *ui.Context, items []CatalogItem) {
+	contentWidth := a.gridContentWidth(c)
+	_, windowHeight := c.Size()
+	heightCap := max(dramaMinCardWidth, (windowHeight-320)*0.75)
+	cardWidth := min((contentWidth-float32(len(items)-1)*dramaCardGap)/float32(len(items))-4, newReleaseMaxCardWidth, heightCap)
+	ui.Grid(c.Key("releases-sparse-grid")).Columns(len(items)).Gap(dramaCardGap).Children(func() {
+		for _, item := range items {
+			a.catalogCardSized(c, item, cardWidth)
+		}
+	})
 }
 func (a *App) renderActor(c *ui.Context) {
 	actor := a.actor
@@ -321,7 +337,7 @@ func (a *App) renderActor(c *ui.Context) {
 			})
 		})
 		ui.Box(c).Height(18)
-		a.gridSkeleton(c, 12, gridContentWidth(c))
+		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
 	if a.actorWorksGrid == nil {

@@ -381,7 +381,7 @@ func (a *App) renderCatalog(c *ui.Context) {
 		ui.Column(c.Key("discover-loading")).Grow(1).Gap(14).Children(func() {
 			ui.Text(c, "正在加载目录...").TextColor(c.Theme().TextMuted)
 			a.filterSkeleton(c)
-			a.gridSkeleton(c, 12, gridContentWidth(c))
+			a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		})
 		return
 	}
@@ -671,8 +671,8 @@ func (a *App) renderSearchBar(c *ui.Context) {
 }
 
 func (a *App) renderSearch(c *ui.Context) {
-	a.renderSearchBar(c)
 	pageHeader(c, "搜索", "短剧、角色和演员")
+	a.renderSearchBar(c)
 	search := a.search
 	if a.query == "" && len(search.Items) == 0 && !search.Loading && search.Error == "" {
 		a.emptyView(c, "搜索短剧", "输入剧名、角色或演员，发现想看的短剧")
@@ -680,7 +680,7 @@ func (a *App) renderSearch(c *ui.Context) {
 	}
 	if search.Loading {
 		ui.Text(c, "正在搜索...").TextColor(c.Theme().TextMuted)
-		a.gridSkeleton(c, 12, gridContentWidth(c))
+		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
 	if search.Error != "" {
@@ -806,7 +806,7 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 	}
 	if library.Loading && len(library.Items) == 0 {
 		ui.Text(c, "正在加载本地数据...").TextColor(c.Theme().TextMuted)
-		a.gridSkeleton(c, 12, gridContentWidth(c))
+		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
 

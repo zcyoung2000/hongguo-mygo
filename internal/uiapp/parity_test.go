@@ -177,7 +177,11 @@ func TestSuggestionsKeyboardAndEscape(t *testing.T) {
 	app.suggestions = []string{"短剧一", "短剧二"}
 	app.suggestionIndex = -1
 	tt := ui.NewTester(app.Render, 1200, 800)
-	tt.ClickAt(300, 60)
+	bar, barOK := tt.Find("搜索短剧")
+	if !barOK {
+		t.Fatal("search input missing")
+	}
+	tt.ClickAt(bar.X+bar.W/2, bar.Y+bar.H/2)
 	tt.Key(0, ui.KeyDown)
 	tt.Frame()
 	if app.Query() != "短剧一" {

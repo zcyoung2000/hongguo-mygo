@@ -97,6 +97,7 @@ func TestRepresentativePagesResponsiveConvergence(t *testing.T) {
 				app.view = page.view
 				page.prepare(app)
 				tester := ui.NewTester(app.Render, size[0], size[1])
+				tester.SetFocused(false)
 				tester.Frame()
 
 				if !tester.HasText(page.header) {
@@ -117,6 +118,17 @@ func TestRepresentativePagesResponsiveConvergence(t *testing.T) {
 				}
 
 				if page.name == "detail" || page.name == "rank" {
+					return
+				}
+
+				if page.name == "new" {
+					first, firstOK := tester.Find(page.title)
+					if !firstOK {
+						t.Fatalf("%s first card missing at %dx%d: %v", page.name, size[0], size[1], tester.Texts())
+					}
+					if first.W < 240 {
+						t.Fatalf("%s sparse content does not use the large-card layout: %+v", page.name, first)
+					}
 					return
 				}
 
@@ -143,6 +155,75 @@ func TestRepresentativePagesResponsiveConvergence(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestNewReleasesUseVisibleWidthWhenFewCards(t *testing.T) {
+	sizes := [][2]int{{1600, 1000}, {1200, 800}}
+	for _, size := range sizes {
+		for _, count := range []int{1, 3} {
+			name := fmt.Sprintf("%dx%d/%d-card", size[0], size[1], count)
+			t.Run(name, func(t *testing.T) {
+				app := NewTestApp()
+				app.view = "new"
+				app.releases.Calendar = true
+				app.releases.Dates = []string{"20261109"}
+				app.releases.Date = "20261109"
+				for index := range count {
+					app.releases.Items = append(app.releases.Items, CatalogItem{
+						ID: fmt.Sprintf("new-%d", index), EpisodeID: "1",
+						Title: fmt.Sprintf("少卡新剧%d", index), Upcoming: true,
+					})
+				}
+				tester := ui.NewTester(app.Render, size[0], size[1])
+				tester.Frame()
+				first, ok := tester.Find("少卡新剧0")
+				if !ok {
+					t.Fatalf("release card missing: %v", tester.Texts())
+				}
+				if first.W < float32(size[0])/4 {
+					t.Fatalf("sparse release content too narrow at %dx%d: card=%+v", size[0], size[1], first)
+				}
+				if count > 1 {
+					second, ok := tester.Find("少卡新剧1")
+					if !ok {
+						t.Fatalf("second release card missing: %v", tester.Texts())
+					}
+					gap := second.X - first.X - first.W
+					if gap < 0 || gap > 24 {
+						t.Fatalf("large release cards unstable: first=%+v second=%+v gap=%.2f", first, second, gap)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestNewReleasesKeepCatalogDensityWhenFull(t *testing.T) {
+	app := NewTestApp()
+	app.view = "new"
+	app.releases.Calendar = true
+	app.releases.Dates = []string{"20261109"}
+	app.releases.Date = "20261109"
+	for index := range 6 {
+		app.releases.Items = append(app.releases.Items, CatalogItem{
+			ID: fmt.Sprintf("full-%d", index), EpisodeID: "1",
+			Title: fmt.Sprintf("满行新剧%d", index), Upcoming: true,
+		})
+	}
+	tester := ui.NewTester(app.Render, 1600, 1000)
+	tester.SetFocused(false)
+	tester.Frame()
+	first, firstOK := tester.Find("满行新剧0")
+	third, thirdOK := tester.Find("满行新剧2")
+	if !firstOK || !thirdOK {
+		t.Fatalf("full release row incomplete: %v", tester.Texts())
+	}
+	if first.W > 230 {
+		t.Fatalf("full releases changed catalog density: first=%+v", first)
+	}
+	if third.X < first.X+2*(first.W+18) || third.X > first.X+2*(first.W+24) {
+		t.Fatalf("full releases did not use the normal column step: first=%+v third=%+v", first, third)
 	}
 }
 

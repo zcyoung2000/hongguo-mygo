@@ -109,25 +109,38 @@ func TestHoverFeedbackCoversClickableNativeSurfaces(t *testing.T) {
 
 func TestSkeletonGeometryMatchesReadyContent(t *testing.T) {
 	app := NewTestApp()
-	app.view = "discover"
-	app.catalog.Loading = true
-	tester := ui.NewTester(app.Render, 1000, 800)
+	app.view = "search"
+	app.search.Loading = true
+	tester := ui.NewTester(app.Render, 1600, 1000)
 	tester.Frame()
-	skeleton, skeletonOK := tester.Find("按体裁和筛选条件浏览真实目录")
+	loadingBar, loadingBarOK := tester.Find("搜索短剧")
+	loadingHeader, loadingHeaderOK := tester.Find("短剧、角色和演员")
+	skeleton, skeletonOK := tester.AccessByRole(ui.RoleImage, "加载海报占位")
 	if !skeletonOK {
-		t.Fatal("discover skeleton missing")
+		t.Fatal("search skeleton bone missing")
 	}
-	app.catalog.Loading = false
-	app.catalog.Items = []CatalogItem{{ID: "123456", EpisodeID: "654321", Title: "几何稳定样本"}}
+	if !loadingBarOK || !loadingHeaderOK {
+		t.Fatalf("search loading page missing: %v", tester.Texts())
+	}
+	if loadingHeader.Y > loadingBar.Y {
+		t.Fatalf("search header is not rendered before the search bar: header=%+v bar=%+v", loadingHeader, loadingBar)
+	}
+	app.search.Loading = false
+	app.search.Items = []CatalogItem{{ID: "123456", EpisodeID: "654321", Title: "几何稳定样本"}}
 	tester.Frame()
 	content, contentOK := tester.Find("几何稳定样本")
-	if !contentOK {
-		t.Fatal("ready content missing")
+	readyBar, readyBarOK := tester.Find("搜索短剧")
+	if !contentOK || !readyBarOK {
+		t.Fatal("search ready content missing")
 	}
-	if math.Abs(float64(skeleton.X-content.X)) > 2 {
-		t.Fatalf("skeleton-to-content left edge shifted: skeleton=%+v content=%+v", skeleton, content)
+	if math.Abs(float64(skeleton.Bounds.X-content.X)) > 2 {
+		t.Fatalf("skeleton-to-content left edge shifted: skeleton=%+v content=%+v", skeleton.Bounds, content)
 	}
-	if skeleton.W < content.W {
-		t.Fatalf("skeleton grid narrower than ready card column: skeleton=%+v content=%+v", skeleton, content)
+	widthTolerance := max(2, content.W*0.03)
+	if math.Abs(float64(loadingBar.X-readyBar.X)) > 2 || math.Abs(float64(loadingBar.Y-readyBar.Y)) > 2 {
+		t.Fatalf("search bar shifted between loading and ready: loading=%+v ready=%+v", loadingBar, readyBar)
+	}
+	if math.Abs(float64(skeleton.Bounds.W-content.W)) > float64(widthTolerance) {
+		t.Fatalf("skeleton bone does not use the visible grid width: bone=%+.2f card=%+.2f", skeleton.Bounds.W, content.W)
 	}
 }
