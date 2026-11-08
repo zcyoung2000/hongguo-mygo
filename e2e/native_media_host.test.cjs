@@ -12,7 +12,10 @@ function host() {
     MutationObserver: class { constructor(callback) { listeners[`observer${listeners.nextName++}`] = callback; } observe() {} },
     getComputedStyle(node) { return {display: node.display || 'flex', visibility: node.visibility || 'visible'}; },
     localStorage: { getItem() { return null; } },
-    switchView(view) { calls.push(['view', view]); },
+    switchView(view) {
+      calls.push(['view', view]);
+      context.state.currentView = view;
+    },
     closePlayer() { calls.push(['close']); context.window.nativeMediaClosed?.(); },
     enterSeriesPlayer(id, episode) { calls.push(['play', id, episode]); return Promise.resolve(); },
     getFeedVideo() { return null; },
@@ -23,6 +26,7 @@ function host() {
     qualityLabel(value) { return String(value || '720p').toUpperCase(); },
     showToast(message) { calls.push(['error', String(message)]); },
     state: {
+      currentView: 'native-idle',
       detail: {},
       feed: { channel: '', items: [] },
       player: { quality: '720p', qualityOptions: [], playbackSpeed: 1.25, episodeNum: 4, totalEpisodes: 12 }
@@ -60,6 +64,16 @@ test('native scenes stop outgoing media before selecting feed or settings', () =
   h.send({event:'settings'});
   assert.deepEqual(h.calls.slice(3).map(call=>call[0]+':'+(call[1]||'')), ['view:settings']);
   assert.equal(h.calls.some(call=>call[0]==='NativeShell.Closed'), false, 'internal transitions must not close native detail');
+});
+test('settings remains a hosted scene and returns to a replaced feed', () => {
+  const h = host();
+  h.send({event:'settings'});
+  assert.deepEqual(h.calls.map(call=>call[0]+':'+(call[1]||'')), ['view:native-idle','view:settings']);
+  assert.equal(h.context.state.currentView, 'settings');
+  h.send({event:'recommend', channel:'真人剧'});
+  assert.deepEqual(h.calls.slice(2).map(call=>call[0]+':'+(call[1]||'')), ['view:native-idle','view:recommend']);
+  assert.equal(h.context.state.feed.channel, '真人剧');
+  assert.equal(h.context.state.currentView, 'recommend');
 });
 test('native playback enters the shared recommend player', () => {
   const h = host();

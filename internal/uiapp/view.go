@@ -192,13 +192,13 @@ func (a *App) renderBody(c *ui.Context) {
 	// Keep this parent stable, but give native pages and the media surface distinct
 	// identities. A removed WebView must not retain a hole over the next page.
 	ui.Column(c.Key("content-host")).Fill().MinWidth(0).MinHeight(0).Background(c.Theme().Background).Children(func() {
-		if a.hostedScene() || a.playerFixture {
-			if a.playerFixture {
-				ui.Column(c.Key("fixture-frame")).Fill().Children(func() {
-					a.renderPlayerVisualFixture(c)
-				})
-				return
-			}
+		if a.playerFixture {
+			ui.Column(c.Key("fixture-frame")).Fill().Children(func() {
+				a.renderPlayerVisualFixture(c)
+			})
+			return
+		}
+		if a.hostedScene() {
 			page := ui.Column(c.Key("hosted-page")).Fill().MinWidth(0).MinHeight(0)
 			page.Transition(pageTransition).Children(func() {
 				ui.WebView(c.Key("media-surface"), a.media.WebView()).Fill().MinWidth(0).MinHeight(0)
@@ -235,8 +235,6 @@ func (a *App) renderBody(c *ui.Context) {
 				a.renderReleases(c)
 			case "actor":
 				a.renderActor(c)
-			case "settings":
-				a.renderSettings(c)
 			default:
 				a.renderCatalog(c)
 			}
@@ -1296,5 +1294,5 @@ func catalogRowHeight(items []CatalogItem) float32 {
 }
 
 func (a *App) renderSettings(c *ui.Context) {
-	a.emptyView(c, "设置暂不可用", "请重新打开应用后重试")
+	ui.WebView(c.Key("settings-surface"), a.media.WebView()).Fill()
 }

@@ -5,6 +5,7 @@ body.native-media .main-drag-bar { display: none !important; }
 body.native-media .main-content { margin: 0; width: 100%; min-width: 0; }
 body.native-media .app-container { padding: 0; }
 body.native-media .view-viewport { padding: 0; }
+body.native-media #view-settings.active { overflow-y: auto; }
 body.native-media .player-overlay { inset: 0; }
 
 body.native-media #feed-cat-bar {
