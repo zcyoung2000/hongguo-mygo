@@ -87,7 +87,7 @@ MyGo native UI (`ui.View`)
 go mod tidy
 go test ./...
 CGO_ENABLED=0 go build -o /dev/null .
-node frontend/player-bridge.test.js
+node frontend/ui-regression.test.js
 go test -race ./internal/uiapp
 node --test e2e/*.test.cjs
 ```

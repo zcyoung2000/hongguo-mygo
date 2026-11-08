@@ -261,7 +261,7 @@ func (a *App) renderReleases(c *ui.Context) {
 		return
 	}
 	if len(value.Items) == 0 {
-		a.emptyView(c, "暂无新剧", "可以选择其他日期")
+		a.emptyView(c, "当前新剧热榜暂无剧集", "可以选择其他日期")
 		return
 	}
 	if a.releaseGrid == nil {
