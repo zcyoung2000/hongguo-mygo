@@ -59,7 +59,7 @@ func (a *App) renderRank(c *ui.Context) {
 		a.errorView(c, rank.Error, func() { go a.LoadRank(len(rank.Items) > 0) })
 	}
 	if rank.Loading && len(rank.Items) == 0 {
-		ui.Text(c, "正在加载排行榜...").TextColor(c.Theme().TextMuted)
+		ui.Text(c.Key("rank-loading"), "正在加载排行榜...").TextColor(c.Theme().TextMuted).MarginEnd(12)
 		a.rankSkeleton(c)
 		return
 	}

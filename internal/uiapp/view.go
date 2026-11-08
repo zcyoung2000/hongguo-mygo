@@ -1209,14 +1209,14 @@ func (a *App) rankSkeleton(c *ui.Context) {
 }
 
 func (a *App) emptyView(c *ui.Context, title, description string) {
-	ui.Column(c).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Gap(6).Children(func() {
+	ui.Column(c.Key("empty-view:" + title)).MarginEnd(12).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Gap(6).Children(func() {
 		ui.Text(c, title).Bold()
 		ui.Text(c, description).TextColor(c.Theme().TextMuted)
 	})
 }
 
 func (a *App) errorView(c *ui.Context, message string, retry func()) {
-	ui.Column(c).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Gap(8).Children(func() {
+	ui.Column(c.Key("error-view:" + message)).MarginEnd(12).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Gap(8).Children(func() {
 		ui.Text(c, message).TextColor(c.Theme().Danger)
 		if retry != nil && ui.PrimaryButton(c, "重试").Clicked() {
 			go retry()
