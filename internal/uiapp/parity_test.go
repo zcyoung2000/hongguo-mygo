@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/beilunyang/openhongguo/sdk/model"
+	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
 )
@@ -519,6 +520,13 @@ func TestSkeletonsMatchOriginalPageShapes(t *testing.T) {
 	if !tt.HasText("正在加载演员主页") {
 		t.Fatalf("actor skeleton text missing: %v", tt.Texts())
 	}
+
+	app.SetMediaHost(&MediaHost{view: &mygo.WebView{}})
+	app.OpenView("settings")
+	tt.Frame()
+	if tt.WebViewAt(700, 400) == nil {
+		t.Fatalf("settings fixture did not expose its interactive WebView host")
+	}
 }
 
 func TestNativePageScreens(t *testing.T) {
@@ -633,7 +641,13 @@ func TestNativePageScreens(t *testing.T) {
 		{name: "actor-ready", view: "actor", prepare: func(app *App) {
 			app.actor = ActorState{ID: "actor-id", Profile: provider.profile, Works: []CatalogItem{{ID: "123456", Title: "演员作品一", EpisodeCount: 32}}, HasMore: true}
 		}},
-		{name: "settings", view: "settings"},
+		{name: "settings", view: "settings", prepare: func(app *App) {
+			app.SetMediaHost(&MediaHost{view: &mygo.WebView{}})
+			app.OpenView("settings")
+			if !app.hostedScene() {
+				t.Fatalf("settings lost its interactive host")
+			}
+		}},
 	}
 	for _, state := range states {
 		state := state
