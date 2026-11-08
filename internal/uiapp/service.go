@@ -174,6 +174,8 @@ type App struct {
 	mutations                   map[string]bool
 	settingsMutations           map[string]bool
 	detailRevisions             map[string]uint64
+	detailAdaptationKeys        map[string]string
+	resumeSequence              uint64
 	rank                        RankingState
 	releases                    ReleaseState
 	actor                       ActorState
@@ -754,7 +756,7 @@ func (a *App) open(view, seriesID string) {
 	a.generation++
 	a.view, a.seriesID, a.error, a.loading, a.playerOn = view, seriesID, "", false, false
 	a.notice = ""
-	a.resume = CatalogItem{}
+	a.resetResumeLocked(seriesID)
 	a.mediaOn = false
 	a.detailEpisodesExpanded = false
 	if a.media != nil {

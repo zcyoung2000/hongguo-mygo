@@ -858,10 +858,6 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 func (a *App) renderDetail(c *ui.Context) {
 	detail := a.detail
 	if detail.Loading && detail.Title == "" {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Padding(0, 0, 10, 0).Children(func() {
-			ui.Spinner(c)
-			ui.Text(c, "正在加载详情...").TextColor(c.Theme().TextMuted)
-		})
 		a.detailSkeleton(c)
 		return
 	}
@@ -872,294 +868,367 @@ func (a *App) renderDetail(c *ui.Context) {
 	pageHeader(c, "短剧详情", "")
 	scroll := ui.Scroll(c.Key("detail-page-scroll")).Grow(1).Gap(c.Theme().Space(2) + 2).TrackScroll(&a.detailScroll)
 	scroll.Children(func() {
-		// Top Bar with a single back navigation entry.
 		ui.Row(c.Key("detail-top-bar")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).Children(func() {
-			ui.Row(c.Key("detail-top-bar-left")).AlignItems(ui.Center).Gap(12).Children(func() {
-				backBtn := ui.Row(c.Key("detail-nav-back")).Height(30).Padding(0, 14).Radius(7).
-					Material(glass.Glass{Interactive: true}).
-					Border(1, ui.RGBA(255, 255, 255, 0.12)).
-					AlignItems(ui.Center).Role(ui.RoleButton).Label("返回短剧列表").Focusable()
-				hoverBackground(backBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.10))
-				if backBtn.Clicked() || backBtn.Shortcut(0, ui.KeyEnter) || backBtn.Shortcut(0, ui.KeySpace) {
-					go a.NavigateHistory(-1)
-				}
-				backBtn.Children(func() {
-					ui.Text(c, "← 返回").FontSize(13).TextColor(ui.Hex("#ffffff")).Bold()
-				})
+			backBtn := ui.Row(c.Key("detail-nav-back")).Height(30).Padding(0, 14).Radius(7).
+				Material(glass.Glass{Interactive: true}).
+				Border(1, ui.RGBA(255, 255, 255, 0.12)).
+				AlignItems(ui.Center).Role(ui.RoleButton).Label("返回短剧列表").Focusable()
+			hoverBackground(backBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.10))
+			if backBtn.Clicked() || backBtn.Shortcut(0, ui.KeyEnter) || backBtn.Shortcut(0, ui.KeySpace) {
+				go a.NavigateHistory(-1)
+			}
+			backBtn.Children(func() {
+				ui.Text(c, "← 返回").FontSize(13).TextColor(ui.Hex("#ffffff")).Bold()
 			})
 		})
 
-		// Hero Info Row
-		ui.Row(c.Key("detail-hero-row")).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
-			a.image(c, detail.CoverURL, 160, 220)
-			header := ui.Column(c.Key("detail-hero-info")).Grow(1).Gap(8)
-			header.Children(func() {
-				ui.Text(c, detail.Title).FontSize(24).Bold().TextColor(ui.Hex("#ffffff"))
-				if len(detail.Tags) > 0 {
-					ui.Text(c, strings.Join(detail.Tags, " · ")).FontSize(13).TextColor(c.Theme().TextMuted)
-				}
-				ui.Textf(c, "%s · %d 人在追 · %d 赞", detail.Heat, detail.FollowCount, detail.LikeCount).FontSize(12).TextColor(c.Theme().TextMuted)
-				if detail.PublishText != "" {
-					ui.Text(c, detail.PublishText).FontSize(12).TextColor(c.Theme().TextMuted)
-				}
-				if detail.Description != "" {
-					ui.Text(c.Key("detail-description"), detail.Description).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.82))
-				}
-				if detail.StatusText != "" || detail.PlayCount > 0 {
-					ui.Textf(c, "%s · %d次播放", detail.StatusText, detail.PlayCount).FontSize(12).TextColor(c.Theme().TextMuted)
-				}
-
-				// Action buttons aligned right under the metadata
-				ui.Row(c.Key("detail-actions")).Gap(10).AlignItems(ui.Center).Padding(6, 0, 0, 0).Children(func() {
-					if detail.Upcoming {
-						ui.Row(c).Padding(8, 14).Radius(8).Background(ui.RGBA(255, 255, 255, 0.06)).
-							Border(1, ui.RGBA(255, 255, 255, 0.10)).Children(func() {
-							ui.Text(c, "该剧尚未上线，上线后可继续观看").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
-						})
-					} else {
-						playLabel := "播放 / 继续观看"
-						if a.resume.ResumeEpisode > 1 {
-							playLabel = fmt.Sprintf("继续观看第 %d 集", a.resume.ResumeEpisode)
+		wide := detailTwoColumn(c.Size())
+		layout := ui.Row(c.Key("detail-layout")).Gap(28).AlignItems(ui.Start)
+		if wide {
+			layout.FillWidth()
+		}
+		layout.Children(func() {
+			left := ui.Column(c.Key("detail-left")).Gap(16)
+			right := ui.Column(c.Key("detail-right")).Gap(16)
+			if wide {
+				left.WidthPercent(48).MinWidth(340)
+				right.WidthPercent(52).MinWidth(380)
+			} else {
+				left.FillWidth()
+				right.FillWidth()
+			}
+			left.Children(func() {
+				ui.Row(c.Key("detail-hero-row")).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
+					a.image(c, detail.CoverURL, 160, 220)
+					header := ui.Column(c.Key("detail-hero-info")).Grow(1).Gap(8)
+					header.Children(func() {
+						ui.Text(c, detail.Title).FontSize(24).Bold().TextColor(ui.Hex("#ffffff"))
+						if len(detail.Tags) > 0 {
+							ui.Text(c, strings.Join(detail.Tags, " · ")).FontSize(13).TextColor(c.Theme().TextMuted)
 						}
-						playBtn := ui.Row(c.Key("detail-hero-play")).Height(36).Padding(0, 20).Radius(8).
-							LinearGradient(ui.LinearGradient{
-								From:  ui.Hex("#d91b42"),
-								To:    ui.Hex("#b81235"),
-								Angle: 180,
-							}).Border(1, ui.RGBA(255, 255, 255, 0.22)).
-							Shadow(0, 3, 10, 0, ui.RGBA(0, 0, 0, 0.35)).
-							AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(playLabel)
-						hoverBackground(playBtn, ui.RGB(209, 27, 66), ui.RGB(229, 36, 75))
-						if playBtn.Clicked() {
-							go a.PlayDetail()
+						stats := detailProgressPieces(detail.Heat, formatCountText(detail.FollowCount)+"人在追", formatCountText(detail.LikeCount)+"赞")
+						if len(stats) > 0 {
+							ui.Text(c, strings.Join(stats, " · ")).FontSize(12).TextColor(c.Theme().TextMuted)
 						}
-						playBtn.Children(func() {
-							ui.Text(c, playLabel).FontSize(13).Bold().TextColor(ui.Hex("#ffffff"))
-						})
-					}
-
-					// Favorite button
-					favLabel := "收藏"
-					if detail.Favorite {
-						favLabel = "已收藏"
-					}
-					favBtn := ui.Row(c.Key("detail-hero-fav")).Height(36).Padding(0, 16).Radius(8).
-						Material(glass.Glass{Interactive: true}).
-						Border(1, ui.RGBA(255, 255, 255, 0.12)).
-						AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(favLabel)
-					if detail.Favorite {
-						favBtn.Background(ui.RGBA(226, 26, 68, 0.16)).Border(1, ui.Hex("#e21a44"))
-					} else {
-						hoverBackground(favBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.12))
-					}
-					if favBtn.Clicked() {
-						go a.ToggleDetailFavorite()
-					}
-					favBtn.Children(func() {
-						txt := ui.Text(c, favLabel).FontSize(13)
-						if detail.Favorite {
-							txt.Bold().TextColor(ui.Hex("#ff3358"))
-						} else {
-							txt.TextColor(ui.Hex("#ffffff"))
+						if detail.PublishText != "" {
+							ui.Text(c, detail.PublishText).FontSize(12).TextColor(c.Theme().TextMuted)
 						}
-					})
-
-					// Reservation button if upcoming or already reserved
-					if detail.Upcoming || detail.Reserved {
-						resLabel := "预约"
-						if detail.Reserved {
-							resLabel = "已预约"
+						if detail.Description != "" {
+							ui.Text(c.Key("detail-description"), detail.Description).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.82))
 						}
-						resBtn := ui.Row(c.Key("detail-hero-res")).Height(36).Padding(0, 16).Radius(8).
-							Material(glass.Glass{Interactive: true}).
-							Border(1, ui.RGBA(255, 255, 255, 0.12)).
-							AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(resLabel)
-						if detail.Reserved {
-							resBtn.Background(ui.RGBA(226, 26, 68, 0.16)).Border(1, ui.Hex("#e21a44"))
-						} else {
-							hoverBackground(resBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.12))
+						playStats := detailProgressPieces(detail.StatusText, fmt.Sprintf("%d次播放", detail.PlayCount))
+						if len(playStats) > 0 {
+							ui.Text(c, strings.Join(playStats, " · ")).FontSize(12).TextColor(c.Theme().TextMuted)
 						}
-						if resBtn.Clicked() {
-							go a.ToggleDetailReservation()
-						}
-						resBtn.Children(func() {
-							txt := ui.Text(c, resLabel).FontSize(13)
-							if detail.Reserved {
-								txt.Bold().TextColor(ui.Hex("#ff3358"))
+						ui.Row(c.Key("detail-actions")).Gap(10).AlignItems(ui.Center).Padding(6, 0, 0, 0).Children(func() {
+							if detail.Upcoming {
+								ui.Row(c).Padding(8, 14).Radius(8).Background(ui.RGBA(255, 255, 255, 0.06)).
+									Border(1, ui.RGBA(255, 255, 255, 0.10)).Children(func() {
+									ui.Text(c, "该剧尚未上线，上线后可继续观看").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65))
+								})
 							} else {
-								txt.TextColor(ui.Hex("#ffffff"))
+								playLabel := "播放 / 继续观看"
+								if a.resume.ResumeEpisode > 1 {
+									playLabel = fmt.Sprintf("继续观看第 %d 集", a.resume.ResumeEpisode)
+								}
+								playBtn := ui.Row(c.Key("detail-hero-play")).Height(36).Padding(0, 20).Radius(8).
+									LinearGradient(ui.LinearGradient{From: ui.Hex("#d91b42"), To: ui.Hex("#b81235"), Angle: 180}).
+									Border(1, ui.RGBA(255, 255, 255, 0.22)).
+									Shadow(0, 3, 10, 0, ui.RGBA(0, 0, 0, 0.35)).
+									AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(playLabel)
+								hoverBackground(playBtn, ui.RGB(209, 27, 66), ui.RGB(229, 36, 75))
+								if playBtn.Clicked() {
+									go a.PlayDetail()
+								}
+								playBtn.Children(func() {
+									ui.Text(c, playLabel).FontSize(13).Bold().TextColor(ui.Hex("#ffffff"))
+								})
+							}
+							favLabel := "收藏"
+							if detail.Favorite {
+								favLabel = "已收藏"
+							}
+							favBtn := ui.Row(c.Key("detail-hero-fav")).Height(36).Padding(0, 16).Radius(8).
+								Material(glass.Glass{Interactive: true}).
+								Border(1, ui.RGBA(255, 255, 255, 0.12)).
+								AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(favLabel)
+							if detail.Favorite {
+								favBtn.Background(ui.RGBA(226, 26, 68, 0.16)).Border(1, ui.Hex("#e21a44"))
+							} else {
+								hoverBackground(favBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.12))
+							}
+							if favBtn.Clicked() {
+								go a.ToggleDetailFavorite()
+							}
+							favBtn.Children(func() {
+								txt := ui.Text(c, favLabel).FontSize(13)
+								if detail.Favorite {
+									txt.Bold().TextColor(ui.Hex("#ff3358"))
+								} else {
+									txt.TextColor(ui.Hex("#ffffff"))
+								}
+							})
+							if detail.Upcoming || detail.Reserved {
+								resLabel := "预约"
+								if detail.Reserved {
+									resLabel = "已预约"
+								}
+								resBtn := ui.Row(c.Key("detail-hero-res")).Height(36).Padding(0, 16).Radius(8).
+									Material(glass.Glass{Interactive: true}).
+									Border(1, ui.RGBA(255, 255, 255, 0.12)).
+									AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(resLabel)
+								if detail.Reserved {
+									resBtn.Background(ui.RGBA(226, 26, 68, 0.16)).Border(1, ui.Hex("#e21a44"))
+								} else {
+									hoverBackground(resBtn, ui.Transparent, ui.RGBA(255, 255, 255, 0.12))
+								}
+								if resBtn.Clicked() {
+									go a.ToggleDetailReservation()
+								}
+								resBtn.Children(func() {
+									txt := ui.Text(c, resLabel).FontSize(13)
+									if detail.Reserved {
+										txt.Bold().TextColor(ui.Hex("#ff3358"))
+									} else {
+										txt.TextColor(ui.Hex("#ffffff"))
+									}
+								})
 							}
 						})
-					}
+					})
 				})
-			})
-		})
-
-		if detail.Source != nil {
-			ui.Row(c.Key("detail-source-card")).Padding(c.Theme().Space(2), c.Theme().Space(4)).Radius(10).
-				Background(ui.RGBA(255, 255, 255, 0.04)).
-				Border(1, ui.RGBA(255, 255, 255, 0.08)).
-				Gap(c.Theme().Space(3)).AlignItems(ui.Center).Children(func() {
-				a.image(c, detail.Source.CoverURL, 54, 72)
-				ui.Column(c).Gap(4).Grow(1).Children(func() {
-					ui.Text(c, "原著小说").FontSize(11).TextColor(ui.Hex("#ff3358"))
-					ui.Text(c, detail.Source.Title).FontSize(14).Bold().TextColor(ui.Hex("#ffffff"))
-					if len(detail.Source.Tags) > 0 {
-						ui.Text(c, strings.Join(detail.Source.Tags, " · ")).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.60))
-					}
-				})
-			})
-		}
-		if len(detail.Actors) > 0 {
-			ui.Column(c.Key("detail-actors-card")).Gap(c.Theme().Space(2)).Children(func() {
-				ui.Text(c, "演员阵容").FontSize(15).Bold().TextColor(ui.Hex("#ffffff"))
-				ui.Row(c.Key("detail-actors-flow")).Wrap().Gap(8).Children(func() {
-					for _, actor := range detail.Actors {
-						act := actor
-						ui.Row(c.Key("actor:"+act.Name)).Padding(4, 10).Radius(6).
-							Background(ui.RGBA(255, 255, 255, 0.06)).
-							Border(1, ui.RGBA(255, 255, 255, 0.08)).
-							AlignItems(ui.Center).Gap(6).Children(func() {
-							ui.Text(c, act.Name).FontSize(12).Bold().TextColor(ui.Hex("#ffffff"))
-							if act.Role != "" {
-								ui.Text(c, act.Role).FontSize(11).TextColor(ui.RGBA(255, 255, 255, 0.60))
+				if detail.Source != nil {
+					ui.Row(c.Key("detail-source-card")).Padding(c.Theme().Space(2), c.Theme().Space(4)).Radius(10).
+						Background(ui.RGBA(255, 255, 255, 0.04)).
+						Border(1, ui.RGBA(255, 255, 255, 0.08)).
+						Gap(c.Theme().Space(3)).AlignItems(ui.Center).Children(func() {
+						a.image(c, detail.Source.CoverURL, 54, 72)
+						ui.Column(c).Gap(4).Grow(1).Children(func() {
+							ui.Text(c, "原著小说").FontSize(11).TextColor(ui.Hex("#ff3358"))
+							ui.Text(c, detail.Source.Title).FontSize(14).Bold().TextColor(ui.Hex("#ffffff"))
+							if len(detail.Source.Tags) > 0 {
+								ui.Text(c, strings.Join(detail.Source.Tags, " · ")).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.60))
 							}
 						})
-					}
-				})
-			})
-		}
-		a.renderCollection(c, "同系列短剧", detail.Seasons, func() { go a.RetrySupplement(false) })
-		a.renderCollection(c, "同一剧本改编", detail.Adaptations, func() { go a.RetrySupplement(true) })
-
-		// Episode selection with aligned keycaps
-		ui.Row(c.Key("detail-episodes-header")).AlignItems(ui.Baseline).Gap(10).Children(func() {
-			ui.Text(c, "选集").FontSize(17).Bold().TextColor(ui.Hex("#ffffff"))
-			if len(detail.Episodes) > 0 {
-				ui.Textf(c, "共 %d 集", len(detail.Episodes)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50))
-			}
-		})
-		if len(detail.Episodes) == 0 {
-			ui.Text(c, "暂无可播放选集").TextColor(c.Theme().TextMuted)
-		} else {
-			episodes := detail.Episodes
-			visibleIndexes := a.detailEpisodeCollapsedIndexes(episodes)
-			ui.Row(c.Key("detail-episodes-wrap")).Wrap().Gap(8).Children(func() {
-				for index, episode := range episodes {
-					if !a.detailEpisodesExpanded {
-						shown := false
-						for _, visibleIndex := range visibleIndexes {
-							if index == visibleIndex {
-								shown = true
-								break
+					})
+				}
+				if len(detail.Actors) > 0 {
+					ui.Column(c.Key("detail-actors-card")).Gap(c.Theme().Space(2)).Children(func() {
+						ui.Text(c, "演员阵容").FontSize(15).Bold().TextColor(ui.Hex("#ffffff"))
+						ui.Row(c.Key("detail-actors-flow")).Wrap().Gap(8).Children(func() {
+							for _, actor := range detail.Actors {
+								act := actor
+								chip := ui.Row(c.Key("actor:"+act.Name)).Padding(4, 10).Radius(6).
+									Background(ui.RGBA(255, 255, 255, 0.06)).
+									Border(1, ui.RGBA(255, 255, 255, 0.08)).
+									AlignItems(ui.Center).Gap(6)
+								if act.UserID != "" {
+									chip.Role(ui.RoleButton).Label("演员主页：" + act.Name).Focusable()
+									if chip.Clicked() || chip.Shortcut(0, ui.KeyEnter) || chip.Shortcut(0, ui.KeySpace) {
+										go a.OpenActor(act.UserID)
+									}
+								}
+								chip.Children(func() {
+									ui.Text(c, act.Name).FontSize(12).Bold().TextColor(ui.Hex("#ffffff"))
+									if act.Role != "" {
+										ui.Text(c, act.Role).FontSize(11).TextColor(ui.RGBA(255, 255, 255, 0.60))
+									}
+								})
 							}
-						}
-						if !shown {
-							continue
-						}
-					}
-					ep := episode
-					isActive := a.resume.ResumeEpisode == ep.EpisodeCount
-					numStr := fmt.Sprintf("%d", ep.EpisodeCount)
-					epBtn := ui.Row(c.Key(fmt.Sprintf("ep-%d", ep.EpisodeCount))).
-						Width(52).Height(34).Radius(8).
-						AlignItems(ui.Center).Justify(ui.Center).
-						Role(ui.RoleButton).Label(fmt.Sprintf("第%d集", ep.EpisodeCount))
-					if isActive {
-						epBtn.LinearGradient(ui.LinearGradient{
-							From:  ui.Hex("#d91b42"),
-							To:    ui.Hex("#b81235"),
-							Angle: 135,
-						}).Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 6, 0, ui.RGBA(0, 0, 0, 0.35))
-					} else {
-						hoverBackground(epBtn, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
-						epBtn.Border(1, ui.RGBA(255, 255, 255, 0.08))
-					}
-					if epBtn.Clicked() {
-						go a.ChooseEpisode(ep.EpisodeCount)
-					}
-					epBtn.Children(func() {
-						txt := ui.Text(c, numStr).FontSize(13)
-						if isActive {
-							txt.Bold().TextColor(ui.Hex("#ffffff"))
-							epBtn.ScrollIntoView()
-						} else {
-							txt.TextColor(ui.RGBA(255, 255, 255, 0.85))
-						}
+						})
 					})
 				}
 			})
-			if len(episodes) > detailEpisodeCollapsedCount(len(episodes)) {
-				toggleLabel := "展开全部"
-				if a.detailEpisodesExpanded {
-					toggleLabel = "收起"
-				}
-				toggle := ui.Row(c.Key("detail-episode-toggle")).Height(32).Padding(0, 14).Radius(8).
-					Border(1, ui.RGBA(255, 255, 255, 0.08)).
-					AlignItems(ui.Center).Justify(ui.Center).Gap(6).
-					Role(ui.RoleButton).Label(toggleLabel)
-				hoverBackground(toggle, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
-				if toggle.Clicked() {
-					a.detailEpisodesExpanded = !a.detailEpisodesExpanded
-				}
-				toggle.Children(func() {
-					icon := ui.Icon(c, chevronIcon).Size(16, 16).TextColor(ui.RGBA(255, 255, 255, 0.72))
-					if a.detailEpisodesExpanded {
-						icon.Rotate(180)
-					}
-					ui.Text(c, toggleLabel).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.85))
-				})
-			}
-		}
-
+			right.Children(func() {
+				a.renderCollection(c, "同系列短剧", detail.Seasons, func() { go a.RetrySupplement(false) })
+				a.renderCollection(c, "同一剧本改编", detail.Adaptations, func() { go a.RetrySupplement(true) })
+				a.renderDetailEpisodes(c, detail.Episodes)
+			})
+		})
 	})
 }
 
-func (a *App) loadingView(c *ui.Context, message string) {
-	ui.Row(c).Grow(1).Justify(ui.Center).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Spinner(c)
-		ui.Text(c, message)
+func detailTwoColumn(size float32, height float32) bool {
+	return size >= 1200
+}
+
+func (a *App) renderDetailEpisodes(c *ui.Context, episodes []CatalogItem) {
+	ui.Row(c.Key("detail-episodes-header")).AlignItems(ui.Baseline).Gap(10).Children(func() {
+		ui.Text(c, "选集").FontSize(17).Bold().TextColor(ui.Hex("#ffffff"))
+		if len(episodes) > 0 {
+			ui.Textf(c, "共 %d 集", len(episodes)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50))
+		}
 	})
+	if len(episodes) == 0 {
+		ui.Text(c, "暂无可播放选集").TextColor(c.Theme().TextMuted)
+		return
+	}
+	buttonWidth, buttonHeight := float32(68), float32(44)
+	if detailTwoColumn(c.Size()) {
+		buttonWidth, buttonHeight = float32(88), float32(48)
+	}
+	visibleIndexes := a.detailEpisodeCollapsedIndexes(episodes)
+	ui.Row(c.Key("detail-episodes-wrap")).Wrap().Gap(10).Children(func() {
+		for index, episode := range episodes {
+			if !a.detailEpisodesExpanded {
+				shown := false
+				for _, visibleIndex := range visibleIndexes {
+					if index == visibleIndex {
+						shown = true
+						break
+					}
+				}
+				if !shown {
+					continue
+				}
+			}
+			ep := episode
+			isActive := a.resume.ResumeEpisode == ep.EpisodeCount
+			numStr := fmt.Sprintf("%d", ep.EpisodeCount)
+			epBtn := ui.Row(c.Key(fmt.Sprintf("ep-%d", ep.EpisodeCount))).
+				Width(buttonWidth).Height(buttonHeight).Radius(10).
+				AlignItems(ui.Center).Justify(ui.Center).
+				Role(ui.RoleButton).Label(fmt.Sprintf("第%d集", ep.EpisodeCount))
+			if isActive {
+				epBtn.LinearGradient(ui.LinearGradient{From: ui.Hex("#d91b42"), To: ui.Hex("#b81235"), Angle: 135}).
+					Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 6, 0, ui.RGBA(0, 0, 0, 0.35))
+			} else {
+				hoverBackground(epBtn, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
+				epBtn.Border(1, ui.RGBA(255, 255, 255, 0.08))
+			}
+			if epBtn.Clicked() {
+				go a.ChooseEpisode(ep.EpisodeCount)
+			}
+			epBtn.Children(func() {
+				txt := ui.Text(c, numStr).FontSize(15)
+				if isActive {
+					txt.Bold().TextColor(ui.Hex("#ffffff"))
+					epBtn.ScrollIntoView()
+				} else {
+					txt.TextColor(ui.RGBA(255, 255, 255, 0.85))
+				}
+			})
+		}
+	})
+	if len(episodes) > detailEpisodeCollapsedCount(len(episodes)) {
+		toggleLabel := "展开全部"
+		if a.detailEpisodesExpanded {
+			toggleLabel = "收起"
+		}
+		toggle := ui.Row(c.Key("detail-episode-toggle")).Height(34).Padding(0, 14).Radius(8).
+			Border(1, ui.RGBA(255, 255, 255, 0.08)).
+			AlignItems(ui.Center).Justify(ui.Center).Gap(6).
+			Role(ui.RoleButton).Label(toggleLabel)
+		hoverBackground(toggle, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
+		if toggle.Clicked() {
+			a.detailEpisodesExpanded = !a.detailEpisodesExpanded
+		}
+		toggle.Children(func() {
+			icon := ui.Icon(c, chevronIcon).Size(16, 16).TextColor(ui.RGBA(255, 255, 255, 0.72))
+			if a.detailEpisodesExpanded {
+				icon.Rotate(180)
+			}
+			ui.Text(c, toggleLabel).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.85))
+		})
+	}
 }
 
 func (a *App) detailSkeleton(c *ui.Context) {
+	pageHeader(c, "短剧详情", "")
 	skeleton := pageShimmer(c)
-	scroll := ui.Scroll(c).Grow(1).Gap(c.Theme().Space(4))
+	wide := detailTwoColumn(c.Size())
+	scroll := ui.Scroll(c.Key("detail-page-scroll-skeleton")).Grow(1).Gap(c.Theme().Space(2) + 2)
 	scroll.Children(func() {
-		ui.Row(c.Key("detail-hero-skeleton")).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
-			skeleton.bone(c.Key("poster"), 12).Size(160, 220)
-			ui.Column(c.Key("detail-copy")).Grow(1).Gap(12).Children(func() {
-				skeleton.text(c.Key("title"), 24, 1.2).WidthPercent(48)
-				ui.Row(c.Key("tags")).Gap(10).Children(func() {
-					for index := range 4 {
-						skeleton.bone(c.Key(index), 10).Size(66, 20)
-					}
+		ui.Row(c.Key("detail-top-bar-skeleton")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).
+			Children(func() {
+				skeleton.bone(c.Key("detail-nav-back-skeleton"), 7).Height(30).Width(78)
+			})
+		layout := ui.Row(c.Key("detail-layout-skeleton")).Gap(28).AlignItems(ui.Start)
+		if wide {
+			layout.FillWidth()
+		}
+		layout.Children(func() {
+			left := ui.Column(c.Key("detail-left-skeleton")).Gap(16)
+			right := ui.Column(c.Key("detail-right-skeleton")).Gap(16)
+			if wide {
+				left.WidthPercent(48).MinWidth(340)
+				right.WidthPercent(52).MinWidth(380)
+			} else {
+				left.FillWidth()
+				right.FillWidth()
+			}
+			left.Children(func() {
+				ui.Row(c.Key("detail-hero-skeleton")).Gap(c.Theme().Space(4)).AlignItems(ui.Start).Children(func() {
+					skeleton.bone(c.Key("poster"), 12).Size(160, 220)
+					ui.Column(c.Key("detail-copy")).Grow(1).Gap(12).Children(func() {
+						skeleton.text(c.Key("title"), 24, 1.2).WidthPercent(48)
+						ui.Row(c.Key("tags")).Gap(10).Children(func() {
+							for index := range 4 {
+								skeleton.bone(c.Key(index), 10).Size(66, 20)
+							}
+						})
+						ui.Row(c.Key("metadata")).Gap(8).Children(func() {
+							for index := range 4 {
+								skeleton.bone(c.Key(index), 12).Size(58, 24)
+							}
+						})
+						ui.Column(c.Key("description")).Gap(8).Children(func() {
+							skeleton.text(c.Key("line-0"), 13, 1.45).WidthPercent(100)
+							skeleton.text(c.Key("line-1"), 13, 1.45).WidthPercent(100)
+							skeleton.text(c.Key("line-2"), 13, 1.45).Width(190)
+						})
+						ui.Row(c.Key("actions")).Gap(10).Children(func() {
+							skeleton.bone(c.Key("primary"), 19).Size(140, 38)
+							skeleton.bone(c.Key("secondary"), 19).Size(88, 38)
+						})
+					})
 				})
-				ui.Row(c.Key("metadata")).Gap(8).Children(func() {
-					for index := range 4 {
-						skeleton.bone(c.Key(index), 12).Size(58, 24)
-					}
+				ui.Row(c.Key("source-skeleton")).Gap(16).Padding(16, 20).Radius(10).Children(func() {
+					skeleton.bone(c.Key("cover"), 10).Size(54, 72)
+					ui.Column(c.Key("copy")).Grow(1).Gap(8).Children(func() {
+						skeleton.text(c.Key("label"), 11, 1.2).Width(64)
+						skeleton.text(c.Key("title"), 14, 1.3).WidthPercent(70)
+					})
 				})
-				ui.Column(c.Key("description")).Gap(8).Children(func() {
-					skeleton.text(c.Key("line-0"), 13, 1.45).WidthPercent(100)
-					skeleton.text(c.Key("line-1"), 13, 1.45).WidthPercent(100)
-					skeleton.text(c.Key("line-2"), 13, 1.45).Width(190)
-				})
-				ui.Row(c.Key("actions")).Gap(10).Children(func() {
-					skeleton.bone(c.Key("primary"), 19).Size(140, 38)
-					skeleton.bone(c.Key("secondary"), 19).Size(88, 38)
+				ui.Column(c.Key("actors-skeleton")).Gap(10).Children(func() {
+					skeleton.text(c.Key("title"), 15, 1.3).Width(82)
+					ui.Row(c.Key("chips")).Gap(8).Children(func() {
+						for index := range 5 {
+							skeleton.bone(c.Key(index), 12).Size(86, 28)
+						}
+					})
 				})
 			})
-		})
-		ui.Column(c.Key("episodes-skeleton")).Gap(12).Children(func() {
-			ui.Row(c.Key("header")).Gap(12).AlignItems(ui.Center).Children(func() {
-				skeleton.text(c.Key("title"), 17, 1.3).Width(52)
-				skeleton.text(c.Key("count"), 12, 1.3).Width(44)
-			})
-			ui.Row(c.Key("episodes")).Wrap().Gap(8).Children(func() {
-				for index := range 12 {
-					skeleton.bone(c.Key(index), 8).Size(68, 32)
+			right.Children(func() {
+				for _, collection := range []struct {
+					key, title string
+				}{
+					{"seasons", "同系列短剧"}, {"adaptations", "同一剧本改编"},
+				} {
+					ui.Column(c.Key(collection.key + "-skeleton")).Gap(8).Children(func() {
+						ui.Text(c, collection.title).FontSize(15).Bold().TextColor(ui.Hex("#ffffff"))
+						ui.Row(c.Key("cards")).Gap(c.Theme().Space(3)).Children(func() {
+							skeleton.bone(c.Key("poster"), 8).Size(150, 200)
+							skeleton.text(c.Key("title"), 13, 1.3).Width(150)
+						})
+					})
 				}
+				ui.Column(c.Key("episodes-skeleton")).Gap(12).Children(func() {
+					ui.Row(c.Key("header")).Gap(12).AlignItems(ui.Center).Children(func() {
+						skeleton.text(c.Key("title"), 17, 1.3).Width(52)
+						skeleton.text(c.Key("count"), 12, 1.3).Width(44)
+					})
+					ui.Row(c.Key("episodes")).Wrap().Gap(10).Children(func() {
+						size := float32(68)
+						height := float32(44)
+						if wide {
+							size, height = 88, 48
+						}
+						for index := range 12 {
+							skeleton.bone(c.Key(index), 10).Size(size, height)
+						}
+					})
+				})
 			})
 		})
 	})

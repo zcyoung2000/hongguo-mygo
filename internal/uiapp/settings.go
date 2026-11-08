@@ -416,8 +416,10 @@ func (a *App) renderSettings(c *ui.Context) {
 					a.settingsButton(c, "refresh-profile", "刷新资料", "subtle", a.RefreshSettingsProfile)
 					if state.Profile.LoggedIn {
 						a.settingsButton(c, "logout", "退出登录", "danger", a.LogoutSettings)
+						a.settingsButton(c, "show-login", "切换账号", "primary", func() { a.SetSettingsLoginOpen(true) })
+					} else {
+						a.settingsButton(c, "show-login", "立即登录", "primary", func() { a.SetSettingsLoginOpen(true) })
 					}
-					a.settingsButton(c, "show-login", "立即登录", "primary", func() { a.SetSettingsLoginOpen(true) })
 				})
 			})
 			if !state.Profile.LoggedIn && state.HasLegacy {

@@ -2,6 +2,7 @@ package uiapp
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"time"
 
@@ -105,7 +106,7 @@ func (a *App) CloseMediaSession(session int64) {
 }
 func (a *App) closeMediaLocked() {
 	a.mediaOn = false
-	a.resume = CatalogItem{}
+	a.resetResumeLocked(a.detail.ID)
 	if a.view == "detail" && !a.testMode && a.detail.ID != "" {
 		if a.media != nil {
 			a.media.Stop()
@@ -396,9 +397,24 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 	defer cancel()
 	a.mu.Lock()
 	source := a.detail.Source
-	excludeIDs := []string{seriesID}
+	seasonIDs := make([]string, 0, len(a.detail.Seasons.Items))
 	for _, item := range a.detail.Seasons.Items {
-		excludeIDs = append(excludeIDs, item.ID)
+		seasonIDs = append(seasonIDs, item.ID)
+	}
+	key := supplementKey(seriesID, source, seasonIDs)
+	if adaptationSupplementKey(key) == a.detailAdaptationKeys[seriesID] && a.detail.Adaptations.Loading {
+		a.mu.Unlock()
+		return
+	}
+	if !adaptations {
+		if a.detail.Seasons.Loading && a.detailAdaptationKeys[seriesID] != "" {
+			a.mu.Unlock()
+			return
+		}
+		if a.detailAdaptationKeys == nil {
+			a.detailAdaptationKeys = map[string]string{}
+		}
+		a.detailAdaptationKeys[seriesID] = adaptationSupplementKey(key)
 	}
 	provider := a.featureProvider()
 	a.mu.Unlock()
@@ -409,13 +425,16 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 		if source != nil {
 			sourceID, title, cover = source.ID, source.Title, source.CoverURL
 		}
-		result, err = provider.GetSeriesAdaptations(ctx, seriesID, sourceID, title, cover, strings.Join(excludeIDs, ","))
+		result, err = provider.GetSeriesAdaptations(ctx, seriesID, sourceID, title, cover, strings.Join(append([]string{seriesID}, seasonIDs...), ","))
 	} else {
 		result, err = provider.GetSeriesSeasons(ctx, seriesID)
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if generation != a.generation {
+		return
+	}
+	if adaptations && adaptationSupplementKey(key) != a.detailAdaptationKeys[seriesID] {
 		return
 	}
 	value := DetailCollection{}
@@ -432,6 +451,29 @@ func (a *App) loadSupplement(seriesID string, generation uint64, adaptations boo
 	}
 	a.invalidate()
 }
+
+type DetailSupplementKey struct {
+	SeriesID string
+	SourceID string
+	Source   string
+	Seasons  string
+}
+
+func adaptationSupplementKey(key DetailSupplementKey) string {
+	return key.Seasons + "\x00" + key.SourceID + "\x00" + key.Source
+}
+
+func supplementKey(seriesID string, source *ipc.SourceNovelDTO, seasonIDs []string) DetailSupplementKey {
+	key := DetailSupplementKey{SeriesID: seriesID}
+	if source != nil {
+		key.SourceID, key.Source = source.ID, source.Title
+	}
+	seasons := append([]string(nil), seasonIDs...)
+	sort.Strings(seasons)
+	key.Seasons = strings.Join(seasons, ",")
+	return key
+}
+
 func (a *App) suggest(query string, version uint64) {
 	time.Sleep(200 * time.Millisecond)
 	a.mu.Lock()
@@ -604,7 +646,7 @@ func (a *App) ExitMedia() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.mediaOn = false
-	a.resume = CatalogItem{}
+	a.resetResumeLocked(a.detail.ID)
 	if a.media != nil {
 		a.media.Stop()
 	}

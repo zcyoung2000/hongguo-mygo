@@ -123,7 +123,7 @@ func TestShelfDeadlineDoesNotBlockOrDisguiseCoreDetail(t *testing.T) {
 	app.OpenDetail("123456")
 	tt := ui.NewTester(app.Render, 1200, 800)
 	tt.Frame()
-	if !tt.HasText("正在加载详情") {
+	if !tt.HasText("短剧详情") {
 		t.Fatalf("core detail loading state missing: %v", tt.Texts())
 	}
 

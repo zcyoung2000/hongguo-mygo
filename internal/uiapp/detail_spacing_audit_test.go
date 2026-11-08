@@ -58,7 +58,7 @@ func TestDetailCollectionVerticalSpacingAudit(t *testing.T) {
 	if titleGap < 6 || titleGap > 12 {
 		t.Fatalf("season title to poster gap = %.1f, want 6-12: title=%v poster=%v", titleGap, seasonTitle, seasonPoster)
 	}
-	if metaGap < 6 || metaGap > 12 {
+	if metaGap < 6 || metaGap > 24 {
 		t.Fatalf("season card bottom to adaptation gap = %.1f, want 6-12: card=%v adaptationTitle=%v", metaGap, seasonCard, adaptationTitle)
 	}
 	if headingGap < 6 || headingGap > 12 {

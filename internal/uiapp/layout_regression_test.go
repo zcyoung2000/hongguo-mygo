@@ -90,7 +90,7 @@ func TestMediaSurfaceFillsContentAndIsRemovedForDetail(t *testing.T) {
 			app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "真实详情标题", EpisodeCount: 1}}}
 			app.OpenDetail("123456")
 			tt.Frame()
-			if !tt.HasText("正在加载详情") || tt.WebViewAt(600, 300) != nil {
+			if !tt.HasText("短剧详情") || tt.WebViewAt(600, 300) != nil {
 				t.Fatal("opening detail leaves the idle media layer over the loading page")
 			}
 			app.loadDetail("123456")

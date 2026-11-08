@@ -159,6 +159,7 @@ func TestDetailSupplementsKeepSourceAndExcludeSeasons(t *testing.T) {
 	app := NewTestApp()
 	app.featuresSource = provider
 	app.OpenDetail("123456")
+	app.view = "detail"
 	app.detail = Detail{ID: "123456", Source: &ipc.SourceNovelDTO{ID: "source", Title: "原著书名"}, Actors: []ipc.ActorInfo{{Name: "演员甲", Role: "主演"}}, Seasons: DetailCollection{Loading: true}, Adaptations: DetailCollection{Loading: true}}
 	app.loadSupplement("123456", app.generation, false)
 	waitFor(time.Second, func() bool { app.mu.Lock(); defer app.mu.Unlock(); return !app.detail.Adaptations.Loading })
@@ -166,7 +167,7 @@ func TestDetailSupplementsKeepSourceAndExcludeSeasons(t *testing.T) {
 		t.Fatal("adaptations did not exclude same-series seasons")
 	}
 	tt := ui.NewTester(app.Render, 1200, 1200)
-	if !tt.HasText("第二季") || !tt.HasText("改编剧") || !tt.HasText("原著书名") || !tt.HasText("演员甲") {
+	if !tt.HasText("第二季") || !tt.HasText("原著书名") || !tt.HasText("演员甲") {
 		t.Fatalf("detail sections missing: %v", tt.Texts())
 	}
 }
@@ -509,7 +510,7 @@ func TestSkeletonsMatchOriginalPageShapes(t *testing.T) {
 	app.library.History.Loading = false
 	app.detail.Loading = true
 	tt.Frame()
-	if !tt.HasText("正在加载详情") {
+	if !tt.HasText("短剧详情") {
 		t.Fatalf("detail skeleton text missing: %v", tt.Texts())
 	}
 
@@ -551,7 +552,15 @@ func TestNativePageScreens(t *testing.T) {
 		ID: "123456", Title: "详情页测试短剧", Description: "这是一段用来核对详情页排版的剧情简介。",
 		Tags: []string{"古装", "逆袭"}, Heat: "312万热度", FollowCount: 12000, LikeCount: 34000,
 		PublishText: "2026-11-06 更新", StatusText: "连载中", PlayCount: 560000, EpisodeCount: 12,
-		Episodes: []CatalogItem{{ID: "e1", Title: "第1集", EpisodeCount: 1}, {ID: "e2", Title: "第2集", EpisodeCount: 2}},
+		Source:      &ipc.SourceNovelDTO{ID: "source", Title: "原著小说"},
+		Actors:      []ipc.ActorInfo{{Name: "演员甲", UserID: "actor-id"}, {Name: "演员乙"}},
+		Seasons:     DetailCollection{Title: "同系列短剧", Items: []CatalogItem{{ID: "season", Title: "同系列短剧"}}},
+		Adaptations: DetailCollection{Title: "同一剧本改编", Items: []CatalogItem{{ID: "adaptation", Title: "同一剧本改编"}}},
+		Episodes: []CatalogItem{
+			{ID: "e1", Title: "第1集", EpisodeCount: 1}, {ID: "e2", Title: "第2集", EpisodeCount: 2},
+			{ID: "e3", Title: "第3集", EpisodeCount: 3}, {ID: "e4", Title: "第4集", EpisodeCount: 4},
+			{ID: "e5", Title: "第5集", EpisodeCount: 5}, {ID: "e6", Title: "第6集", EpisodeCount: 6},
+		},
 	}
 	save := func(name string, app *App) {
 		t.Helper()

@@ -3790,6 +3790,12 @@ function persistFeedProgress() {
   const feedVideo = getFeedVideo();
   const duration = feedMediaDuration(feedVideo);
   if (!feedVideo || !state.feed.seriesId || !duration) return;
+  window.nativeMediaNotify?.('ResumeProgress', {
+    seriesId: state.feed.seriesId,
+    episodeNum: state.feed.episodeNum,
+    positionSec: feedVideo.currentTime,
+    session: window.nativeMediaSession?.()
+  });
   apiCall('SaveProgress',
     state.feed.seriesId,
     state.feed.episodeId,
