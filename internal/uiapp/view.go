@@ -907,6 +907,9 @@ func (a *App) renderDetail(c *ui.Context) {
 				if detail.PublishText != "" {
 					ui.Text(c, detail.PublishText).FontSize(12).TextColor(c.Theme().TextMuted)
 				}
+				if detail.Description != "" {
+					ui.Text(c.Key("detail-description"), detail.Description).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.82))
+				}
 				if detail.StatusText != "" || detail.PlayCount > 0 {
 					ui.Textf(c, "%s · %d次播放", detail.StatusText, detail.PlayCount).FontSize(12).TextColor(c.Theme().TextMuted)
 				}
