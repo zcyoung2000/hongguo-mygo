@@ -548,7 +548,9 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 			}
 		})
 
-		ui.Text(c, item.Title).Bold().FontSize(13).TextColor(ui.Hex("#ffffff")).SingleLine().Width(width)
+		ui.Row(c.Key("title-row")).Width(width).Height(catalogTextLineHeight).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, item.Title).Bold().FontSize(13).TextColor(ui.Hex("#ffffff")).SingleLine().Grow(1).MinWidth(0).Label("single-line-title")
+		})
 
 		if a.view == "history" {
 			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Width(width).Children(func() {
