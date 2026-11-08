@@ -104,10 +104,10 @@ func main() {
 	}
 	mygo.SetFrontend(frontendFS)
 
-	player := uiapp.NewPlayerBridge(service, mediaServer)
-	app := uiapp.NewApp(service, player)
+	app := uiapp.NewApp(service)
 	host := &uiapp.MediaHost{}
 	app.SetMediaHost(host)
+	app.SetArtworkSource(mediaServer.CacheDir(), mediaServer.ImageURL)
 	app.LoadPreferences(filepath.Join(appDir, "native-ui.json"))
 	app.SetConfirmation(func(message string) bool {
 		ok, err := native.ShowConfirmDialog(native.ConfirmDialogArgs{Message: message, ConfirmText: "确认", Destructive: true})

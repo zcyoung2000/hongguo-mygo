@@ -64,9 +64,7 @@ var (
 func (a *App) Render(c *ui.Context) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.player != nil {
-		a.player.beginArtworkFrame()
-	}
+	a.beginArtworkFrame()
 	theme := hongguoTheme(c)
 	c.SetTheme(&theme)
 	width := a.sidebarWidth
@@ -1243,9 +1241,7 @@ func (a *App) image(c *ui.Context, source string, width, height float32) {
 		return
 	}
 	var bitmap ui.ImageSource
-	if a.player != nil {
-		bitmap = a.player.Artwork(source)
-	}
+	bitmap = a.Artwork(source)
 	if bitmap != nil {
 		host.Children(func() {
 			loaded := host.AnimateTo("artwork", 1, artworkFade)

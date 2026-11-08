@@ -102,8 +102,8 @@ func TestArtworkVisiblePosterSurvivesCachePressureAndFailedRequests(t *testing.T
 func TestCatalogArtworkIsLazyAndCompletionDoesNotMoveCards(t *testing.T) {
 	server, requests := artworkTestServer(t)
 	loader := newArtworkLoader("", func(s string) string { return server.URL + s }, nil)
-	a := NewTestApp(nil)
-	a.player = &PlayerBridge{artwork: loader}
+	a := NewTestApp()
+	a.artwork = loader
 	for i := range 240 {
 		a.catalog.Items = append(a.catalog.Items, CatalogItem{ID: fmt.Sprint(i), Title: fmt.Sprintf("poster-%d", i), CoverURL: fmt.Sprintf("/poster-%d", i)})
 	}

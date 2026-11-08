@@ -18,7 +18,7 @@ func TestShimmerSystemUsesSharedBoundedTiming(t *testing.T) {
 }
 
 func TestShimmerRespectsReducedMotion(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.catalog.Loading = true
 	tester := ui.NewTester(app.Render, 1000, 800)
 	tester.SetPreferences(ui.Preferences{ReduceMotion: true})
@@ -34,7 +34,7 @@ func TestShimmerRespectsReducedMotion(t *testing.T) {
 }
 
 func TestLoadingShimmerAnimatesThenSettles(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "discover"
 	app.catalog.Loading = true
 	tester := ui.NewTester(app.Render, 1000, 800)
@@ -74,7 +74,7 @@ func TestRepresentativeLoadingViewsShareShimmer(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			app := NewTestApp(nil)
+			app := NewTestApp()
 			test.prepare(app)
 			tester := ui.NewTester(app.Render, 1000, 800)
 			tester.Advance(shimmerSampleOffset)
@@ -108,7 +108,7 @@ func TestHoverFeedbackCoversClickableNativeSurfaces(t *testing.T) {
 }
 
 func TestSkeletonGeometryMatchesReadyContent(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "discover"
 	app.catalog.Loading = true
 	tester := ui.NewTester(app.Render, 1000, 800)

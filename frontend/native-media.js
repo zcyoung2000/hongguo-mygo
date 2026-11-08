@@ -147,7 +147,6 @@
           closePlayer();
           changingScene = false;
           switchView('detail', false);
-          if (payload.seriesId) { state.detail.id = payload.seriesId; loadSeriesDetail(payload.seriesId); }
           break;
         case 'command': handleMediaCommand(payload); break;
         case 'quality': applyPlayerControlPayload(payload); break;

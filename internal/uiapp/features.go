@@ -133,8 +133,6 @@ func (a *App) playLocked(num int, position float64) {
 		a.mediaOn = true
 		a.mediaSession++
 		a.media.Play(a.detail.ID, num, position, a.mediaSession)
-	} else if a.player != nil {
-		a.player.Play(a.detail.ID, "", num, position, true)
 	}
 	a.invalidate()
 }

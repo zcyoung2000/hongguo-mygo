@@ -1,30 +1,16 @@
 package uiapp
 
 import (
+	"os"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
-	"myguo/internal/ipc"
 )
 
 func TestNativePlayerControlsOverlayAndCommands(t *testing.T) {
-	app := NewTestApp(nil)
-	playback := &fakePlayback{playback: &ipc.PlaybackDTO{
-		SeriesID: "123456", EpisodeID: "654321", EpisodeNum: 2,
-		StreamURL: "local://episode-2", Quality: "1080p", Qualities: []ipc.QualityOptionDTO{
-			{ID: "1080p", Label: "1080P", Available: true, Active: true},
-			{ID: "720p", Label: "720P", Available: true},
-		},
-	}}
-	app.player = NewTestPlayerBridge()
-	app.player.playback = playback
-	app.player.Play("123456", "654321", 2, 0, true)
-	waitFor(time.Second, func() bool { return app.player.state().StreamURL != "" })
-	if app.player.state().StreamURL == "" {
-		t.Fatalf("playback did not resolve: %+v", app.player.state())
-	}
+	app := NewTestApp()
 	view := &mygo.WebView{}
 	app.SetMediaHost(&MediaHost{view: view})
 	app.detail = Detail{ID: "123456", Episodes: []CatalogItem{{ID: "1", EpisodeCount: 1}, {ID: "2", EpisodeCount: 2}}}
@@ -62,6 +48,8 @@ func TestNativePlayerControlsOverlayAndCommands(t *testing.T) {
 	shell.SelectPlayerEpisode(3)
 	commands := host.SentControls()
 	want := []map[string]any{
+		{"event": "command", "command": "quality", "value": "720p"},
+		{"event": "command", "command": "speed", "value": 1.5},
 		{"event": "command", "command": "episode", "value": 3},
 	}
 	if len(commands) != len(want) {
@@ -92,59 +80,17 @@ func TestNativePlayerControlsOverlayAndCommands(t *testing.T) {
 	}
 }
 
-func TestMediaSurfaceClickTogglesPlaybackWithoutSystemMediaForwarding(t *testing.T) {
-	playback := &fakePlayback{playback: &ipc.PlaybackDTO{SeriesID: "s", EpisodeID: "e", EpisodeNum: 1, StreamURL: "local://video"}}
-	player := NewTestPlayerBridge()
-	player.playback = playback
-	player.Play("s", "e", 1, 0, true)
-	waitFor(time.Second, func() bool { return player.state().StreamURL != "" })
-
-	player.Toggle()
-	if player.state().Playing {
-		t.Fatalf("toggle did not pause bridge state: %+v", player.state())
+func TestPlayerControlsHaveSingleRuntimeDispatcher(t *testing.T) {
+	if _, err := os.Stat("player.go"); err == nil {
+		t.Fatal("legacy PlayerBridge implementation remains")
 	}
-	commands := player.commandsForTest()
-	if len(commands) == 0 || commands[len(commands)-1].payload["event"] != "pause" {
-		t.Fatalf("pause media event missing: %v", commands)
-	}
-	player.Toggle()
-	if !player.state().Playing {
-		t.Fatalf("toggle did not resume bridge state: %+v", player.state())
-	}
-	commands = player.commandsForTest()
-	if len(commands) == 0 || commands[len(commands)-1].payload["event"] != "resume" {
-		t.Fatalf("resume media event missing: %v", commands)
-	}
-}
-
-func TestPlayerBridgeControlCommandsReachProviderAndMedia(t *testing.T) {
-	playback := &fakePlayback{playback: &ipc.PlaybackDTO{
-		SeriesID: "123456", EpisodeID: "654321", EpisodeNum: 2,
-		StreamURL: "local://episode-2", Quality: "1080p",
-	}}
-	player := NewTestPlayerBridge()
-	player.playback = playback
-	player.testMode = false
-	player.Play("123456", "654321", 2, 0, true)
-	waitFor(time.Second, func() bool { return player.state().StreamURL != "" })
-
-	player.SelectQuality("720p")
-	waitFor(time.Second, func() bool { return playback.quality == "720p" })
-	waitFor(time.Second, func() bool { return playback.quality == "720p" && player.state().Quality == "720p" })
-	if playback.quality != "720p" {
-		t.Fatalf("provider quality = %q, want 720p", playback.quality)
-	}
-	if state := player.state(); state.Quality != "720p" {
-		t.Fatalf("active quality = %q, want 720p", state.Quality)
-	}
-
-	player.SelectSpeed(2)
-	waitFor(time.Second, func() bool { return player.state().Speed == 2 })
-	if state := player.state(); state.Speed != 2 {
-		t.Fatalf("active speed = %v, want 2", state.Speed)
-	}
-	commands := player.commandsForTest()
-	if len(commands) == 0 || commands[len(commands)-1].payload["event"] != "speed" || commands[len(commands)-1].payload["value"] != 2.0 {
-		t.Fatalf("speed media command missing: %v", commands)
+	for _, name := range []string{"player_chrome.go", "service.go", "features.go"} {
+		data, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if strings.Contains(string(data), "PlayerBridge") || strings.Contains(string(data), "player.Play(") {
+			t.Fatalf("%s still references the legacy player", name)
+		}
 	}
 }

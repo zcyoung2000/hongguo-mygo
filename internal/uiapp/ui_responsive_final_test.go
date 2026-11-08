@@ -93,7 +93,7 @@ func TestRepresentativePagesResponsiveConvergence(t *testing.T) {
 	for _, page := range responsivePageCases() {
 		for _, size := range sizes {
 			t.Run(fmt.Sprintf("%s/%dx%d", page.name, size[0], size[1]), func(t *testing.T) {
-				app := NewTestApp(nil)
+				app := NewTestApp()
 				app.view = page.view
 				page.prepare(app)
 				tester := ui.NewTester(app.Render, size[0], size[1])
@@ -155,7 +155,7 @@ func TestDiscoverFiveThousandItemsStayVirtualized(t *testing.T) {
 		}
 	}
 	items[0].Title = "响应收敛首项"
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.catalog.Items = items
 	app.view = "discover"
 	tester := ui.NewTester(app.Render, 1200, 800)

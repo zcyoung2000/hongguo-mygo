@@ -22,7 +22,7 @@ func TestHoverFeedbackUsesAnimateColorAndSnappyPress(t *testing.T) {
 }
 
 func TestPlayerDrawerUsesSymmetricRightSideTransition(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetMediaHost(&MediaHost{})
 	app.PlayDetail()
 	app.mu.Lock()
@@ -63,7 +63,7 @@ func TestPlayerDrawerUsesSymmetricRightSideTransition(t *testing.T) {
 }
 
 func TestInteractionTransitionsSettleWithoutContinuousFrames(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.search.Items = []CatalogItem{{ID: "123456", EpisodeID: "654321", Title: "反馈稳定样本"}}
 	tester := ui.NewTester(app.Render, 1000, 800)
 	tester.Move(320, 240)

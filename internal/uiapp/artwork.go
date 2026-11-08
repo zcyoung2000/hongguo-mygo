@@ -34,21 +34,22 @@ func newArtworkLoader(dir string, proxy func(string) string, invalidate func()) 
 	return &artworkLoader{entries: map[string]artworkEntry{}, pending: map[string]bool{}, slots: make(chan struct{}, 4), cacheDir: dir, proxyURL: proxy, invalidate: invalidate}
 }
 
+func (a *App) SetArtworkSource(cacheDir string, proxy func(string) string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.artwork = newArtworkLoader(cacheDir, proxy, func() {
+		a.mu.Lock()
+		invalidate := a.invalidateFn
+		a.mu.Unlock()
+		if invalidate != nil {
+			invalidate()
+		}
+	})
+}
+
 // Artwork never does disk IO, decoding or HTTP on the render thread. Only the local MediaServer proxy is fetched.
-func (b *PlayerBridge) Artwork(source string) ui.ImageSource {
-	b.mu.Lock()
-	if b.artwork == nil && b.media != nil {
-		b.artwork = newArtworkLoader(b.media.CacheDir(), b.media.ImageURL, func() {
-			b.mu.RLock()
-			fn := b.invalidateFn
-			b.mu.RUnlock()
-			if fn != nil {
-				fn()
-			}
-		})
-	}
-	loader := b.artwork
-	b.mu.Unlock()
+func (a *App) Artwork(source string) ui.ImageSource {
+	loader := a.artwork
 	if loader == nil || source == "" {
 		return nil
 	}
@@ -142,10 +143,8 @@ func (l *artworkLoader) trimLocked() {
 
 // GridView builds visible cells during layout, after App.Render returns.
 // Leave the frame open until the next render so these accesses are pinned too.
-func (b *PlayerBridge) beginArtworkFrame() {
-	b.mu.RLock()
-	loader := b.artwork
-	b.mu.RUnlock()
+func (a *App) beginArtworkFrame() {
+	loader := a.artwork
 	if loader != nil {
 		loader.beginFrame()
 	}

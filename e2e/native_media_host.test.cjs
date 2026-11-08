@@ -63,7 +63,7 @@ test('closing player returns the native document to the current detail', () => {
   h.send({event:'play',seriesId:'123456',episodeNum:4,resumeAt:42,session:7});
   h.send({event:'detail',seriesId:'123456'});
   const labels=h.calls.map(call=>call[0]+':'+(call[1]||''));
-  assert.deepEqual(labels, ['view:native-idle','play:123456','view:native-idle','close:','view:detail','detail-load:123456']);
+  assert.deepEqual(labels, ['view:native-idle','play:123456','view:native-idle','close:','view:detail']);
 });
 test('stop cannot resume a hidden recommendation and suppresses recursive close notifications', () => {
   const h = host();
@@ -77,8 +77,7 @@ test('embedded host uses the original media control modules and native shell bri
   const controls = fs.readFileSync('frontend/player-chrome.js','utf8');
   for (const control of ['quality','speed','danmaku','danmaku-settings','drawer-toggle','pip','fullscreen','like','comment','fav']) assert(controls.includes(`id('${control}')`), control);
   const app = fs.readFileSync('frontend/app.js','utf8');
-  assert(app.includes('window.nativeMediaNotify?.("OpenDetail", seriesId)'));
-  assert(app.includes('window.nativeMediaNotify?.("OpenActor", userId)'));
+  assert(app.includes('window.nativeMediaNotify?.("LibraryChanged")'));
 });
 
 test('native channel requests replace old feed items and survive a scene return', () => {

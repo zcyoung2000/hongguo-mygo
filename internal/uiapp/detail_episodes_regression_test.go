@@ -7,7 +7,7 @@ import (
 )
 
 func newDetailEpisodeTester(episodeCount int) (*App, *ui.Tester) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "detail"
 	app.seriesID = "123456"
 	episodes := make([]CatalogItem, episodeCount)
@@ -43,7 +43,8 @@ func TestDetailEpisodesDefaultCollapseExpandAndCollapseAgain(t *testing.T) {
 }
 
 func TestDetailEpisodesExpandStateResetsAfterPlayback(t *testing.T) {
-	app := NewTestApp(NewTestPlayerBridge())
+	app := NewTestApp()
+	app.SetMediaHost(&MediaHost{})
 	app.detail = Detail{ID: "123456", Title: "长剧选集"}
 	app.detailEpisodesExpanded = true
 	app.ChooseEpisode(2)

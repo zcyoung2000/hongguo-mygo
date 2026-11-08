@@ -15,7 +15,7 @@ import (
 
 func TestRankPaginationDeduplicatesAndStopsCursorCycles(t *testing.T) {
 	provider := &parityProvider{}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.featuresSource = provider
 	for page, cursor := range []string{"a", "b", "a"} {
 		provider.rankResult = ipc.RankResponse{Content: "all", Board: "hot", Cursor: cursor, HasMore: true, Items: []ipc.RankItemDTO{
@@ -46,7 +46,7 @@ func (p *pagingDetail) GetDiscover(context.Context, string, map[string]string, s
 	return ipc.DiscoverResponse{Items: []ipc.SeriesCard{{ID: "123456", Title: "短剧"}}, Cursor: cursor, HasMore: true}, nil
 }
 func TestDiscoverAndActorPaginationStopCursorCycles(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.detailSource = &pagingDetail{}
 	app.loadCatalog(false)
 	app.loadCatalog(true)
@@ -97,7 +97,7 @@ func (p *revalidatingDetail) GetSeriesPage(context.Context, string) (*ipc.Series
 func TestPendingFavoriteCannotToggleTwiceOrBeUndoneByAnOlderRead(t *testing.T) {
 	provider := &blockingFavorite{started: make(chan struct{}), release: make(chan struct{})}
 	source := &revalidatingDetail{started: make(chan struct{}), release: make(chan struct{})}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.favorite = provider
 	app.detailSource = source
 	app.OpenDetail("123456")
@@ -121,7 +121,7 @@ func TestPendingFavoriteCannotToggleTwiceOrBeUndoneByAnOlderRead(t *testing.T) {
 }
 func TestReservationUpdatesEveryVisibleCatalogAndConfirmsCancellation(t *testing.T) {
 	provider := &fakeFavorite{reserved: true}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.favorite = provider
 	item := CatalogItem{ID: "123456", Title: "待播剧", Upcoming: true}
 	app.catalog.Items = []CatalogItem{item}
@@ -140,7 +140,7 @@ func TestReservationUpdatesEveryVisibleCatalogAndConfirmsCancellation(t *testing
 }
 
 func TestAnOldMediaCloseCannotDismissANewerPlaybackSession(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetMediaHost(&MediaHost{})
 	app.view = "detail"
 	app.detail = Detail{ID: "123456"}
@@ -161,7 +161,7 @@ func TestAnOldMediaCloseCannotDismissANewerPlaybackSession(t *testing.T) {
 func TestNativeCollectionActionsFitTheMinimumWindow(t *testing.T) {
 	for _, view := range []string{"rank", "new", "history", "favorites", "likes", "reservations"} {
 		t.Run(view, func(t *testing.T) {
-			app := NewTestApp(nil)
+			app := NewTestApp()
 			app.view = view
 			app.sidebarWidth = 420
 			item := CatalogItem{ID: "123456", Title: "布局测试剧", Category: "真人剧", Description: "布局测试简介", Heat: "热播", EpisodeCount: 46}
@@ -236,7 +236,7 @@ func TestNativeCollectionActionsFitTheMinimumWindow(t *testing.T) {
 }
 
 func TestCatalogCardsRenderDistinctAndCompleteMetadata(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	item := CatalogItem{
 		ID: "123456", Title: "元数据测试剧", Category: "爱情", Heat: "303万热度",
 		EpisodeCount: 142, Description: "剧情简介", Upcoming: true,
@@ -258,7 +258,7 @@ func TestCatalogCardsRenderDistinctAndCompleteMetadata(t *testing.T) {
 
 func TestNativePlaybackDistinguishesSavedAndExplicitResumePositions(t *testing.T) {
 	host := &MediaHost{}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetMediaHost(host)
 	app.detail = Detail{ID: "123456"}
 	app.PlayDetail()

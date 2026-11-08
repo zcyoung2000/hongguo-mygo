@@ -15,7 +15,7 @@ import (
 var SourceNovelForSpacingAudit = ipc.SourceNovelDTO{ID: "source-novel", Title: "重生：我远离后，她怎么慌了？"}
 
 func TestDetailCollectionVerticalSpacingAudit(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "detail"
 	app.seriesID = "123456"
 	app.detail = Detail{

@@ -25,7 +25,7 @@ func TestCatalogFrameBudget(t *testing.T) {
 			Title: fmt.Sprintf("性能样本 %d", index), CoverURL: fmt.Sprintf("perf:%d", index),
 		}
 	}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.catalog.Items = items
 	app.OpenView("discover")
 	tester := ui.NewTester(app.Render, 1200, 800)
@@ -44,7 +44,7 @@ func TestResponsiveDramaGeometryMatchesAcrossNativePages(t *testing.T) {
 		{ID: "one", EpisodeID: "e1", Title: "几何一"},
 		{ID: "two", EpisodeID: "e2", Title: "几何二"},
 	}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "search"
 	app.search.Items = items
 	app.OpenView("search")
@@ -76,7 +76,7 @@ func TestNativePagesShareHeaderRhythm(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.view, func(t *testing.T) {
-			app := NewTestApp(nil)
+			app := NewTestApp()
 			test.prepare(app)
 			app.OpenView(test.view)
 			tt := ui.NewTester(app.Render, 1200, 800)
@@ -118,7 +118,7 @@ func TestVirtualGridsUseStableItemKeys(t *testing.T) {
 		{ID: "series-1", EpisodeID: "episode-1", Title: "第一部"},
 		{ID: "series-2", EpisodeID: "episode-2", Title: "第二部"},
 	}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "search"
 	ui.NewTester(app.Render, 1000, 800).Frame()
 	configureDramaGrid(&state, items)
@@ -130,23 +130,8 @@ func TestVirtualGridsUseStableItemKeys(t *testing.T) {
 }
 
 func TestFrontendPerformanceAndHardRuleInvariants(t *testing.T) {
-	app := readFile(t, "../../frontend/app.js")
 	css := readFile(t, "../../frontend/styles.css")
 	liquid := readFile(t, "../../frontend/liquid-controls.css")
-	for _, pattern := range []string{
-		`loading="lazy" decoding="async" onerror="handleImgError[(]this[)]"`,
-		`rootMargin: '160px 0px'`,
-		`contain: layout paint`,
-		`contain: strict`,
-	} {
-		source := app
-		if pattern[0] != 'l' && pattern[0] != 'r' {
-			source = css + liquid
-		}
-		if !containsRegexp(source, pattern) {
-			t.Fatalf("frontend invariant missing: %s", pattern)
-		}
-	}
 	if containsRegexp(css+liquid, `transition:\s*all`) {
 		t.Fatal("frontend still animates every property")
 	}

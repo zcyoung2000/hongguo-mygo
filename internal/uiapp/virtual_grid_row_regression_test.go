@@ -13,7 +13,7 @@ func TestReservationRowsHaveSpaceForAllMetadata(t *testing.T) {
 		{ID: "three", EpisodeID: "e3", Title: "十八岁的二次回响第二季", Upcoming: false, PublishAt: "2026-10-25"},
 		{ID: "four", EpisodeID: "e4", Title: "下一行卡片标题", Upcoming: false, PublishAt: "2026-12-01"},
 	}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "reservations"
 	app.library.Reserved = Library{Loaded: true, Items: items}
 	app.library.Grids[3] = &ui.GridState{}
