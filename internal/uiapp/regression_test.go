@@ -70,7 +70,11 @@ func TestSearchTypingSurvivesFramesAndSubmit(t *testing.T) {
 	app := NewTestApp()
 	app.OpenView("search")
 	tt := ui.NewTester(app.Render, 1200, 800)
-	tt.ClickAt(300, 60)
+	bar, barOK := tt.Find("搜索短剧")
+	if !barOK {
+		t.Fatal("search input missing")
+	}
+	tt.ClickAt(bar.X+bar.W/2, bar.Y+bar.H/2)
 	for _, word := range []string{"短", "剧", "关键词"} {
 		tt.Type(word)
 		tt.Frame()

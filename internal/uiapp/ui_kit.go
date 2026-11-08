@@ -18,6 +18,20 @@ const (
 	pageContentBottomPad float32 = 12
 )
 
+const (
+	newReleaseMaxCardWidth        float32 = 340
+	newReleaseSparsePosterWidth   float32 = 340
+	newReleaseSparseContentRatio  float32 = 0.60
+	newReleaseSparseGroup3Ratio   float32 = 0.85
+	newReleaseSparseMaxGroupRatio float32 = 1.02
+	newReleaseSparseChromeHeight  float32 = 320
+)
+
+func newReleasePosterWidth(height float32) float32 {
+	available := max(newReleaseSparsePosterWidth*posterAspectRatio, height-newReleaseSparseChromeHeight)
+	return min(newReleaseSparsePosterWidth, available/posterAspectRatio)
+}
+
 var (
 	artworkFade             = ui.Animation{Duration: 320 * time.Millisecond, NonMotion: true}
 	cardSpring              = ui.Snappy
@@ -73,9 +87,13 @@ func dramaCardWidth(width float32) float32 {
 	return (width - float32(dramaColumns(width)-1)*dramaCardGap) / float32(dramaColumns(width))
 }
 
-func gridContentWidth(c *ui.Context) float32 {
+func (a *App) gridContentWidth(c *ui.Context) float32 {
+	sidebarWidth := a.sidebarWidth
+	if sidebarWidth == 0 {
+		sidebarWidth = defaultSidebarWidth
+	}
 	width, _ := c.Size()
-	return max(320, width-360)
+	return max(320, width-sidebarWidth-32)
 }
 
 // dramaSkeleton mirrors the real card geometry before any content arrives,
@@ -87,7 +105,8 @@ func dramaSkeleton(c *ui.Context, count int, width float32) {
 	ui.Row(c.Key("drama-skeleton")).Wrap().Gap(dramaCardGap).Children(func() {
 		for index := range count {
 			ui.Column(c.Key(index)).Width(cardWidth).Gap(6).Children(func() {
-				skeleton.bone(c.Key("poster"), 8).Width(cardWidth).Height(posterHeight).AspectRatio(posterAspectRatio)
+				skeleton.bone(c.Key("poster"), 8).Width(cardWidth).Height(posterHeight).
+					AspectRatio(posterAspectRatio).Role(ui.RoleImage).Label("加载海报占位")
 				skeleton.text(c.Key("title"), 13, 1.3).WidthPercent(92)
 				skeleton.text(c.Key("metadata"), 12, 1.3).WidthPercent(boneWidth(index))
 			})

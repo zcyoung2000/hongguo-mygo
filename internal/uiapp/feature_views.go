@@ -257,17 +257,115 @@ func (a *App) renderReleases(c *ui.Context) {
 	}
 	if value.Loading {
 		ui.Text(c, "正在加载新剧...").TextColor(c.Theme().TextMuted)
-		a.gridSkeleton(c, 12, gridContentWidth(c))
+		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
 	if len(value.Items) == 0 {
 		a.emptyView(c, "当前新剧热榜暂无剧集", "可以选择其他日期")
 		return
 	}
+	if len(value.Items) <= 3 {
+		a.releaseCardGrid(c, value.Items)
+		return
+	}
 	if a.releaseGrid == nil {
 		a.releaseGrid = &ui.GridState{}
 	}
 	a.cardGrid(c, "releases-grid", a.releaseGrid, nil, value.Items, 0, nil).Grow(1)
+}
+
+func (a *App) releaseCardGrid(c *ui.Context, items []CatalogItem) {
+	_, windowHeight := c.Size()
+	posterWidth := newReleasePosterWidth(float32(windowHeight))
+	ui.Column(c.Key("releases-sparse-content")).FillWidth().Gap(18).Children(func() {
+		for _, item := range items {
+			a.releaseFeatureRow(c, item, posterWidth)
+		}
+	})
+}
+
+func (a *App) releaseFeatureRow(c *ui.Context, item CatalogItem, posterWidth float32) {
+	posterHeight := posterWidth * posterAspectRatio
+	group := ui.Column(c.Key("release-feature-group:" + item.ID + "|" + item.EpisodeID)).FillWidth()
+	group.Role(ui.RoleGroup).Label("release-feature-bounds:" + item.ID + "|" + item.EpisodeID)
+	group.Children(func() {
+		ui.Row(c.Key("release-feature:" + item.ID + "|" + item.EpisodeID)).FillWidth().Gap(18).
+			AlignItems(ui.Stretch).MinHeight(posterHeight).Children(func() {
+			posterBox := ui.Box(c.Key("release-feature-poster:" + item.ID + "|" + item.EpisodeID)).
+				Width(posterWidth).Height(posterHeight).Radius(10).Clip().Role(ui.RoleImage).
+				Label(posterLabel(item))
+			posterBox.Children(func() {
+				a.image(c, item.CoverURL, posterWidth, posterHeight)
+				if !item.Upcoming {
+					ui.Row(c.Key("release-feature-badge:"+item.ID+"|"+item.EpisodeID)).
+						Absolute().Top(8).Left(8).Padding(3, 8).Radius(5).
+						Background(ui.RGBA(0, 0, 0, 0.65)).Children(func() {
+						ui.Text(c, "已上线").FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
+					})
+				}
+			})
+
+			panel := ui.Column(c.Key("release-feature-panel:"+item.ID+"|"+item.EpisodeID)).
+				Grow(1).FillHeight().MinWidth(0).Padding(18, 20).Gap(12).
+				Background(ui.RGBA(20, 21, 28, 255)).
+				Border(1, ui.RGBA(255, 255, 255, 0.08)).Radius(12)
+			panel.Role(ui.RoleGroup).Label("release-feature-panel:" + item.ID + "|" + item.EpisodeID)
+			panel.Children(func() {
+				ui.Text(c, item.Title).FontSize(22).Bold().TextColor(ui.Hex("#ffffff")).WidthPercent(100)
+				if item.PublishAt != "" {
+					ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+						ui.Text(c, "上线日期").FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.58))
+						ui.Text(c, formatPublishDate(item.PublishAt)).FontSize(13).Bold().
+							TextColor(ui.RGBA(255, 255, 255, 0.88))
+					})
+				}
+				if item.Category != "" {
+					ui.Text(c, item.Category).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.70))
+				}
+				if item.EpisodeCount > 0 {
+					ui.Textf(c, "共 %d 集", item.EpisodeCount).FontSize(13).
+						TextColor(ui.RGBA(255, 255, 255, 0.70))
+				}
+				_, windowHeight := c.Size()
+				if item.Description != "" && windowHeight >= 700 {
+					ui.Text(c, item.Description).FontSize(13).
+						TextColor(ui.RGBA(255, 255, 255, 0.78)).WidthPercent(100)
+				}
+
+				reservation := ui.Row(c.Key("release-feature-reservation:"+item.ID+"|"+item.EpisodeID)).
+					Height(38).Padding(0, 18).Radius(9).AlignItems(ui.Center).
+					Role(ui.RoleButton).Label(reservationLabel(item)).Focusable()
+				if item.Reserved {
+					reservation.Background(ui.RGBA(255, 255, 255, 0.07)).
+						Border(1, ui.RGBA(255, 255, 255, 0.16))
+				} else {
+					reservation.LinearGradient(ui.LinearGradient{
+						From:  ui.Hex("#d91b42"),
+						To:    ui.Hex("#b81235"),
+						Angle: 135,
+					}).Border(1, ui.RGBA(255, 255, 255, 0.22))
+				}
+				hoverBackground(reservation, ui.RGBA(255, 255, 255, 0.10), ui.RGBA(255, 255, 255, 0.18))
+				if reservation.Clicked() || reservation.Shortcut(0, ui.KeyEnter) || reservation.Shortcut(0, ui.KeySpace) {
+					go a.ToggleItemReservation(item)
+				}
+				reservation.Children(func() {
+					ui.Text(c, reservationLabel(item)).FontSize(13).Bold().TextColor(ui.Hex("#ffffff"))
+				})
+			})
+		})
+	})
+}
+
+func reservationLabel(item CatalogItem) string {
+	if item.Reserved {
+		return "取消预约"
+	}
+	return "预约"
+}
+
+func posterLabel(item CatalogItem) string {
+	return fmt.Sprintf("poster:%s|%s", item.ID, item.EpisodeID)
 }
 func (a *App) renderActor(c *ui.Context) {
 	actor := a.actor
@@ -321,7 +419,7 @@ func (a *App) renderActor(c *ui.Context) {
 			})
 		})
 		ui.Box(c).Height(18)
-		a.gridSkeleton(c, 12, gridContentWidth(c))
+		a.gridSkeleton(c, 12, a.gridContentWidth(c))
 		return
 	}
 	if a.actorWorksGrid == nil {

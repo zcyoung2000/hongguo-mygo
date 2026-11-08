@@ -256,6 +256,21 @@ func TestCatalogCardsRenderDistinctAndCompleteMetadata(t *testing.T) {
 	}
 }
 
+func TestNewReleaseFeatureShowsDescriptionWithRoom(t *testing.T) {
+	app := NewTestApp()
+	app.view = "new"
+	app.releases.Items = []CatalogItem{{
+		ID: "123456", EpisodeID: "1", Title: "元数据测试剧",
+		Category: "爱情", EpisodeCount: 142, Description: "剧情简介",
+		Upcoming: true, Reserved: true, PublishAt: "2026-10-25T20:00:00+08:00",
+	}}
+	tester := ui.NewTester(app.Render, 1200, 700)
+	tester.SetDark(true)
+	if !tester.HasText("剧情简介") {
+		t.Fatalf("feature description missing at roomy height: %v", tester.Texts())
+	}
+}
+
 func TestNativePlaybackDistinguishesSavedAndExplicitResumePositions(t *testing.T) {
 	host := &MediaHost{}
 	app := NewTestApp()

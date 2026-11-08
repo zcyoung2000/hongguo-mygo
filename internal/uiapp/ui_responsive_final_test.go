@@ -2,6 +2,7 @@ package uiapp
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"testing"
@@ -97,6 +98,7 @@ func TestRepresentativePagesResponsiveConvergence(t *testing.T) {
 				app.view = page.view
 				page.prepare(app)
 				tester := ui.NewTester(app.Render, size[0], size[1])
+				tester.SetFocused(false)
 				tester.Frame()
 
 				if !tester.HasText(page.header) {
@@ -117,6 +119,17 @@ func TestRepresentativePagesResponsiveConvergence(t *testing.T) {
 				}
 
 				if page.name == "detail" || page.name == "rank" {
+					return
+				}
+
+				if page.name == "new" {
+					first, firstOK := tester.Find(page.title)
+					if !firstOK {
+						t.Fatalf("%s first card missing at %dx%d: %v", page.name, size[0], size[1], tester.Texts())
+					}
+					if first.W < 240 {
+						t.Fatalf("%s sparse content does not use the large-card layout: %+v", page.name, first)
+					}
 					return
 				}
 
@@ -143,6 +156,99 @@ func TestRepresentativePagesResponsiveConvergence(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestNewReleasesUseVisibleWidthWhenFewCards(t *testing.T) {
+	sizes := [][2]int{{1600, 1000}, {1200, 800}}
+	for _, size := range sizes {
+		for _, count := range []int{1, 3} {
+			name := fmt.Sprintf("%dx%d/%d-card", size[0], size[1], count)
+			t.Run(name, func(t *testing.T) {
+				app := NewTestApp()
+				app.view = "new"
+				app.releases.Calendar = true
+				app.releases.Dates = []string{"20261109"}
+				app.releases.Date = "20261109"
+				for index := range count {
+					app.releases.Items = append(app.releases.Items, CatalogItem{
+						ID: fmt.Sprintf("new-%d", index), EpisodeID: "1",
+						Title: fmt.Sprintf("少卡新剧%d", index), Upcoming: true,
+					})
+				}
+				tester := ui.NewTester(app.Render, size[0], size[1])
+				tester.Frame()
+				contentWidth := max(float64(newReleaseSparsePosterWidth), float64(size[0])-float64(defaultSidebarWidth)-32)
+				minRatio := float32(1)
+				visibleCount := 0
+				var narrowPanel ui.Rect
+				for index := range count {
+					panel, panelOK := tester.Find(fmt.Sprintf("release-feature-bounds:new-%d|1", index))
+					if !panelOK {
+						t.Fatalf("sparse release feature panel missing: %v", tester.Texts())
+					}
+					posterWidth := newReleasePosterWidth(float32(min(size[1], 700)))
+					posterHeight := posterWidth * posterAspectRatio
+					if math.Abs(float64(posterWidth-newReleaseSparsePosterWidth)) > 0.01 ||
+						math.Abs(float64(posterAspectRatio-float32(4)/float32(3))) > 0.001 {
+						t.Fatalf("sparse poster size or ratio changed at %dx%d: posterWidth=%.2f ratio=%.4f", size[0], size[1], posterWidth, posterAspectRatio)
+					}
+					if panel.H > posterHeight+0.01 {
+						t.Fatalf("feature panel exceeds poster group height at %dx%d: panel=%+v posterHeight=%.2f", size[0], size[1], panel, posterHeight)
+					}
+					if panel.W <= 0 || panel.H <= 0 {
+						continue
+					}
+					visibleCount++
+					minRatio = min(minRatio, panel.W/float32(contentWidth))
+					if index == 0 || panel.W < narrowPanel.W {
+						narrowPanel = panel
+					}
+				}
+				wantRatio := float64(newReleaseSparseContentRatio)
+				if count == 3 {
+					wantRatio = float64(newReleaseSparseGroup3Ratio)
+				}
+				ratio := float64(minRatio)
+				if ratio < wantRatio {
+					t.Fatalf("sparse release group too narrow at %dx%d: panel=%+v ratio=%.3f want>=%.3f", size[0], size[1], narrowPanel, ratio, wantRatio)
+				}
+				if visibleCount == 0 {
+					t.Fatalf("no sparse release feature rows visible at %dx%d", size[0], size[1])
+				}
+				if ratio > float64(newReleaseSparseMaxGroupRatio) {
+					t.Fatalf("sparse release group exceeds available width at %dx%d: panel=%+v ratio=%.3f want<=%.3f", size[0], size[1], narrowPanel, ratio, float64(newReleaseSparseMaxGroupRatio))
+				}
+			})
+		}
+	}
+}
+
+func TestNewReleasesKeepCatalogDensityWhenFull(t *testing.T) {
+	app := NewTestApp()
+	app.view = "new"
+	app.releases.Calendar = true
+	app.releases.Dates = []string{"20261109"}
+	app.releases.Date = "20261109"
+	for index := range 6 {
+		app.releases.Items = append(app.releases.Items, CatalogItem{
+			ID: fmt.Sprintf("full-%d", index), EpisodeID: "1",
+			Title: fmt.Sprintf("满行新剧%d", index), Upcoming: true,
+		})
+	}
+	tester := ui.NewTester(app.Render, 1600, 1000)
+	tester.SetFocused(false)
+	tester.Frame()
+	first, firstOK := tester.Find("满行新剧0")
+	third, thirdOK := tester.Find("满行新剧2")
+	if !firstOK || !thirdOK {
+		t.Fatalf("full release row incomplete: %v", tester.Texts())
+	}
+	if first.W > 230 {
+		t.Fatalf("full releases changed catalog density: first=%+v", first)
+	}
+	if third.X < first.X+2*(first.W+18) || third.X > first.X+2*(first.W+24) {
+		t.Fatalf("full releases did not use the normal column step: first=%+v third=%+v", first, third)
 	}
 }
 
