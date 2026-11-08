@@ -1,0 +1,7 @@
+interface:
+  display_name: "mygo Acrylic"
+  short_description: "Acrylic (frosted vibrancy) look for mygo native UI: tinted material ground, user-set translucent work card, wash-only controls, plus a tested Go component kit."
+  default_prompt: "Use $mygo-acrylic to build or retrofit a mygo app with the acrylic look: wire the three layers (ground / card / solid floats), keep every control on the wash ladder, add the guard test, and verify with magenta stress screenshots before delivery."
+
+policy:
+  allow_implicit_invocation: true

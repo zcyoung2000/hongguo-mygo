@@ -1,0 +1,31 @@
+---
+description: mygo（github.com/egoist/mygo）原生 UI 的亚克力外观：系统磨砂窗口底 + 用户可调透明度的工作卡 + 只用半透明洗色的控件。写 mygo 界面、改成亚克力兼容、排查实心底抠穿磨砂时使用。
+globs: "**/*.go"
+alwaysApply: false
+---
+
+# mygo Acrylic（亚克力）
+
+## 三层
+- 窗口底：系统材质 + `Ground × 0.65` 薄纱；没有材质时实铺 `Ground`。
+- 工作卡：`Card × 用户不透明度`（30%~100%，默认 80%）——唯一可调的透明度。
+- 浮层 / 模态 / 代码画布：实色，本来就是实的。
+
+## 铁律
+1. 层拥有不透明度，控件只用洗色：卡片 / 侧栏上的面板不铺底；控件、条带只用 `WashHover` / `WashChip` / `WashSelected` / `WashKbd`。
+2. 透明度只有一个入口：用户的不透明度落在卡片；组件里不手写 `.Alpha()`（语义淡染除外）。
+3. 不拿底色去盖东西：留白、断开用几何做（端点停在 半径 + 留白 + 线宽/2）。
+
+## 洗色阶梯
+| 角色 | 静息 | 悬停 | 按下 / 选中 |
+| --- | --- | --- | --- |
+| 幽灵控件 / 行 | 透明 | WashHover | WashSelected |
+| 实心控件 | WashChip + Hairline | WashSelected + HairlineStrong | 同悬停 |
+| 条带 / 芯片 | WashChip | — | — |
+
+## 别用
+- `ui.Checkbox` / `ui.Radio`（未勾选铺实心 t.Background）→ CheckboxBase 自己画；`ui.Split`（线取透明的 t.Border）→ 自绘 1px 发丝线分隔条。
+- 编辑器 / DiffView 画布保持实色（淡染从背景色现算）；终端插件用 `Transparent: true`。
+
+## 交付前
+窗口底换品红、卡片 30% 拍深浅截图，没字的地方必须透出品红；接上静态守则测试并做反向测试。

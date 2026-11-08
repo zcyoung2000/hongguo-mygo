@@ -6,6 +6,48 @@
       "sourceType": "github",
       "skillPath": "skills/animate/SKILL.md",
       "computedHash": "f76ddd3d4446c3c56a143ea98650c370b3e8f88e6203d1e22082d2082bf1eed7"
+    },
+    "mygo-acrylic": {
+      "source": "cc-hearts/skills",
+      "sourceType": "github",
+      "skillPath": "mygo-acrylic/SKILL.md",
+      "computedHash": "49ec1d9206af03c5d4f5535138f96c8589990abd498f036ebe464dafae8a40d8"
+    },
+    "mygo-automation": {
+      "source": "egoist/mygo",
+      "sourceType": "github",
+      "skillPath": "plugins/automation/cmd/mygo-automation/SKILL.md",
+      "computedHash": "00c30484088b14d0e84aa32416e1557e7fff65044284934a5593007239af6048"
+    },
+    "mygo-components": {
+      "source": "transmit-bug/mygo-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mygo-components/SKILL.md",
+      "computedHash": "18c124d18d649df76099ca24bb4da0d97861fc27383ca01c0b4e907728f21f0b"
+    },
+    "mygo-desktop": {
+      "source": "transmit-bug/mygo-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mygo-desktop/SKILL.md",
+      "computedHash": "1800fdc39ac03ad8d14e450918712c3772c26dba531fcda1a5e4b220af442c74"
+    },
+    "mygo-drawing": {
+      "source": "transmit-bug/mygo-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mygo-drawing/SKILL.md",
+      "computedHash": "d5df3bd0ebe6da58cdd4d0e3e7357cc643f111ef27dd82d0df4ef611d436640b"
+    },
+    "mygo-motion": {
+      "source": "transmit-bug/mygo-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mygo-motion/SKILL.md",
+      "computedHash": "1ebce5bdf66bcdf9316c68dde44d4aeee71fbab48bf936c36b5c8297e6960c50"
+    },
+    "mygo-web": {
+      "source": "transmit-bug/mygo-skills",
+      "sourceType": "github",
+      "skillPath": "skills/mygo-web/SKILL.md",
+      "computedHash": "6ee0282f48296ec27fd409b784e2ed7f0fa864b6dcdac1a530a336b262c4ec70"
     }
   }
 }
