@@ -129,11 +129,12 @@ func (s *NativeShell) AmbientGlow(payload AmbientGlowPayload) {
 	s.App.SetAmbientGlow(payload.Active, payload.Left, payload.Top)
 }
 
-func (s *NativeShell) OpenDetail(id string)      { s.App.OpenDetail(id) }
-func (s *NativeShell) OpenActor(id string)       { s.App.OpenActor(id) }
-func (s *NativeShell) Closed(session int64)      { s.App.CloseMediaSession(session) }
-func (s *NativeShell) ClosePlayer(session int64) { s.App.ClosePlayer(session) }
-func (s *NativeShell) LibraryChanged()           { s.App.LibraryChanged() }
+func (s *NativeShell) OpenDetail(id string)                  { s.App.OpenDetail(id) }
+func (s *NativeShell) OpenActor(id string)                   { s.App.OpenActor(id) }
+func (s *NativeShell) ResumeProgress(payload ResumeProgress) { s.App.UpdateResumeProgress(payload) }
+func (s *NativeShell) Closed(session int64)                  { s.App.CloseMediaSession(session) }
+func (s *NativeShell) ClosePlayer(session int64)             { s.App.ClosePlayer(session) }
+func (s *NativeShell) LibraryChanged()                       { s.App.LibraryChanged() }
 func (s *NativeShell) ToggleFullscreen() {
 	if w := mygo.FocusedWindow(); w != nil {
 		w.ToggleFullScreen()

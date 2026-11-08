@@ -13,6 +13,7 @@
   let activeSession = 0;
   const notify = (method, ...args) => window.mygo.call(`NativeShell.${method}`, ...args)
     .catch(error => console.error('[native-shell]', method, error));
+  window.nativeMediaSession = () => Number(activeSession);
   window.nativeMediaNotify = notify;
   const closeNativeMedia = () => {
     const session = Number(activeSession);

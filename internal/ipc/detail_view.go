@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -15,8 +16,9 @@ import (
 )
 
 type ActorInfo struct {
-	Name string `json:"name"`
-	Role string `json:"role,omitempty"`
+	Name   string `json:"name"`
+	Role   string `json:"role,omitempty"`
+	UserID string `json:"userId,omitempty"`
 }
 
 type SourceNovelDTO struct {
@@ -391,7 +393,7 @@ func (s *HongguoService) newSeriesDetailPage(detail model.SeriesDetail, seriesID
 		}
 	}
 
-	var actorNames []string
+	var actors []ActorInfo
 	seenActors := make(map[string]bool)
 	for _, row := range d.Rows {
 		switch row.Kind {
@@ -411,13 +413,13 @@ func (s *HongguoService) newSeriesDetailPage(detail model.SeriesDetail, seriesID
 					continue
 				}
 				seenActors[key] = true
-				actorNames = append(actorNames, name)
+				actors = append(actors, ActorInfo{
+					Name: name, Role: "演员", UserID: actorUserIDFromSchema(row.Schema),
+				})
 			}
 		}
 	}
-	for _, name := range actorNames {
-		page.Actors = append(page.Actors, ActorInfo{Name: name, Role: "演员"})
-	}
+	page.Actors = actors
 	if len(tags) == 0 && d.Category != "" {
 		addTag(d.Category)
 	}
@@ -460,6 +462,22 @@ func (s *HongguoService) newSeriesDetailPage(detail model.SeriesDetail, seriesID
 func sanitizeUTF8(value string) string { return sanitize.UTF8(value) }
 
 func sanitizeUTF8Strings(values []string) []string { return sanitize.UTF8Strings(values) }
+
+func actorUserIDFromSchema(schema string) string {
+	const prefix = "dragon8662://user/"
+	if !strings.HasPrefix(schema, prefix) {
+		return ""
+	}
+	value := strings.TrimPrefix(schema, prefix)
+	if end := strings.IndexAny(value, "?#"); end >= 0 {
+		value = value[:end]
+	}
+	value = strings.Trim(value, "/")
+	if number, err := strconv.ParseInt(value, 10, 64); err != nil || number <= 0 || strconv.FormatInt(number, 10) != value {
+		return ""
+	}
+	return value
+}
 
 func (s *HongguoService) fetchSeriesBatchMap(ctx context.Context, ids []string) map[string]*model.Series {
 	if len(ids) == 0 {

@@ -898,15 +898,19 @@ func (a *App) renderDetail(c *ui.Context) {
 				if len(detail.Tags) > 0 {
 					ui.Text(c, strings.Join(detail.Tags, " · ")).FontSize(13).TextColor(c.Theme().TextMuted)
 				}
-				ui.Textf(c, "%s · %d 人在追 · %d 赞", detail.Heat, detail.FollowCount, detail.LikeCount).FontSize(12).TextColor(c.Theme().TextMuted)
+				stats := detailProgressPieces(detail.Heat, formatCountText(detail.FollowCount)+"人在追", formatCountText(detail.LikeCount)+"赞")
+				if len(stats) > 0 {
+					ui.Text(c, strings.Join(stats, " · ")).FontSize(12).TextColor(c.Theme().TextMuted)
+				}
 				if detail.PublishText != "" {
 					ui.Text(c, detail.PublishText).FontSize(12).TextColor(c.Theme().TextMuted)
 				}
 				if detail.Description != "" {
 					ui.Text(c.Key("detail-description"), detail.Description).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.82))
 				}
-				if detail.StatusText != "" || detail.PlayCount > 0 {
-					ui.Textf(c, "%s · %d次播放", detail.StatusText, detail.PlayCount).FontSize(12).TextColor(c.Theme().TextMuted)
+				playStats := detailProgressPieces(detail.StatusText, fmt.Sprintf("%d次播放", detail.PlayCount))
+				if len(playStats) > 0 {
+					ui.Text(c, strings.Join(playStats, " · ")).FontSize(12).TextColor(c.Theme().TextMuted)
 				}
 
 				// Action buttons aligned right under the metadata
@@ -1016,10 +1020,17 @@ func (a *App) renderDetail(c *ui.Context) {
 				ui.Row(c.Key("detail-actors-flow")).Wrap().Gap(8).Children(func() {
 					for _, actor := range detail.Actors {
 						act := actor
-						ui.Row(c.Key("actor:"+act.Name)).Padding(4, 10).Radius(6).
+						chip := ui.Row(c.Key("actor:"+act.Name)).Padding(4, 10).Radius(6).
 							Background(ui.RGBA(255, 255, 255, 0.06)).
 							Border(1, ui.RGBA(255, 255, 255, 0.08)).
-							AlignItems(ui.Center).Gap(6).Children(func() {
+							AlignItems(ui.Center).Gap(6)
+						if act.UserID != "" {
+							chip.Role(ui.RoleButton).Label("演员主页：" + act.Name).Focusable()
+							if chip.Clicked() || chip.Shortcut(0, ui.KeyEnter) || chip.Shortcut(0, ui.KeySpace) {
+								go a.OpenActor(act.UserID)
+							}
+						}
+						chip.Children(func() {
 							ui.Text(c, act.Name).FontSize(12).Bold().TextColor(ui.Hex("#ffffff"))
 							if act.Role != "" {
 								ui.Text(c, act.Role).FontSize(11).TextColor(ui.RGBA(255, 255, 255, 0.60))

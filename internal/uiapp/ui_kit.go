@@ -2,6 +2,8 @@ package uiapp
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -111,4 +113,27 @@ func sectionHeader(c *ui.Context, title, detail string) {
 			ui.Text(c, detail).FontSize(12).TextColor(c.Theme().TextMuted)
 		}
 	})
+}
+
+func detailProgressPieces(pieces ...string) []string {
+	out := make([]string, 0, len(pieces))
+	for _, piece := range pieces {
+		if piece = strings.TrimSpace(piece); piece != "" && piece != "0" && piece != "0次播放" {
+			out = append(out, piece)
+		}
+	}
+	return out
+}
+
+func formatCountText(value int64) string {
+	switch {
+	case value <= 0:
+		return ""
+	case value >= 100000000:
+		return strconv.FormatFloat(float64(value)/100000000, 'f', 1, 64) + "亿"
+	case value >= 10000:
+		return strconv.FormatFloat(float64(value)/10000, 'f', 1, 64) + "万"
+	default:
+		return strconv.FormatInt(value, 10)
+	}
 }
