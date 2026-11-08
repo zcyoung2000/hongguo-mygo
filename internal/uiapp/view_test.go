@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenderDiscoverShowsAsyncLoadingState(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.catalog.Loading = true
 	tt := ui.NewTester(app.Render, 1200, 800)
 	if !tt.HasText("正在加载目录...") {
@@ -19,7 +19,7 @@ func TestRenderDiscoverShowsAsyncLoadingState(t *testing.T) {
 }
 
 func TestRenderCatalogShowsItems(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.catalog.Items = []CatalogItem{
 		{ID: "123456", Title: "第一剧", EpisodeCount: 12, Heat: "热播"},
 		{ID: "223456", Title: "第二剧", EpisodeCount: 8, Heat: "新剧"},
@@ -32,7 +32,7 @@ func TestRenderCatalogShowsItems(t *testing.T) {
 }
 
 func TestRenderLibraryShowsRealLocalEmptyState(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.library.Grids = [4]*ui.GridState{{}, {}, {}, {}}
 	app.library.History = Library{Empty: true}
 	app.OpenView("history")
@@ -43,7 +43,7 @@ func TestRenderLibraryShowsRealLocalEmptyState(t *testing.T) {
 }
 
 func TestRenderErrorAndRetryAreVisible(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.catalog.Error = "目录加载失败，请稍后重试"
 	tt := ui.NewTester(app.Render, 1200, 800)
 	if !tt.HasText("目录加载失败") || !tt.HasText("重试") {
@@ -52,7 +52,7 @@ func TestRenderErrorAndRetryAreVisible(t *testing.T) {
 }
 
 func TestRenderSidebarUsesSVGNavigation(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	tt := ui.NewTester(app.Render, 1200, 800)
 	texts := tt.Texts()
 	for _, label := range []string{"推荐", "找剧", "排行榜", "新剧", "历史", "收藏", "预约", "设置"} {
@@ -70,7 +70,7 @@ func TestRenderSidebarUsesSVGNavigation(t *testing.T) {
 }
 
 func TestSidebarClickOpensHistory(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	tt := ui.NewTester(app.Render, 1200, 800)
 	if err := tt.Click("历史"); err != nil {
 		t.Fatalf("click history: %v", err)
@@ -83,7 +83,7 @@ func TestSidebarClickOpensHistory(t *testing.T) {
 }
 
 func TestRenderDetailShowsEpisodes(t *testing.T) {
-	app := NewTestApp(NewTestPlayerBridge())
+	app := NewTestApp()
 	app.detail = Detail{
 		ID: "123456", Title: "详情剧", StatusText: "完结", PlayCount: 321, EpisodeCount: 2,
 		Episodes: []CatalogItem{{ID: "654321", Title: "第1集", EpisodeCount: 1}},
@@ -97,7 +97,7 @@ func TestRenderDetailShowsEpisodes(t *testing.T) {
 }
 
 func TestSlidingTabsSelectedPillDoesNotCollapseWidth(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.rank.Contents = []model.RankContent{
 		{ID: "all", Name: "全部"},
 		{ID: "series", Name: "系列剧"},

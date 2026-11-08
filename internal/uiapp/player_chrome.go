@@ -48,24 +48,9 @@ func (s *NativeShell) SelectPlayerEpisode(value int)   { s.App.playerControl("ep
 
 func (a *App) playerControl(command string, value any) {
 	a.mu.Lock()
-	host := a.media
-	player := a.player
+	host, active := a.media, a.mediaOn || a.view == "recommend" || a.view == "settings"
 	a.mu.Unlock()
-	if player != nil {
-		switch command {
-		case "quality":
-			if id, ok := value.(string); ok {
-				player.SelectQuality(id)
-				return
-			}
-		case "speed":
-			if speed, ok := value.(float64); ok {
-				player.SelectSpeed(speed)
-				return
-			}
-		}
-	}
-	if host != nil {
+	if host != nil && active {
 		host.PlayerControl(command, value)
 	}
 }

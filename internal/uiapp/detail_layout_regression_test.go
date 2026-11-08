@@ -8,7 +8,7 @@ import (
 )
 
 func TestDetailVerticalRhythmAndCollectionSpacing(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "detail"
 	app.seriesID = "123456"
 	app.detail = Detail{

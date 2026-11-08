@@ -11,6 +11,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
+	"myguo/internal/native"
 )
 
 const serviceTimeout = 15 * time.Second
@@ -182,12 +183,11 @@ type App struct {
 	started                     bool
 	resume                      CatalogItem
 	service                     *ipc.HongguoService
-	player                      *PlayerBridge
+	artwork                     *artworkLoader
 	invalidateFn                func()
 	testMode                    bool
 	favorite                    favoriteProvider
 	detailSource                detailProvider
-	playerSource                playbackProvider
 
 	view     string
 	seriesID string
@@ -204,10 +204,9 @@ type App struct {
 	playerOn    bool
 }
 
-func NewApp(service *ipc.HongguoService, player *PlayerBridge) *App {
+func NewApp(service *ipc.HongguoService) *App {
 	return &App{
 		service:    service,
-		player:     player,
 		view:       "discover",
 		catalog:    Catalog{Genre: []string{"真人剧", "漫剧", "AI剧"}, HasMore: true},
 		rank:       RankingState{Content: "all", Board: "ranklist_hot_sc", HasMore: true},
@@ -235,9 +234,8 @@ type detailProvider interface {
 	GetDiscover(ctx context.Context, genre string, selections map[string]string, cursor string) (ipc.DiscoverResponse, error)
 }
 
-func NewTestApp(player *PlayerBridge) *App {
+func NewTestApp() *App {
 	return &App{
-		player:   player,
 		view:     "discover",
 		catalog:  Catalog{Genre: []string{"真人剧", "漫剧", "AI剧"}, HasMore: true},
 		rank:     RankingState{Content: "all", Board: "ranklist_hot_sc", HasMore: true},
@@ -253,9 +251,6 @@ func (a *App) SetInvalidator(fn func()) {
 	a.mu.Lock()
 	a.invalidateFn = fn
 	a.mu.Unlock()
-	if a.player != nil {
-		a.player.SetInvalidator(fn)
-	}
 }
 func (a *App) SetLibraryGrids(grids [4]*ui.GridState) {
 	a.mu.Lock()
@@ -472,7 +467,7 @@ func (a *App) favoriteProvider() favoriteProvider {
 }
 func (a *App) ChooseEpisode(num int) {
 	a.mu.Lock()
-	loaded := num > 0 && (a.player != nil || a.media != nil) && !a.detail.Loading && a.detail.ID != "" && !a.detail.Upcoming
+	loaded := num > 0 && a.media != nil && !a.detail.Loading && a.detail.ID != "" && !a.detail.Upcoming
 	if loaded {
 		a.detailEpisodesExpanded = false
 		a.detailScroll.Y = 0
@@ -491,30 +486,14 @@ func (a *App) RefreshLibrary(tab LibraryTab) {
 		go a.loadLibraryWithRefresh(tab, true)
 	}
 }
-func (a *App) PlayerResume() {
-	if a.player != nil {
-		a.player.Resume()
-	}
-}
-func (a *App) PlayerPause() {
-	if a.player != nil {
-		a.player.Pause()
-	}
-}
-func (a *App) PlayerPrevious() {
-	if a.player != nil {
-		a.player.Previous()
-	}
-}
-func (a *App) PlayerNext() {
-	if a.player != nil {
-		a.player.Next()
-	}
-}
+func (a *App) PlayerResume() { a.MediaCommand(native.MediaCommandPayload{Command: "play"}) }
+func (a *App) PlayerPause()  { a.MediaCommand(native.MediaCommandPayload{Command: "pause"}) }
+
+func (a *App) PlayerPrevious() { a.MediaCommand(native.MediaCommandPayload{Command: "prev"}) }
+
+func (a *App) PlayerNext() { a.MediaCommand(native.MediaCommandPayload{Command: "next"}) }
 func (a *App) PlayerPictureInPicture() {
-	if a.player != nil {
-		a.player.PictureInPicture()
-	}
+	a.MediaCommand(native.MediaCommandPayload{Command: "pip"})
 }
 func (a *App) loadFilters() {
 	a.mu.Lock()
@@ -604,16 +583,6 @@ func (a *App) loadDetailAt(seriesID string, generation uint64) {
 	}
 	a.detail = convertDetail(seriesID, page)
 	a.detail.RelatedLoading = true
-	if a.player != nil {
-		a.player.SetSeriesMetadata(seriesID, page.Title, page.CoverURL, page.EpisodeCount)
-		num, position := 1, float64(0)
-		if a.resume.ID == seriesID && a.resume.ResumeEpisode > 0 {
-			num, position = a.resume.ResumeEpisode, a.resume.ResumePosition
-		}
-		if a.media == nil {
-			a.player.Play(seriesID, "", num, position, true)
-		}
-	}
 	a.invalidate()
 	a.mu.Unlock()
 	if a.featuresSource != nil || a.service != nil {
@@ -777,9 +746,6 @@ func (a *App) open(view, seriesID string) {
 		a.media.Stop()
 	}
 	a.detail = Detail{}
-	if a.player != nil && a.media == nil {
-		a.player.Stop()
-	}
 	a.invalidate()
 }
 func (a *App) fail(prefix string, err error) { a.error = prefix + err.Error(); a.invalidate() }

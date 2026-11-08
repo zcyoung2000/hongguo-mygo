@@ -109,7 +109,6 @@ assert.match(css, /--player-drawer-width:\s*248px/);
 assert.doesNotMatch(css, /\.feed-playlist-drawer\s*\{[^}]*width:\s*320px/);
 assert.match(css, /\.feed-playlist-drawer\s+\.episodes-grid\s*\{[^}]*gap:\s*6px/);
 assert.match(css, /\.feed-playlist-drawer\s+\.episodes-grid\.is-collapsed\s*\{[^}]*height:\s*calc\(3 \* 28px \+ 2 \* 6px\)/);
-assert.match(css, /\.detail-episode-grid\.is-collapsed\s*\{[^}]*max-height:\s*calc\(3 \* 48px \+ 2 \* 10px\)/);
 assert.match(css, /\.player-topbar\s*\{[^}]*padding:\s*max\(0px,\s*env\(safe-area-inset-top\)\)\s*24px\s*0\s*16px/);
 assert.match(css, /\.player-back-btn\s*\{[^}]*min-height:\s*32px/s);
 

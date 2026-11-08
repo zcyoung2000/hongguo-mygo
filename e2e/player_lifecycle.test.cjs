@@ -64,8 +64,7 @@ function harness() {
   for (const name of [
     'clearPlayerVideo', 'openPlayer', 'playEpisodeNumber', 'persistProgress', 'closePlayer',
     'isPlayerRequestCurrent', 'formatTime', 'playNextSeason', 'shouldCaptureFeedScroll', 'handleNativeFeedScroll',
-    'requestFeedSwitch',
-    'clearMediaCache'
+    'requestFeedSwitch', 'clearMediaCache'
   ]) {
     const index = declarations.findIndex(match => match[1] === name);
     assert.ok(index >= 0, `missing ${name}`);

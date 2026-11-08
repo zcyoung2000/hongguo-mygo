@@ -35,7 +35,7 @@ func TestLoadHistoryMapsOnlyRealLocalRecords(t *testing.T) {
 		SeriesID: "123456", Title: "真实历史", CoverURL: "cover", EpisodeNum: 4,
 		PositionSec: 42, DurationSec: 120, TotalEpisodes: 10, UpdatedAt: time.Now().Unix(),
 	}}}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.libraryData = provider
 	app.SetInvalidator(func() {})
 	app.loadLibrary(libraryHistory)
@@ -54,7 +54,7 @@ func TestLoadFavoritesAndReservationsUseProviderData(t *testing.T) {
 		reservations: []ipc.ReservationItem{{SeriesID: "323456", Title: "预约剧", Note: "待上线"}},
 		likes:        []ipc.LikeItem{{SeriesID: "423456", Title: "点赞剧集", EpisodeNum: 3}},
 	}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.libraryData = provider
 	app.SetInvalidator(func() {})
 	app.loadLibrary(libraryFavorites)
@@ -73,7 +73,7 @@ func TestLoadFavoritesAndReservationsUseProviderData(t *testing.T) {
 
 func TestLoadLibraryShowsErrorWithoutSyntheticRecords(t *testing.T) {
 	provider := &fakeLibrary{err: errors.New("sqlite unavailable")}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.libraryData = provider
 	app.SetInvalidator(func() {})
 	app.loadLibrary(libraryHistory)
@@ -91,7 +91,7 @@ func TestCompletedHistoryRequiresRealFinalEpisodeProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.library.History = Library{Items: rows}
 	app.SetLibraryFilter("completed", "")
 	completed := app.visibleLibrary(libraryHistory)
@@ -124,7 +124,7 @@ func (f *delayedCollections) GetLikes(context.Context) ([]ipc.LikeItem, error) {
 
 func TestEnteringEitherCollectionLoadsBothCounts(t *testing.T) {
 	for _, tab := range []LibraryTab{libraryFavorites, libraryLikes} {
-		app := NewTestApp(nil)
+		app := NewTestApp()
 		provider := &delayedCollections{
 			fakeLibrary: fakeLibrary{
 				favorites: []ipc.FavoriteItem{{SeriesID: "123456"}},

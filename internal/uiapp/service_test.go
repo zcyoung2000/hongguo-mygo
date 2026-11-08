@@ -25,7 +25,7 @@ func TestCatalogValuesUsesSelectedFiltersAndDefaultsToGenre(t *testing.T) {
 }
 
 func TestSelectGenreResetsCatalogAndTriggersAsyncLoad(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetInvalidator(func() {})
 	app.catalog.Items = []CatalogItem{{ID: "old"}}
 	app.catalog.Cursor = "cursor"
@@ -40,8 +40,8 @@ func TestSelectGenreResetsCatalogAndTriggersAsyncLoad(t *testing.T) {
 	}
 }
 
-func TestOpenDetailShowsLoadingAndPlayerBridge(t *testing.T) {
-	app := NewTestApp(NewTestPlayerBridge())
+func TestOpenDetailShowsLoadingWithoutPlayer(t *testing.T) {
+	app := NewTestApp()
 	app.SetInvalidator(func() {})
 	app.OpenDetail("123456")
 	if app.View() != "detail" || app.PlayerVisible() || !app.DetailState().Loading {
@@ -54,7 +54,7 @@ func TestOpenDetailShowsLoadingAndPlayerBridge(t *testing.T) {
 }
 
 func TestLibraryGridsAreStablePerTab(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	grids := [4]*ui.GridState{{}, {}, {}, {}}
 	app.SetLibraryGrids(grids)
 	app.SetLibraryGrids(grids)
@@ -73,39 +73,9 @@ func TestConvertCardsPreservesVisibleCatalogMetadata(t *testing.T) {
 	}
 }
 
-func TestPlayerBridgeRejectsInvalidProgressAndTracksCommands(t *testing.T) {
-	source := &fakePlayback{playback: &ipc.PlaybackDTO{SeriesID: "123456", EpisodeID: "654321", EpisodeNum: 2}}
-	player := NewTestPlayerBridge()
-	player.playback = source
-	if err := player.SaveProgress(progressPayload{SeriesID: "123", EpisodeID: "", Position: 1, Duration: 2}); err != nil {
-		t.Fatalf("SaveProgress returned error for empty episode: %v", err)
-	}
-	player.Play("123456", "654321", 2, 12.5, true)
-	state := player.state()
-	if state.SeriesID != "123456" || state.EpisodeID != "654321" || state.EpisodeNum != 2 || state.Position != 12.5 || !state.Playing {
-		t.Fatalf("play state = %+v", state)
-	}
-	player.MediaCommand("pause", 0)
-	if player.state().Playing {
-		t.Fatal("pause did not update bridge state")
-	}
-	player.MediaCommand("next", 0)
-	if player.state().EpisodeNum != 3 || player.state().Playing {
-		t.Fatalf("next state = %+v", player.state())
-	}
-}
-
-func TestPlayerBridgeWithNilProviderDoesNotCallService(t *testing.T) {
-	player := NewTestPlayerBridge()
-	player.Play("123456", "654321", 2, 12.5, true)
-	if player.state().EpisodeNum != 2 {
-		t.Fatalf("state = %+v", player.state())
-	}
-}
-
 func TestDetailProviderIsInvokedDirectly(t *testing.T) {
 	source := &fakeDetail{page: &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "详情"}}}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.detailSource = source
 	app.loadDetail("123456")
 	if source.pages.Load() != 1 || app.DetailState().Title != "详情" {
@@ -115,7 +85,7 @@ func TestDetailProviderIsInvokedDirectly(t *testing.T) {
 
 func TestFavoriteProviderUpdatesState(t *testing.T) {
 	provider := &fakeFavorite{favorite: true, reserved: true}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.favorite = provider
 	app.detail = Detail{ID: "123456", Title: "详情", EpisodeCount: 8}
 	app.ToggleDetailFavorite()
@@ -127,24 +97,6 @@ func TestFavoriteProviderUpdatesState(t *testing.T) {
 	waitFor(time.Second, func() bool { return provider.reservationCalls.Load() == 1 && app.DetailState().Reserved })
 	if provider.reservationCalls.Load() != 1 || !app.DetailState().Reserved {
 		t.Fatalf("reservation calls=%d state=%+v", provider.reservationCalls.Load(), app.detail)
-	}
-}
-
-func TestPlayerBridgeUsesPlaybackProvider(t *testing.T) {
-	source := &fakePlayback{playback: &ipc.PlaybackDTO{
-		SeriesID: "123456", EpisodeID: "654321", EpisodeNum: 2, Title: "第2集",
-		StreamURL: "http://127.0.0.1/video", LastPosition: 8, DurationSec: 100,
-	}}
-	player := NewTestPlayerBridge()
-	player.playback = source
-	player.Play("123456", "", 2, 0, true)
-	waitFor(time.Second, func() bool { return source.calls.Load() == 1 && player.state().Duration == 100 })
-	if source.calls.Load() != 1 {
-		t.Fatalf("playback calls=%d", source.calls.Load())
-	}
-	state := player.state()
-	if state.EpisodeID != "654321" || state.Position != 8 || state.Duration != 100 {
-		t.Fatalf("bridge state=%+v", state)
 	}
 }
 

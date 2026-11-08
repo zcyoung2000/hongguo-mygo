@@ -29,7 +29,7 @@ func (relatedDetailProvider) GetDiscover(context.Context, string, map[string]str
 }
 
 func TestRelatedLoadingRemovesCategoryAndBadge(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.detailSource = relatedDetailProvider{}
 	app.loadRelatedAt("123456", app.generation)
 

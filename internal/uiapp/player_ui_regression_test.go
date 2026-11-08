@@ -15,7 +15,7 @@ import (
 )
 
 func TestPlayerDrawerDefaultsToThreeRowsAndClosesOnOutsideClick(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetMediaHost(&MediaHost{view: &mygo.WebView{}})
 	app.view = "detail"
 	app.detail = Detail{ID: "123456"}
@@ -96,7 +96,7 @@ func TestPlayerChromeStaysInsideFittedVideoAndNativeControlsOwnHitTesting(t *tes
 		t.Fatal("player stage must reserve a safe inset between fitted video and action rail")
 	}
 
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetMediaHost(&MediaHost{})
 	app.TogglePlayerFixture()
 	app.detail = Detail{ID: "123456"}
@@ -135,7 +135,7 @@ func TestPlayerDrawer812EpisodesPreservesCompleteContinuousCollection(t *testing
 	for index := range episodes {
 		episodes[index] = CatalogItem{ID: "812", EpisodeCount: index + 1}
 	}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.detail = Detail{ID: "812", Episodes: episodes}
 	if count := detailEpisodeCollapsedCount(len(episodes)); count != 12 {
 		t.Fatalf("collapsed episode count = %d, want 12", count)

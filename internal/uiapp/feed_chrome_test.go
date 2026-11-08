@@ -9,7 +9,7 @@ import (
 )
 
 func TestNativeFeedChannelSelectionSurvivesNavigationAndStartup(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	host := &MediaHost{}
 	app.SetMediaHost(host)
 	app.OpenView("recommend")
@@ -41,7 +41,7 @@ func TestNativeFeedChannelSelectionSurvivesNavigationAndStartup(t *testing.T) {
 }
 
 func TestNativeFeedChannelsOverlayKeepsMediaAndHidesWithItsScene(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	view := &mygo.WebView{}
 	app.SetMediaHost(&MediaHost{view: view})
 	app.OpenView("recommend")
@@ -80,7 +80,7 @@ func TestNativeFeedChannelsOverlayKeepsMediaAndHidesWithItsScene(t *testing.T) {
 }
 
 func TestAmbientGlowUpdatesSidebarAndFeedChrome(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	shell := NativeShell{App: app}
 	app.OpenView("recommend")
 	tt := ui.NewTester(app.Render, 1200, 800)
@@ -116,7 +116,7 @@ func TestAmbientGlowUpdatesSidebarAndFeedChrome(t *testing.T) {
 }
 
 func TestFeedChannelPillWidthNotCollapsed(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.feedChannel = "推荐"
 	app.OpenView("recommend")
 	tt := ui.NewTester(app.Render, 1200, 800)

@@ -53,7 +53,7 @@ func TestReservationCardsFollowUpcomingActivationRules(t *testing.T) {
 }
 
 func newReservationTester(item ipc.ReservationItem, online bool) (*App, *ui.Tester) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetInvalidator(func() {})
 	item.IsOnline = online
 	app.libraryData = &fakeLibrary{reservations: []ipc.ReservationItem{item}}

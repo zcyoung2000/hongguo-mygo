@@ -13,7 +13,7 @@ import (
 )
 
 func TestPageFadeIsVisibleAndRapidNavigationDropsThePreviousPage(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "search"
 	app.catalog.Items = []CatalogItem{{ID: "123456", Title: "过渡中的短剧"}}
 	tt := ui.NewTester(app.Render, 1200, 800)
@@ -50,7 +50,7 @@ func TestPageFadeIsVisibleAndRapidNavigationDropsThePreviousPage(t *testing.T) {
 }
 
 func TestDiscoverSearchEntryAndCompactFilters(t *testing.T) {
-	a := NewTestApp(nil)
+	a := NewTestApp()
 	a.catalog.Filters = []FilterRow{{Title: "题材", Options: []FilterOption{{Label: "全部"}}}}
 	a.catalog.Items = []CatalogItem{{ID: "123456", Title: "布局回归短剧"}}
 	tt := ui.NewTester(a.Render, 1200, 800)
@@ -73,7 +73,7 @@ func TestMediaSurfaceFillsContentAndIsRemovedForDetail(t *testing.T) {
 	for _, size := range [][2]int{{1000, 640}, {1600, 1000}} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			view := &mygo.WebView{}
-			app := NewTestApp(nil)
+			app := NewTestApp()
 			app.sidebarWidth = 210
 			app.SetMediaHost(&MediaHost{view: view})
 			app.OpenView("recommend")
@@ -130,7 +130,7 @@ func TestMediaReadyKeepsLatestSceneAndDoesNotReplayItTwice(t *testing.T) {
 func TestCollectionPostersFillColumnsAndPreserveAspectRatio(t *testing.T) {
 	for _, width := range []int{1000, 1200, 1600} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
-			a := NewTestApp(nil)
+			a := NewTestApp()
 			a.view = "search"
 			for i := range 30 {
 				a.search.Items = append(a.search.Items, CatalogItem{ID: fmt.Sprint(i), Title: fmt.Sprintf("海报%d", i)})
@@ -163,7 +163,7 @@ func TestCollectionRowsFitRenderedMetadata(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.view, func(t *testing.T) {
-			app := NewTestApp(nil)
+			app := NewTestApp()
 			app.view = test.view
 			library := Library{Items: []CatalogItem{test.item}}
 			switch test.view {
@@ -194,7 +194,7 @@ func TestCollectionRowsFitRenderedMetadata(t *testing.T) {
 }
 
 func TestHistoryRowsFitMultiLineTitlesAcrossRows(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.view = "history"
 	now := time.Now().Unix()
 	app.library.Grids[0] = &ui.GridState{}
@@ -221,7 +221,7 @@ func TestHistoryRowsFitMultiLineTitlesAcrossRows(t *testing.T) {
 }
 
 func TestSettingsUsesExistingInteractiveHost(t *testing.T) {
-	a := NewTestApp(nil)
+	a := NewTestApp()
 	a.SetMediaHost(&MediaHost{})
 	a.OpenView("settings")
 	if !a.hostedScene() {
@@ -249,7 +249,7 @@ func TestNavigationCanStopMediaBeforeDocumentReady(t *testing.T) {
 }
 
 func TestSearchClearResetsResultsAndInitialPrompt(t *testing.T) {
-	a := NewTestApp(nil)
+	a := NewTestApp()
 	a.view, a.query = "search", "旧关键词"
 	a.search.Items = []CatalogItem{{ID: "123456", Title: "旧搜索结果"}}
 	tt := ui.NewTester(a.Render, 1200, 800)

@@ -72,7 +72,7 @@ func (p *parityProvider) GetSeriesAdaptations(_ context.Context, id, source, tit
 
 func TestNativeMediaRoutesUseFullMediaHostAndExplicitPlayback(t *testing.T) {
 	host := &MediaHost{}
-	app := NewTestApp(NewTestPlayerBridge())
+	app := NewTestApp()
 	app.SetMediaHost(host)
 	app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "剧名", EpisodeCount: 12}}}
 	app.OpenView("recommend")
@@ -107,7 +107,7 @@ func TestNativeMediaRoutesUseFullMediaHostAndExplicitPlayback(t *testing.T) {
 }
 func TestRankingBoardsPaginationAndActorEntry(t *testing.T) {
 	provider := &parityProvider{rankResult: ipc.RankResponse{Content: "actors", Board: "hot", Contents: []model.RankContent{{ID: "actors", Name: "演员", Boards: []model.RankBoard{{ID: "hot", Name: "热度榜"}}}}, Items: []ipc.RankItemDTO{{Position: 1, ItemType: "actor", UserID: "actor-id", Title: "演员甲"}}, Cursor: "next", HasMore: true}}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.featuresSource = provider
 	app.OpenView("rank")
 	app.SelectRank("actors", "hot")
@@ -137,7 +137,7 @@ func TestRankingBoardsPaginationAndActorEntry(t *testing.T) {
 }
 func TestNewCalendarAndHotBoardHaveDistinctDataSources(t *testing.T) {
 	provider := &parityProvider{rankResult: ipc.RankResponse{Items: []ipc.RankItemDTO{{SeriesID: "123456", ItemType: "drama", Title: "热播剧"}}}, releaseResult: ipc.NewReleaseResponse{CurrentDate: "20261106", Dates: []string{"20261106", "20261107"}, Items: []ipc.NewReleaseItemDTO{{SeriesID: "223456", Title: "待播剧", Online: false, Reserved: true}}}}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.featuresSource = provider
 	app.OpenView("new")
 	app.LoadReleases()
@@ -155,7 +155,7 @@ func TestNewCalendarAndHotBoardHaveDistinctDataSources(t *testing.T) {
 }
 func TestDetailSupplementsKeepSourceAndExcludeSeasons(t *testing.T) {
 	provider := &parityProvider{seasons: &ipc.SeriesCollectionDTO{Title: "同系列", Items: []ipc.SeriesCard{{ID: "223456", Title: "第二季"}}}, adaptations: &ipc.SeriesCollectionDTO{Title: "同剧本", Items: []ipc.SeriesCard{{ID: "323456", Title: "改编剧"}}}}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.featuresSource = provider
 	app.OpenDetail("123456")
 	app.detail = Detail{ID: "123456", Source: &ipc.SourceNovelDTO{ID: "source", Title: "原著书名"}, Actors: []ipc.ActorInfo{{Name: "演员甲", Role: "主演"}}, Seasons: DetailCollection{Loading: true}, Adaptations: DetailCollection{Loading: true}}
@@ -170,7 +170,7 @@ func TestDetailSupplementsKeepSourceAndExcludeSeasons(t *testing.T) {
 	}
 }
 func TestSuggestionsKeyboardAndEscape(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.OpenView("search")
 	app.query = "短剧"
 	app.suggestions = []string{"短剧一", "短剧二"}
@@ -198,7 +198,7 @@ func TestSuggestionsKeyboardAndEscape(t *testing.T) {
 }
 func TestHistoryFilteringUsesLastEpisodeCompletion(t *testing.T) {
 	rows, _ := convertHistory([]ipc.HistoryItem{{SeriesID: "123456", Title: "中途看完一集", EpisodeNum: 1, TotalEpisodes: 10, PositionSec: 100, DurationSec: 100}, {SeriesID: "223456", Title: "全剧看完", EpisodeNum: 10, TotalEpisodes: 10, PositionSec: 96, DurationSec: 100}}, nil)
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.library.History = Library{Items: rows}
 	app.SetLibraryFilter("completed", "")
 	visible := app.visibleLibrary(libraryHistory)
@@ -212,11 +212,11 @@ func TestHistoryFilteringUsesLastEpisodeCompletion(t *testing.T) {
 }
 func TestSidebarWidthPersistsAndClamps(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "native-ui.json")
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.LoadPreferences(path)
 	app.SetSidebarWidth(999)
 	app.FlushPreferences()
-	restored := NewTestApp(nil)
+	restored := NewTestApp()
 	restored.LoadPreferences(path)
 	if restored.sidebarWidth != 420 {
 		t.Fatalf("sidebar preference lost: %v", restored.sidebarWidth)
@@ -243,7 +243,7 @@ func (p *mutationProvider) ToggleReservation(_ context.Context, id, _, _, _, _ s
 }
 func TestCollectionRemovalPreservesOtherLikedEpisodesAndConfirmsReservations(t *testing.T) {
 	provider := &mutationProvider{}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.libraryMutations = provider
 	first, second := CatalogItem{ID: "123456", EpisodeID: "654321", ResumeEpisode: 1}, CatalogItem{ID: "123456", EpisodeID: "654322", ResumeEpisode: 2}
 	app.library.Likes = Library{Items: []CatalogItem{first, second}}
@@ -261,7 +261,7 @@ func TestCollectionRemovalPreservesOtherLikedEpisodesAndConfirmsReservations(t *
 
 func TestNoGlobalBackForwardControlsOnAnyNativePage(t *testing.T) {
 	for _, view := range []string{"recommend", "discover", "search", "rank", "new", "history", "favorites", "likes", "reservations", "settings", "detail", "actor"} {
-		app := NewTestApp(nil)
+		app := NewTestApp()
 		app.view = view
 		tt := ui.NewTester(app.Render, 1200, 800)
 		for _, text := range tt.Texts() {
@@ -273,7 +273,7 @@ func TestNoGlobalBackForwardControlsOnAnyNativePage(t *testing.T) {
 }
 
 func TestDetailShowsOnlyBackNavigation(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{
 		SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "回归详情", EpisodeCount: 1},
 	}}
@@ -291,7 +291,7 @@ func TestDetailShowsOnlyBackNavigation(t *testing.T) {
 
 func TestRankUsesTheOriginalDefaultHotBoard(t *testing.T) {
 	provider := &parityProvider{rankResult: ipc.RankResponse{Content: "all", Board: "ranklist_hot_sc", Items: []ipc.RankItemDTO{{SeriesID: "123456", ItemType: "drama", Title: "热度剧"}}}}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	if app.rank.Content != "all" || app.rank.Board != "ranklist_hot_sc" {
 		t.Fatalf("rank defaults = %s/%s, want original frontend defaults", app.rank.Content, app.rank.Board)
 	}
@@ -317,7 +317,7 @@ func TestRankUsesTheOriginalDefaultHotBoard(t *testing.T) {
 }
 
 func TestNonMediaRoutesDoNotShowTheEmbeddedWebView(t *testing.T) {
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetMediaHost(&MediaHost{})
 	for _, view := range []string{"rank", "history", "discover"} {
 		app.view = view
@@ -330,7 +330,7 @@ func TestNonMediaRoutesDoNotShowTheEmbeddedWebView(t *testing.T) {
 
 func TestEveryBrowsingPageMatchesOriginalLayoutAndSkeleton(t *testing.T) {
 	provider := &parityProvider{rankResult: ipc.RankResponse{Content: "all", Board: "ranklist_hot_sc", Items: []ipc.RankItemDTO{{SeriesID: "123456", ItemType: "drama", Title: "热度剧", Position: 1}}}, releaseResult: ipc.NewReleaseResponse{CurrentDate: "20261106", Dates: []string{"20261106"}, Items: []ipc.NewReleaseItemDTO{{SeriesID: "223456", Title: "待播剧", Online: false}}}}
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetInvalidator(func() {})
 	app.featuresSource = provider
 	app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "323456", Title: "详情剧"}}}
@@ -356,7 +356,7 @@ func TestEveryBrowsingPageMatchesOriginalLayoutAndSkeleton(t *testing.T) {
 		blocked := make(chan struct{})
 		source := &fakeDetail{page: &ipc.SeriesDetailPageDTO{SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "323456", Title: "详情剧"}}}
 		source.delay = blocked
-		app := NewTestApp(nil)
+		app := NewTestApp()
 		app.SetInvalidator(func() {})
 		app.featuresSource = provider
 		app.detailSource = source
@@ -453,7 +453,7 @@ func TestSkeletonsMatchOriginalPageShapes(t *testing.T) {
 	blockedDiscover := make(chan struct{})
 	discoverSource := &fakeDetail{}
 	discoverSource.delay = blockedDiscover
-	app := NewTestApp(nil)
+	app := NewTestApp()
 	app.SetInvalidator(func() {})
 	app.detailSource = discoverSource
 	app.testMode = false
@@ -638,7 +638,7 @@ func TestNativePageScreens(t *testing.T) {
 	for _, state := range states {
 		state := state
 		t.Run(state.name, func(t *testing.T) {
-			app := NewTestApp(nil)
+			app := NewTestApp()
 			app.featuresSource = provider
 			app.view = state.view
 			if state.prepare != nil {
@@ -651,7 +651,7 @@ func TestNativePageScreens(t *testing.T) {
 		state := state
 		name := state.name + "-1600"
 		t.Run(name, func(t *testing.T) {
-			app := NewTestApp(nil)
+			app := NewTestApp()
 			app.featuresSource = provider
 			app.view = state.view
 			if state.prepare != nil {
