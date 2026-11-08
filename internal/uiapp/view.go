@@ -1168,10 +1168,6 @@ func (a *App) detailSkeleton(c *ui.Context) {
 				}
 			})
 		})
-		ui.Column(c.Key("related-skeleton")).Gap(12).Children(func() {
-			skeleton.text(c.Key("title"), 15, 1.3).Width(90)
-			a.gridSkeleton(c, 4, gridContentWidth(c))
-		})
 	})
 }
 
