@@ -14,13 +14,21 @@ import (
 // catalog UI remain native; source negotiation, MSE/HLS, buffering and controls
 // share the same tested implementation as before the shell migration.
 type MediaHost struct {
-	mu       sync.Mutex
-	view     *mygo.WebView
-	ready    bool
-	desired  map[string]any
-	queue    []map[string]any
-	draining bool
-	sent     []map[string]any
+	mu              sync.Mutex
+	view            *mygo.WebView
+	ready           bool
+	nextID          uint64
+	eval            func(string) (any, error)
+	desired         map[string]any
+	pendingCommands []mediaMessage
+	queue           []mediaMessage
+	draining        bool
+	sent            []map[string]any
+}
+
+type mediaMessage struct {
+	id      uint64
+	payload map[string]any
 }
 
 func (h *MediaHost) Attach(view *mygo.WebView) {
@@ -45,7 +53,7 @@ func (h *MediaHost) sceneLocked(payload map[string]any) {
 	h.desired = payload
 	h.queue = nil
 	if h.ready {
-		h.queue = append(h.queue, payload)
+		h.queue = append(h.queue, h.newMessageLocked(payload))
 		h.startLocked()
 	}
 }
@@ -69,25 +77,34 @@ func (h *MediaHost) Play(id string, num int, position float64, session int64) {
 }
 func (h *MediaHost) Command(p native.MediaCommandPayload) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	message := h.newMessageLocked(map[string]any{"event": "command", "command": p.Command, "position": p.Position})
 	if h.ready {
-		h.queue = append(h.queue, map[string]any{"event": "command", "command": p.Command, "position": p.Position})
+		h.queue = append(h.queue, message)
 		h.startLocked()
+	} else {
+		h.pendingCommands = append(h.pendingCommands, message)
 	}
+	h.mu.Unlock()
 }
 func (h *MediaHost) PictureInPicture() { h.Command(native.MediaCommandPayload{Command: "pip"}) }
 func (h *MediaHost) PlayerControl(command string, value any) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.ready {
-		h.PlayerControlLocked(command, value)
-	}
+	h.PlayerControlLocked(command, value)
 }
 
 func (h *MediaHost) PlayerControlLocked(command string, value any) {
 	payload := map[string]any{"event": "command", "command": command, "value": value}
 	h.sent = append(h.sent, payload)
-	h.queue = append(h.queue, payload)
+	message := h.newMessageLocked(payload)
+	if h.ready {
+		h.queue = append(h.queue, message)
+	} else {
+		h.pendingCommands = append(h.pendingCommands, message)
+	}
+	if !h.ready {
+		return
+	}
 	h.startLocked()
 }
 func (h *MediaHost) startLocked() {
@@ -104,23 +121,35 @@ func (h *MediaHost) drain() {
 			h.mu.Unlock()
 			return
 		}
-		payload, view := h.queue[0], h.view
-		h.queue = h.queue[1:]
+		message, view := h.queue[0], h.view
+		eval := h.eval
 		h.mu.Unlock()
-		data, err := json.Marshal(payload)
-		if err == nil && view != nil {
+		data, err := json.Marshal(message.payload)
+		if err == nil && eval != nil {
+			_, err = eval("window.nativeMediaEvent && window.nativeMediaEvent(" + string(data) + ");void 0")
+		} else if err == nil && view != nil {
 			_, err = view.Page().Eval("window.nativeMediaEvent && window.nativeMediaEvent(" + string(data) + ");void 0")
 		}
 		if err != nil {
 			log.Printf("[media-host] command failed: %v", err)
 			h.mu.Lock()
-			if h.ready {
-				h.queue = append([]map[string]any{payload}, h.queue...)
-				time.AfterFunc(200*time.Millisecond, func() { h.startLocked() })
+			if h.ready && len(h.queue) > 0 && h.queue[0].id == message.id {
+				time.AfterFunc(200*time.Millisecond, func() {
+					h.mu.Lock()
+					h.draining = false
+					h.startLocked()
+					h.mu.Unlock()
+				})
 			}
+			h.draining = false
 			h.mu.Unlock()
 			return
 		}
+		h.mu.Lock()
+		if len(h.queue) > 0 && h.queue[0].id == message.id {
+			h.queue = h.queue[1:]
+		}
+		h.mu.Unlock()
 	}
 }
 
@@ -178,8 +207,11 @@ func (h *MediaHost) markReady() {
 	}
 	h.ready = true
 	if h.desired != nil {
-		h.queue = append(h.queue, h.desired)
+		h.queue = append(h.queue, h.newMessageLocked(h.desired))
 	}
+	h.queue = append(h.queue, h.pendingCommands...)
+	h.pendingCommands = nil
+	h.draining = false
 	h.startLocked()
 }
 
@@ -187,4 +219,9 @@ func (h *MediaHost) SentControls() []map[string]any {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]map[string]any(nil), h.sent...)
+}
+
+func (h *MediaHost) newMessageLocked(payload map[string]any) mediaMessage {
+	h.nextID++
+	return mediaMessage{id: h.nextID, payload: payload}
 }

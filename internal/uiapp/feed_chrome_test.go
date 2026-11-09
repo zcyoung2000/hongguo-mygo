@@ -35,7 +35,7 @@ func TestNativeFeedChannelSelectionSurvivesNavigationAndStartup(t *testing.T) {
 		t.Fatal("invalid channel changed the recommendation source")
 	}
 	host.markReady()
-	if len(host.queue) != 1 || host.queue[0]["channel"] != "漫剧" {
+	if len(host.queue) != 1 || host.queue[0].payload["channel"] != "漫剧" {
 		t.Fatal("channel selected before document ready was lost")
 	}
 }

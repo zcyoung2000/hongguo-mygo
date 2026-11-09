@@ -127,7 +127,7 @@ func TestMediaReadyKeepsLatestSceneAndDoesNotReplayItTwice(t *testing.T) {
 	}
 	host.markReady()
 	host.markReady()
-	if len(host.queue) != 1 || host.queue[0]["event"] != "play" || host.queue[0]["session"] != int64(7) {
+	if len(host.queue) != 1 || host.queue[0].payload["event"] != "play" || host.queue[0].payload["session"] != int64(7) {
 		t.Fatalf("readiness lost or replayed the latest scene: %+v", host.queue)
 	}
 }

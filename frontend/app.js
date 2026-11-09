@@ -178,6 +178,8 @@ let feedBufferingTimer = null;
 let feedInputSequence = 0;
 let feedLastRepeatAt = -Infinity;
 let feedNextDramaTimer = null;
+let resumeProgressSession = null;
+let resumeProgressSequence = 0;
 const feedDiagnosticSession = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 function updateFeedPlayButtonState(video = null) {
@@ -3955,11 +3957,18 @@ function persistFeedProgress() {
   const feedVideo = getFeedVideo();
   const duration = feedMediaDuration(feedVideo);
   if (!feedVideo || !state.feed.seriesId || !duration) return;
+  const session = Number(window.nativeMediaSession?.()) || 0;
+  if (resumeProgressSession !== session) {
+    resumeProgressSession = session;
+    resumeProgressSequence = 0;
+  }
+  resumeProgressSequence++;
   window.nativeMediaNotify?.('ResumeProgress', {
     seriesId: state.feed.seriesId,
     episodeNum: state.feed.episodeNum,
     positionSec: feedVideo.currentTime,
-    session: window.nativeMediaSession?.()
+    session,
+    sequence: resumeProgressSequence
   });
   apiCall('SaveProgress',
     state.feed.seriesId,
