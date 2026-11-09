@@ -62,7 +62,8 @@ test('media navigation uses declared feed switch and ended handling stays active
   assert.doesNotMatch(source, /\bswipeFeed\s*\(/, 'the removed swipeFeed path must stay removed');
   assert.doesNotMatch(source, /\bplayerModal\b/, 'ended handling must not read a stale modal global');
   const endedBody = source.slice(source.indexOf("video.addEventListener('ended'"), source.indexOf('if (progressWrap)', source.indexOf("video.addEventListener('ended'")));
-  assert.match(endedBody, /state\.currentView !== 'recommend' \|\| feedSlots\[feedSlotCurr\] !== slot/);
+  assert.match(endedBody, /advanceEndedFeedPlayback\(slot\)/);
+  assert.match(source, /function shouldAdvanceEndedFeedPlayback\(slot\)/);
 });
 
 test('quality fallback helpers are declared for the real command path', () => {

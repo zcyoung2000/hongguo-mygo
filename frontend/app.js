@@ -177,6 +177,7 @@ let feedTimeSyncGeneration = 0;
 let feedBufferingTimer = null;
 let feedInputSequence = 0;
 let feedLastRepeatAt = -Infinity;
+let feedNextDramaTimer = null;
 const feedDiagnosticSession = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 function updateFeedPlayButtonState(video = null) {
@@ -341,6 +342,7 @@ function initFeedVideoPool() {
       ready: false,
       loadToken: 0,
       preparing: null,
+      endedAdvanceKey: null,
       firstFramePriming: null,
       isPriming: false,
       autoplayRetryTimer: null,
@@ -643,6 +645,7 @@ function clearFeedSlot(slot) {
   slot.progressiveMedia = null;
   slot.loadToken++;
   slot.preparing = null;
+  slot.endedAdvanceKey = null;
   slot.itemIndex = -1;
   slot.seriesId = '';
   slot.episodeNum = 1;
@@ -1777,6 +1780,7 @@ const state = {
     isFavorite: false,
     isLiked: false,
     playbackSpeed: 1.0,
+    playbackOrigin: 'feed',
     userPaused: false,
     isClearScreen: false,
     playbackPositions: new Map(),
@@ -2119,8 +2123,6 @@ function pauseFeedPlayback() {
   persistFeedProgress();
   updateFeedPlayIndicator();
 }
-
-let feedNextDramaTimer = null;
 
 function resumeFeedPlayback() {
   if (state.currentView !== 'recommend') return;
@@ -2995,7 +2997,7 @@ function switchFeedDrama(dir, request = null) {
   }, duration);
 }
 
-async function enterSeriesPlayer(seriesId, episodeNum) {
+async function enterSeriesPlayer(seriesId, episodeNum, playbackOrigin = 'detail') {
   if (!seriesId) return;
   clearCommentSceneLayout();
   feedPlayToken++;
@@ -3003,6 +3005,7 @@ async function enterSeriesPlayer(seriesId, episodeNum) {
   cancelPendingFeedSwitch();
   pauseFeedPlayback();
   state.feed.userPaused = false;
+  state.feed.playbackOrigin = playbackOrigin;
 
   const drawer = document.getElementById('feed-playlist-drawer');
   drawer?.classList.remove('open');
@@ -4020,6 +4023,15 @@ function updateFeedPlayIndicator() {
   } else {
     centerPlay.style.display = 'none';
   }
+  const isDetailEnd = state.feed.playbackOrigin === 'detail' &&
+    Boolean(feedVideo?.ended) &&
+    (Number(state.feed.episodeNum) || 1) >= totalFeedEpisodes();
+  centerPlay.setAttribute?.('aria-label', isDetailEnd ? '重播本集' : '播放');
+  centerPlay.title = isDetailEnd ? '重播本集' : '播放';
+}
+
+function totalFeedEpisodes() {
+  return Number(state.feed.totalEpisodes) || state.feed.episodes?.length || 1;
 }
 
 function initFeedControls() {
@@ -4073,6 +4085,13 @@ function initFeedControls() {
       return;
     }
     if (feedVideo.paused) {
+      if (feedVideo.ended) {
+        state.feed.playbackOrigin = 'detail';
+        enterSeriesPlayer(state.feed.seriesId, state.feed.episodeNum)
+          ?.catch(error => console.error('replay episode error:', error));
+        updateFeedPlayIndicator();
+        return;
+      }
       feedPlayPromise = feedVideo.play();
       if (feedPlayPromise) {
         feedPlayPromise.catch(e => console.log('play error:', e));
@@ -4197,6 +4216,18 @@ function initFeedControls() {
         video.currentTime
       );
       updateFeedMediaTime(video);
+
+      const duration = feedMediaDuration(video);
+      if (
+        duration > 0 &&
+        video.currentTime >= duration - 0.25 &&
+        video.duration === Infinity &&
+        !video.paused &&
+        !slot.endedAdvanceKey
+      ) {
+        video.ended = true;
+        advanceEndedFeedPlayback(slot);
+      }
     });
 
     ['durationchange', 'loadeddata', 'canplay', 'canplaythrough', 'progress', 'seeking', 'seeked', 'timeupdate'].forEach(event => {
@@ -4218,28 +4249,7 @@ function initFeedControls() {
       if (window.ambientGlow) {
         window.ambientGlow.stop();
       }
-      if (state.currentView !== 'recommend' || feedSlots[feedSlotCurr] !== slot) return;
-      persistFeedProgress();
-      state.feed.playbackPositions.delete(
-        feedPlaybackKey(state.feed.seriesId, state.feed.episodeNum, state.feed.quality)
-      );
-      const total = state.feed.totalEpisodes || (state.feed.episodes ? state.feed.episodes.length : 1);
-      if (state.feed.episodeNum < total) {
-        const nextNum = state.feed.episodeNum + 1;
-        enterSeriesPlayer(state.feed.seriesId, nextNum);
-      } else {
-        const seriesId = state.feed.seriesId;
-        playNextSeason(seriesId, 'feed').then(started => {
-          if (started || state.feed.seriesId !== seriesId) return;
-          if (feedNextDramaTimer) clearTimeout(feedNextDramaTimer);
-          feedNextDramaTimer = setTimeout(() => {
-            feedNextDramaTimer = null;
-            if (state.currentView === 'recommend' && state.feed.seriesId === seriesId) {
-              switchFeedDrama(1);
-            }
-          }, 1200);
-        });
-      }
+      advanceEndedFeedPlayback(slot);
     });
   });
 
@@ -4676,6 +4686,48 @@ async function playNextSeason(seriesId, source = 'feed') {
   } finally {
     state.feed.seasonSwitching = false;
   }
+}
+
+function shouldAdvanceEndedFeedPlayback(slot) {
+  return Boolean(
+    slot &&
+    state.currentView === 'recommend' &&
+    feedSlots[feedSlotCurr] === slot &&
+    slot.video &&
+    slot.video.ended &&
+    !slot.video.error
+  );
+}
+
+function advanceEndedFeedPlayback(slot) {
+  if (!shouldAdvanceEndedFeedPlayback(slot)) return;
+  if (slot.endedAdvanceKey) return;
+
+  const endedSeriesId = slot.seriesId || state.feed.seriesId;
+  const endedEpisodeNum = Number(slot.episodeNum) || Number(state.feed.episodeNum) || 1;
+  const endedQuality = slot.quality || state.feed.quality;
+  slot.endedAdvanceKey = `${endedSeriesId}:${endedEpisodeNum}:${endedQuality}:${slot.loadToken}`;
+
+  if (window.ambientGlow) window.ambientGlow.stop();
+  persistFeedProgress();
+  state.feed.playbackPositions.delete(feedPlaybackKey(endedSeriesId, endedEpisodeNum, endedQuality));
+
+  const total = state.feed.totalEpisodes || (state.feed.episodes ? state.feed.episodes.length : 1);
+  if (endedEpisodeNum < total) {
+    enterSeriesPlayer(endedSeriesId, endedEpisodeNum + 1, state.feed.playbackOrigin)?.catch(error => {
+      console.warn('automatic episode advance failed:', error);
+    });
+    return;
+  }
+
+  playNextSeason(endedSeriesId, 'feed').then(started => {
+    if (started || state.feed.seriesId !== endedSeriesId) return;
+    if (feedNextDramaTimer) clearTimeout(feedNextDramaTimer);
+    feedNextDramaTimer = setTimeout(() => {
+      feedNextDramaTimer = null;
+      if (state.currentView === 'recommend' && state.feed.seriesId === endedSeriesId) switchFeedDrama(1);
+    }, 1200);
+  });
 }
 
 function formatTime(sec) {
