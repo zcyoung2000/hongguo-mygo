@@ -35,7 +35,7 @@ func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scr
 		if scroll == nil {
 			grid.Grow(1)
 		} else {
-			grid.TrackScroll(scroll).ScrollbarInsets(0, 0, 12, 0)
+			grid.TrackScroll(scroll).ScrollbarInsets(0, 0, 0, 0).Scrollbars(false)
 		}
 	})
 	return host

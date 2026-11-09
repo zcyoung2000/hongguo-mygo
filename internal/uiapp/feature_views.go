@@ -77,7 +77,7 @@ func (a *App) renderRank(c *ui.Context) {
 	ui.List(c, a.rank.List, len(rank.Items), func(row int) {
 		item := rank.Items[row]
 		a.rankItem(c, row, item)
-	}).Grow(1).TrackScroll(&a.rankScroll)
+	}).Grow(1).TrackScroll(&a.rankScroll).Scrollbars(false)
 	if rank.Loading {
 		a.scrollLoading(c, rank.Loading)
 	}
@@ -294,13 +294,6 @@ func (a *App) releaseFeatureRow(c *ui.Context, item CatalogItem, posterWidth flo
 				Label(posterLabel(item))
 			posterBox.Children(func() {
 				a.image(c, item.CoverURL, posterWidth, posterHeight)
-				if !item.Upcoming {
-					ui.Row(c.Key("release-feature-badge:"+item.ID+"|"+item.EpisodeID)).
-						Absolute().Top(8).Left(8).Padding(3, 8).Radius(5).
-						Background(ui.RGBA(0, 0, 0, 0.65)).Children(func() {
-						ui.Text(c, "已上线").FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
-					})
-				}
 			})
 
 			panel := ui.Column(c.Key("release-feature-panel:"+item.ID+"|"+item.EpisodeID)).
@@ -445,7 +438,7 @@ func (a *App) renderCollection(c *ui.Context, label string, value DetailCollecti
 			ui.Text(c, "暂无"+label).FontSize(12).TextColor(c.Theme().TextMuted)
 			return
 		}
-		ui.ScrollHorizontal(c.Key("col-scroll-" + label)).Height(catalogRowHeight(value.Items)).Children(func() {
+		ui.ScrollHorizontal(c.Key("col-scroll-" + label)).Scrollbars(false).Height(catalogRowHeight(value.Items)).Children(func() {
 			ui.Row(c.Key("collection-" + label)).Gap(c.Theme().Space(3)).Children(func() {
 				for _, item := range value.Items {
 					a.catalogCard(c, item)

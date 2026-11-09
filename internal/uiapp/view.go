@@ -122,7 +122,7 @@ func hongguoTheme(c *ui.Context) ui.Theme {
 }
 func (a *App) renderSidebar(c *ui.Context) {
 	ui.Box(c.Key("sidebar-container")).Fill().Children(func() {
-		ui.Scroll(c.Key("sidebar")).Fill().Background(ui.RGBA(18, 20, 28, 0.60)).Padding(0, 10, 16, 10).Gap(2).Children(func() {
+		ui.Scroll(c.Key("sidebar")).Scrollbars(false).Fill().Background(ui.RGBA(18, 20, 28, 0.60)).Padding(0, 10, 16, 10).Gap(2).Children(func() {
 			// Draggable traffic light spacer (no brand text)
 			ui.Box(c.Key("sidebar-traffic-lights")).Height(44).DragWindow()
 
@@ -379,7 +379,7 @@ func (a *App) renderCatalog(c *ui.Context) {
 	a.maybeLoadMore(a.discoverPageScroll.Y, a.discoverPageScroll.MaxY, catalog.HasMore, catalog.Loading || catalog.LoadingMore, a.LoadMoreCatalog)
 
 	a.renderCatalogHeader(c)
-	scroll := ui.Scroll(c.Key("discover-page-scroll")).Grow(1).Gap(10).
+	scroll := ui.Scroll(c.Key("discover-page-scroll")).Scrollbars(false).Grow(1).Gap(10).
 		Role(ui.RoleGroup).Label("discover-page-scroll").TrackScroll(&a.discoverPageScroll)
 	scroll.Children(func() {
 		a.renderCatalogControls(c, catalog)
@@ -665,9 +665,6 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 	bottomRightBadge := ""
 
 	if a.view == "new" {
-		if !item.Upcoming {
-			topLeftBadge = "已上线"
-		}
 		if item.Completed {
 			bottomRightBadge = "完结"
 		}
@@ -676,12 +673,10 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 			bottomRightBadge = historyEpisodeBadge(item)
 		}
 	} else if a.view == "favorites" {
-		topLeftBadge = "收藏"
 		if item.EpisodeCount > 0 {
 			topRightBadge = fmt.Sprintf("%d集", item.EpisodeCount)
 		}
 	} else if a.view == "likes" {
-		topLeftBadge = "点赞"
 		if item.EpisodeCount > 0 {
 			topRightBadge = fmt.Sprintf("%d集", item.EpisodeCount)
 		}
@@ -770,7 +765,6 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 				if item.Heat != "" {
 					ui.Text(c, item.Heat).FontSize(12).Bold().TextColor(ui.Hex("#ff3358")).SingleLine().Width(width)
 				}
-				ui.Text(c, "新剧").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50)).SingleLine().Width(width)
 			}
 		} else if a.view != "favorites" && a.view != "likes" {
 			if item.Upcoming && item.PublishAt != "" {
@@ -1054,7 +1048,7 @@ func (a *App) renderDetail(c *ui.Context) {
 		return
 	}
 	pageHeader(c, "短剧详情")
-	scroll := ui.Scroll(c.Key("detail-page-scroll")).Grow(1).Gap(c.Theme().Space(2) + 2).TrackScroll(&a.detailScroll)
+	scroll := ui.Scroll(c.Key("detail-page-scroll")).Scrollbars(false).Grow(1).Gap(c.Theme().Space(2) + 2).TrackScroll(&a.detailScroll)
 	scroll.Children(func() {
 		ui.Row(c.Key("detail-top-bar")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).Children(func() {
 			backBtn := ui.Row(c.Key("detail-nav-back")).Height(30).Padding(0, 14).Radius(7).
@@ -1327,7 +1321,7 @@ func (a *App) detailSkeleton(c *ui.Context) {
 	pageHeader(c, "短剧详情")
 	skeleton := pageShimmer(c)
 	wide := detailTwoColumn(c.Size())
-	scroll := ui.Scroll(c.Key("detail-page-scroll-skeleton")).Grow(1).Gap(c.Theme().Space(2) + 2)
+	scroll := ui.Scroll(c.Key("detail-page-scroll-skeleton")).Scrollbars(false).Grow(1).Gap(c.Theme().Space(2) + 2)
 	scroll.Children(func() {
 		ui.Row(c.Key("detail-top-bar-skeleton")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).
 			Children(func() {

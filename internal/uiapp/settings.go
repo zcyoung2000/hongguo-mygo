@@ -375,7 +375,7 @@ func settingsMeta(label, value string) (string, float32) {
 func (a *App) renderSettings(c *ui.Context) {
 	pageHeader(c, "设置")
 	state := a.settings
-	scroll := ui.Scroll(c.Key("settings-scroll")).Grow(1).Gap(22).Padding(0, 0, 18, 0)
+	scroll := ui.Scroll(c.Key("settings-scroll")).Scrollbars(false).Grow(1).Gap(22).Padding(0, 0, 18, 0)
 	scroll.Children(func() {
 		state = a.settings
 		a.settingsCard(c, "settings-account", func() {
