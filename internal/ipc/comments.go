@@ -346,6 +346,7 @@ func (s *HongguoService) fetchEpisodeComments(ctx context.Context, seriesID, epi
 
 	path := "/novel/commentapi/comment/list/" + episodeID + "/v1/"
 	deviceID, iid, cdid, openudid := s.deviceIdentity()
+	userAgent, _ := s.runtimeIdentity()
 	pairs := defaultDeviceQueryPairs(deviceID, iid, cdid, openudid)
 	ticket := time.Now().UnixMilli()
 	rawQuery, sigHeaders := sign.SignPOST(path, pairs, ticket, deviceID, "7.3.9.32", body, nil)
@@ -358,7 +359,7 @@ func (s *HongguoService) fetchEpisodeComments(ctx context.Context, seriesID, epi
 	}
 	req.Header.Set("Comment-Source", "4")
 	req.Header.Set("Server-Channel", "18")
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -428,6 +429,7 @@ func (s *HongguoService) fetchEpisodeCommentReplies(ctx context.Context, seriesI
 
 	path := "/novel/commentapi/reply/list/" + commentID + "/v1/"
 	deviceID, iid, cdid, openudid := s.deviceIdentity()
+	userAgent, _ := s.runtimeIdentity()
 	pairs := defaultDeviceQueryPairs(deviceID, iid, cdid, openudid)
 	ticket := time.Now().UnixMilli()
 	rawQuery, sigHeaders := sign.SignPOST(path, pairs, ticket, deviceID, "7.3.9.32", body, nil)
@@ -440,7 +442,7 @@ func (s *HongguoService) fetchEpisodeCommentReplies(ctx context.Context, seriesI
 	}
 	req.Header.Set("Comment-Source", "504")
 	req.Header.Set("Server-Channel", "18")
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {

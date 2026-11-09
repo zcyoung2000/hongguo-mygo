@@ -160,6 +160,7 @@ func (s *HongguoService) postCommentAPI(ctx context.Context, path string, body a
 		return nil, err
 	}
 	deviceID, iid, cdid, openudid := s.deviceIdentity()
+	userAgent, _ := s.runtimeIdentity()
 	pairs := defaultDeviceQueryPairs(deviceID, iid, cdid, openudid)
 	rawQuery, headers := sign.SignPOST(path, pairs, time.Now().UnixMilli(), deviceID, "7.3.9.32", payload, nil)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, commentAPIOrigin+path+"?"+rawQuery, bytes.NewReader(payload))
@@ -172,7 +173,7 @@ func (s *HongguoService) postCommentAPI(ctx context.Context, path string, body a
 	req.Header.Set("Comment-Source", source)
 	req.Header.Set("Server-Channel", channel)
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", userAgent)
 	if userCookies != "" {
 		req.Header.Set("Cookie", userCookies)
 	}

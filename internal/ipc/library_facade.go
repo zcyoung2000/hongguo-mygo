@@ -23,7 +23,7 @@ func (s *HongguoService) libraryService() *library.Service {
 				return s.deviceIdentity()
 			},
 			Runtime: func() (string, string) {
-				return s.userAgent, s.storeRegion
+				return s.runtimeIdentity()
 			},
 			InvalidateCaches: s.invalidateCatalogCaches,
 			Notify: func(ctx context.Context, notification library.Notification) {

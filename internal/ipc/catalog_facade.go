@@ -21,7 +21,7 @@ func (s *HongguoService) catalogService() *catalog.Service {
 				return s.deviceIdentity()
 			},
 			Runtime: func() (string, string) {
-				return s.userAgent, s.storeRegion
+				return s.runtimeIdentity()
 			},
 			ReservedSeriesIDs: func(ctx context.Context) ([]string, error) {
 				items, err := s.GetReservations(ctx)

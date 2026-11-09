@@ -1,8 +1,10 @@
 package ipc
 
 import (
+	"container/list"
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -30,6 +32,53 @@ func TestEpisodeLoadBroadcastsToAllPlaybackAndDetailWaiters(t *testing.T) {
 		load.result = episodeListResult{page: want, err: wantErr}
 		close(load.done)
 		waiters.Wait()
+	}
+}
+
+func TestEpisodeCacheEvictsOldestAtLimit(t *testing.T) {
+	service := &HongguoService{
+		episodeCache:      make(map[string]episodeCacheEntry),
+		episodeCacheIndex: make(map[string]*list.Element),
+		episodeCacheLRU:   list.New(),
+	}
+	for seriesNumber := 0; seriesNumber < 129; seriesNumber++ {
+		id := fmt.Sprintf("series-%03d", seriesNumber)
+		service.rememberEpisode(id, &sdk.Page[model.Episode]{Items: []model.Episode{{ID: id}}}, time.Now())
+	}
+
+	if len(service.episodeCache) != 128 {
+		t.Fatalf("episode cache size = %d, want 128", len(service.episodeCache))
+	}
+	if _, ok := service.episodeCache["series-000"]; ok {
+		t.Fatal("oldest episode cache entry was not evicted")
+	}
+	if _, ok := service.episodeCache["series-128"]; !ok {
+		t.Fatal("newest episode cache entry was not retained")
+	}
+	if _, ok := service.episodeCacheIndex["series-128"]; !ok {
+		t.Fatal("newest episode cache LRU index entry was not retained")
+	}
+}
+
+func TestEpisodeCacheExpiresStaleEntry(t *testing.T) {
+	service := &HongguoService{
+		episodeCache: map[string]episodeCacheEntry{
+			"series": {page: &sdk.Page[model.Episode]{Items: []model.Episode{{ID: "stale"}}}, expiresAt: time.Now().Add(-time.Second)},
+		},
+		episodeCacheIndex: make(map[string]*list.Element),
+		episodeCacheLRU:   list.New(),
+	}
+
+	service.forgetExpiredEpisodes(time.Now())
+
+	if len(service.episodeCache) != 0 {
+		t.Fatalf("stale episode cache entries = %d, want 0", len(service.episodeCache))
+	}
+	if service.episodeCacheLRU.Len() != 0 {
+		t.Fatalf("stale episode cache LRU entries = %d, want 0", service.episodeCacheLRU.Len())
+	}
+	if len(service.episodeCacheIndex) != 0 {
+		t.Fatalf("stale episode cache index entries = %d, want 0", len(service.episodeCacheIndex))
 	}
 }
 
