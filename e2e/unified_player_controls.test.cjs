@@ -81,8 +81,10 @@ function playerHarness() {
     return nodes.get(id);
   };
   const video = {
-    src: '', currentTime: 0, duration: 60, paused: false, playbackRate: 1, readyState: 4, dataset: {},
-    addEventListener() {}, removeAttribute() {}, load() {}, pause() {}
+    src: '', currentTime: 0, duration: 60, paused: false, playbackRate: 1, readyState: 4,
+    ended: false, error: null, dataset: {}, handlers: {},
+    addEventListener(name, handler) { this.handlers[name] ||= []; this.handlers[name].push(handler); },
+    removeAttribute() {}, load() {}, pause() {}
   };
   const runtime = {
     console, setTimeout, clearTimeout, setImmediate,
@@ -122,6 +124,11 @@ function playerHarness() {
     attachFeedLoadFailureRetry: () => {},
     toggleFeedPlaylistDrawer: () => {},
     scheduleFeedSourceRetry: () => {},
+    persistFeedProgress: () => {},
+    rememberFeedPlaybackPosition: () => {},
+    updateFeedMediaTime: () => {},
+    feedMediaDuration: () => 60,
+    advanceEndedFeedPlayback: slot => runtime.calls.push(['endedAdvance', slot.id]),
   };
   runtime.apiCall = runtime.__api;
   vm.createContext(runtime);
