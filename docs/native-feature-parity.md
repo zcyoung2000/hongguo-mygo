@@ -5,8 +5,8 @@ of the current branch. `main` has no commits missing from this branch.
 The comparison covers `frontend/index.html`, `app.js`, `player-chrome.js`,
 `progressive-media.js`, `danmaku.js`, `ambient-glow.js`, and `internal/native`.
 
-Browsing and collections use MyGo native views. The embedded document retains
-the existing recommendation, full-player, and settings controllers. Source
+Native browsing and settings use MyGo native views. The embedded document retains
+the existing recommendation and full-player controllers. Source
 negotiation, streaming, decryption, local library storage, and existing settings
 operations continue through the same exported services and MediaServer.
 
@@ -25,7 +25,7 @@ operations continue through the same exported services and MediaServer.
 | Playback | Quality, speed, seek/buffer/time, volume/mute, playlist/current highlight, previous/next/next season, close/escape, fullscreen, PiP, orientation/fit and progress persistence | Original full player/control/media modules retained. Native host and player lifecycle suites cover scene routing, saved/explicit-zero/default resume positions, quality argument preservation and stale source callbacks. Native close callbacks carry a session so an old close cannot dismiss a newer player |
 | Media interactions | Existing favorite/like actions, comments/replies, danmaku and persisted appearance controls, ambient glow | Original controller/modules and controls retained; `LibraryChanged` invalidates native cached reads. No additional upstream interaction API or account workflow introduced |
 | Platform | Media keys/menu, Now Playing/artwork/rate, prevent display sleep, fullscreen/PiP events, notifications, confirmations and keyboard focus | Existing native implementations retained; scroll gestures and PiP now target the embedded Page; native callbacks route to the active scene. Sidebar/cards expose button roles and keyboard activation. Final live OS-interaction acceptance remains pending below |
-| Settings | Existing profile/session/import actions, cache statistics/clear, device information/actions and about | `MediaHost.Settings` selects the original `loadSettings` scene; native scene routing tests. Existing settings code and APIs retained; no additional workflow added |
+| Settings | Account profile/session management, credential login, legacy account import, cache statistics/clear and device reset; no about section | `view.go` routes settings to native `renderSettings`; `settings.go` implements the actions through the settings IPC provider. Native tests verify WebView is absent, rendered actions, legacy import visibility, login validation and that about content is gone |
 | Runtime | SDK/MediaServer integration, authentic SQLite/WAL data and CGO-free builds | Main service/store/media initialization retained; unit tests use isolated fixtures and never populate the user's library. Required Go checks, race tests, vet and JavaScript suites are recorded below |
 
 User preference: no global Back/Forward buttons on any native page. Navigation

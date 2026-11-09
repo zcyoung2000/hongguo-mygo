@@ -14,7 +14,7 @@ builds on the migration changes already present in the working directory.
 | Fixed 150px posters leave unused space inside wider columns | Fit posters to columns at 3:4 in discover, search, releases, actor works and local collections; include grid-cell borders and 16px grid spacing in the sizing |
 | Upcoming cards leak online episode metadata; episode-only labels end with a separator | Render metadata according to release state and join only available fields |
 | Calendar dates overflow narrow windows | Wrap the date controls |
-| Settings sends a scene command but the shell rendered an inert native placeholder over the document | Restore the existing interactive settings scene as the hosted body; retain its original navigation, profile, cache and device controllers |
+| Settings sends a scene command but the shell rendered an inert native placeholder over the document | Restore the then-existing interactive settings scene as the hosted body; the current app now renders settings natively instead |
 | Recommendation and playback have extra side/bottom gutters and a duplicate native close control | Let the existing hosted scenes occupy their available content area |
 | Leaving media before its document loads can deadlock | Avoid acquiring the media-host mutex twice when stopping an unready host |
 
@@ -32,15 +32,16 @@ useful layout evidence but are not live macOS or WebView captures and do not
 exercise IPC-backed settings actions. The settings image also predates this
 fix and shows the old placeholder. Refreshing that set for final acceptance
 requires the same named export at both native fixture widths (1200×800 and
-1600×1000); live acceptance must separately run the app and verify profile,
-login, logout, legacy import, cache statistics/clear, device information/reset
-and the about section.
+1600×1000); live acceptance must separately run the current native settings page
+and verify profile, login, logout, legacy import, cache statistics/clear and
+device reset. The former about section has since been removed and must not be
+required.
 
 The rebuilt app was opened and discover was inspected with real catalog data
 and artwork. Further native automation reported `cgWindowNotFound`, so live
 settings, playback and every other route are not claimed as accepted here.
-Settings continues to use its existing WebView implementation; rebuilding its
-controls as fully native UI is outside this pass.
+This pass left settings in the WebView. The current implementation now uses the
+native settings page described in `native-feature-parity.md`.
 
 ## Follow-up: transitions, media bounds and detail blackouts
 
