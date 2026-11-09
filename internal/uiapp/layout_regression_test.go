@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/glass"
 	"github.com/egoist/mygo/ui"
 	"myguo/internal/ipc"
 )
@@ -160,7 +161,7 @@ func TestCollectionRowsFitRenderedMetadata(t *testing.T) {
 		bottomText string
 		nextGapMin float64
 	}{
-		{view: "history", item: CatalogItem{ID: "1", Title: "历史剧", ResumeEpisode: 3, EpisodeCount: 8, UpdatedAt: 1760000000}, bottomText: "3 / 8 集", nextGapMin: 4},
+		{view: "history", item: CatalogItem{ID: "1", Title: "历史剧", ResumeEpisode: 3, EpisodeCount: 8, UpdatedAt: time.Now().Unix() - 180}, bottomText: "3分钟前", nextGapMin: 4},
 		{view: "favorites", item: CatalogItem{ID: "2", Title: "收藏剧", EpisodeCount: 8}, bottomText: "取消收藏", nextGapMin: 4},
 		{view: "likes", item: CatalogItem{ID: "3", Title: "点赞剧", EpisodeCount: 9}, bottomText: "取消点赞", nextGapMin: 4},
 		{view: "reservations", item: CatalogItem{ID: "4", Title: "预约剧", PublishAt: "2026-12-01"}, bottomText: "取消预约", nextGapMin: 4},
@@ -203,16 +204,16 @@ func TestHistoryRowsFitMultiLineTitlesAcrossRows(t *testing.T) {
 	now := time.Now().Unix()
 	app.library.Grids[0] = &ui.GridState{}
 	app.library.History = Library{Title: "观看历史", Loaded: true, Items: []CatalogItem{
-		{ID: "z1", Title: "谁说纨绔不能出状元：这一世我要亲手改命", EpisodeCount: 80, ResumeEpisode: 1, UpdatedAt: now - 180},
+		{ID: "z1", Title: "谁说纨绔不能出状元：这一世我要亲手改命", EpisodeCount: 80, ResumeEpisode: 3, UpdatedAt: now - 7200},
 		{ID: "z6", Title: "深海来客：红色进化纪元", EpisodeCount: 88, ResumeEpisode: 23, UpdatedAt: now - 7200},
 	}}
 	tt := ui.NewTester(app.Render, 1280, 1200)
 	tt.Frame()
 	title, titleOK := tt.Find("谁说纨绔不能出状元：这一世我要亲手改命")
-	progress, progressOK := tt.Find("1 / 80 集")
-	timeText, timeOK := tt.Find("3分钟前")
+	progress, progressOK := tt.Find("3 / 80集")
+	timeText, timeOK := tt.Find("2小时前")
 	nextTitle, nextTitleOK := tt.Find("深海来客：红色进化纪元")
-	nextProgress, nextProgressOK := tt.Find("23 / 88 集")
+	nextProgress, nextProgressOK := tt.Find("23 / 88集")
 	if !titleOK || !progressOK || !timeOK || !nextTitleOK || !nextProgressOK {
 		t.Fatalf("history metadata missing: title=%v progress=%v time=%v nextTitle=%v nextProgress=%v texts=%v", titleOK, progressOK, timeOK, nextTitleOK, nextProgressOK, tt.Texts())
 	}
@@ -221,6 +222,42 @@ func TestHistoryRowsFitMultiLineTitlesAcrossRows(t *testing.T) {
 	}
 	if nextProgress.Y < nextTitle.Y {
 		t.Fatalf("second history row incomplete: title=%+v progress=%+v viewport=1200", nextTitle, nextProgress)
+	}
+}
+
+func TestHistoryEpisodeBadgeMergesProgressWithFallback(t *testing.T) {
+	now := time.Now().Unix()
+	tests := []struct {
+		name  string
+		item  CatalogItem
+		badge string
+	}{
+		{name: "progress", item: CatalogItem{ID: "progress", EpisodeCount: 82, ResumeEpisode: 7, UpdatedAt: now}, badge: "7 / 82集"},
+		{name: "first episode", item: CatalogItem{ID: "first", EpisodeCount: 82, ResumeEpisode: 1, UpdatedAt: now}, badge: "共82集"},
+		{name: "missing progress", item: CatalogItem{ID: "missing-progress", EpisodeCount: 82, UpdatedAt: now}, badge: "共82集"},
+		{name: "zero progress", item: CatalogItem{ID: "zero-progress", EpisodeCount: 82, ResumeEpisode: 0, UpdatedAt: now}, badge: "共82集"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := historyEpisodeBadge(test.item); got != test.badge {
+				t.Fatalf("history badge = %q, want %q", got, test.badge)
+			}
+		})
+	}
+}
+
+func TestCollectionGlassAddsDarkTintAndKeepsInteraction(t *testing.T) {
+	badge := darkGlassMaterial(false)
+	action := darkGlassMaterial(true)
+	for name, material := range map[string]glass.Glass{"badge": badge, "action": action} {
+		t.Run(name, func(t *testing.T) {
+			if material.Style != glass.Clear || material.Tint != ui.RGBA(0, 0, 0, 82) {
+				t.Fatalf("dark glass changed: %+v", material)
+			}
+		})
+	}
+	if !action.Interactive {
+		t.Fatal("action overlay lost interactive glass feedback")
 	}
 }
 
