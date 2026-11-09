@@ -11,10 +11,10 @@ type ResumeProgress struct {
 func (a *App) UpdateResumeProgress(payload ResumeProgress) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if payload.Sequence != a.resumeSequence+1 || payload.SeriesID == "" || payload.EpisodeNum <= 0 {
+	if payload.Sequence == 0 || payload.Sequence <= a.resumeSequence || payload.SeriesID == "" || payload.EpisodeNum <= 0 {
 		return
 	}
-	a.resumeSequence++
+	a.resumeSequence = payload.Sequence
 	if payload.Session == a.mediaSession && payload.SeriesID == a.detail.ID {
 		a.resume = CatalogItem{ID: payload.SeriesID, ResumeEpisode: payload.EpisodeNum, ResumePosition: payload.Position}
 		a.invalidate()

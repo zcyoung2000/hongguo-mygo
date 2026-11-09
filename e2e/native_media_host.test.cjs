@@ -64,12 +64,35 @@ test('media host keeps runtime state and resume bridge required by playback', ()
     "window.nativeMediaNotify?.('ResumeProgress', {",
     'episodeNum: state.feed.episodeNum,',
     'positionSec: feedVideo.currentTime,',
-    'session: window.nativeMediaSession?.()'
+    'session,',
+    'sequence: resumeProgressSequence'
   ]) {
     assert.ok(source.includes(declaration), `${declaration} must remain in the media host`);
   }
   const bridge = fs.readFileSync('frontend/native-media.js', 'utf8');
   assert.ok(bridge.includes('window.nativeMediaSession = () => Number(activeSession);'));
+});
+
+test('resume bridge advances sequence within a native playback session', async () => {
+  const calls = [];
+  const context = {
+    window: {
+      nativeMediaSession: () => 7,
+      nativeMediaNotify: (method, payload) => calls.push({method, payload})
+    },
+    state: {feed: {seriesId: '123456', episodeNum: 4}},
+    apiCall: async () => {},
+    getFeedVideo: () => ({currentTime: 12.5}),
+    feedMediaDuration: () => 90,
+    console
+  };
+  vm.runInContext('let resumeProgressSession = null; let resumeProgressSequence = 0;', vm.createContext(context));
+  vm.runInContext(fs.readFileSync('frontend/app.js', 'utf8').match(/function persistFeedProgress\(\) \{[\s\S]*?\n\}/)[0], vm.createContext(context));
+  context.persistFeedProgress();
+  context.persistFeedProgress();
+  context.persistFeedProgress();
+  assert.deepEqual(calls.map(call => call.payload.sequence), [1, 2, 3]);
+  assert.ok(calls.every(call => call.payload.session === 7));
 });
 test('native scenes stop outgoing media before selecting feed or settings', () => {
   const h = host();
