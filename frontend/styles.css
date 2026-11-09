@@ -1077,6 +1077,10 @@ body.comments-open .feed-rail {
   right: calc(var(--comment-sheet-width) + 20px);
 }
 
+body.comments-open .feed-controls {
+  right: calc(var(--comment-sheet-width) + var(--stage-chrome-inset, 0px));
+}
+
 body.comments-open .feed-playlist-drawer {
   visibility: hidden;
 }

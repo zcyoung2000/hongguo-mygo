@@ -3589,6 +3589,7 @@ function openCommentSheet(options) {
   mountCommentOverlay(options.source);
   if (overlay) overlay.style.display = 'flex';
   document.body.classList.add('comments-open');
+  schedulePlaybackVideoFit();
   if (shouldAnimateVideo) animateCommentVideo(commentState.source, fromVideoRect);
   renderCommentSheet();
   apiCall('GetEpisodeComments', commentState.seriesId, commentState.episodeId, '')
@@ -3904,6 +3905,7 @@ function closeCommentSheet() {
   const overlay = document.getElementById('comment-sheet-overlay');
   restoreCommentOverlay();
   document.body.classList.remove('comments-open');
+  schedulePlaybackVideoFit();
   animateCommentVideo(source, fromVideoRect);
 
   if (overlay) {

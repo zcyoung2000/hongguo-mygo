@@ -132,6 +132,11 @@ assert.match(css, /\.feed-playlist-drawer\s+\.episodes-grid\.is-collapsed\s*\{[^
   assert.match(cssWithoutComments, /body\.comments-open\s+\.feed-stage\s*\{[^}]*inset:\s*0\s+var\(--comment-sheet-width\)/);
   assert.match(
     cssWithoutComments,
+    /body\.comments-open\s+\.feed-controls\s*\{[^}]*right:\s*calc\(var\(--comment-sheet-width\)\s*\+/,
+    'open comments must reserve space for the bottom control bar'
+  );
+  assert.match(
+    cssWithoutComments,
     /\.feed-container\.episode-drawer-open\s+\.feed-stage\s*\{[^}]*inset:\s*0\s+var\(--player-drawer-width\)/
   );
   assert.match(
