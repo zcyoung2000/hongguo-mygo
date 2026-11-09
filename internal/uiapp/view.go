@@ -872,11 +872,11 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 func reservationCounts(items []CatalogItem) (int, int) {
 	online, pending := 0, 0
 	for _, item := range items {
-	if item.Upcoming {
-		pending++
-	} else {
-		online++
-	}
+		if item.Upcoming {
+			pending++
+		} else {
+			online++
+		}
 	}
 	return online, pending
 }
@@ -1064,10 +1064,12 @@ func (a *App) renderDetail(c *ui.Context) {
 						})
 					})
 				}
+				if !wide {
+					a.renderCollection(c, "同系列短剧", detail.Seasons, func() { go a.RetrySupplement(false) })
+					a.renderCollection(c, "同一剧本改编", detail.Adaptations, func() { go a.RetrySupplement(true) })
+				}
 			})
 			right.Children(func() {
-				a.renderCollection(c, "同系列短剧", detail.Seasons, func() { go a.RetrySupplement(false) })
-				a.renderCollection(c, "同一剧本改编", detail.Adaptations, func() { go a.RetrySupplement(true) })
 				a.renderDetailEpisodes(c, detail.Episodes)
 			})
 		})

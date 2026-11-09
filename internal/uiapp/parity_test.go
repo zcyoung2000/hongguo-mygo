@@ -166,7 +166,7 @@ func TestDetailSupplementsKeepSourceAndExcludeSeasons(t *testing.T) {
 	if !provider.has("adaptations:123456:source:123456,223456") {
 		t.Fatal("adaptations did not exclude same-series seasons")
 	}
-	tt := ui.NewTester(app.Render, 1200, 1200)
+	tt := ui.NewTester(app.Render, 1000, 1200)
 	if !tt.HasText("第二季") || !tt.HasText("原著书名") || !tt.HasText("演员甲") {
 		t.Fatalf("detail sections missing: %v", tt.Texts())
 	}
