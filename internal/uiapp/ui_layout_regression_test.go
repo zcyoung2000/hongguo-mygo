@@ -66,13 +66,13 @@ func TestResponsiveDramaGeometryMatchesAcrossNativePages(t *testing.T) {
 
 func TestNativePagesShareHeaderRhythm(t *testing.T) {
 	tests := []struct {
-		view     string
-		subtitle string
-		prepare  func(*App)
+		view    string
+		title   string
+		prepare func(*App)
 	}{
-		{"rank", "真实热度榜单", func(a *App) { a.rank.Items = []ipc.RankItemDTO{{Position: 1, Title: "榜单剧", SeriesID: "123456"}} }},
-		{"new", "热播剧集和上线日历", func(a *App) { a.releases.Items = []CatalogItem{{ID: "123456", Title: "新剧样本"}} }},
-		{"search", "短剧、角色和演员", func(a *App) { a.search.Items = []CatalogItem{{ID: "123456", Title: "搜索样本"}} }},
+		{"rank", "排行榜", func(a *App) { a.rank.Items = []ipc.RankItemDTO{{Position: 1, Title: "榜单剧", SeriesID: "123456"}} }},
+		{"new", "新剧", func(a *App) { a.releases.Items = []CatalogItem{{ID: "123456", Title: "新剧样本"}} }},
+		{"search", "搜索", func(a *App) { a.search.Items = []CatalogItem{{ID: "123456", Title: "搜索样本"}} }},
 	}
 	for _, test := range tests {
 		t.Run(test.view, func(t *testing.T) {
@@ -80,17 +80,13 @@ func TestNativePagesShareHeaderRhythm(t *testing.T) {
 			test.prepare(app)
 			app.OpenView(test.view)
 			tt := ui.NewTester(app.Render, 1200, 800)
-			header, headerOK := tt.Find(test.subtitle)
+			header, headerOK := tt.AccessByRole(ui.RoleHeading, test.title)
 			cardTitle := map[string]string{"rank": "榜单剧", "new": "新剧样本", "search": "搜索样本"}[test.view]
 			card, cardOK := tt.Find(cardTitle)
 			if !headerOK || !cardOK {
 				t.Fatalf("page header or representative card missing: %v", tt.Texts())
 			}
-			cardTop := map[string]func() float32{
-				"rank": func() float32 { return card.Y + 37.57813 },
-				"new":  func() float32 { return card.Y + 48 },
-			}[test.view]
-			if header.Y > card.Y || (cardTop != nil && header.Y > cardTop()) {
+			if header.Bounds.Y > card.Y {
 				t.Fatalf("header rhythm drifted: header=%+v card=%+v", header, card)
 			}
 		})

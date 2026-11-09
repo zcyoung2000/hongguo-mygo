@@ -405,7 +405,7 @@ func (a *App) renderCatalog(c *ui.Context) {
 }
 
 func (a *App) renderCatalogControls(c *ui.Context, catalog Catalog) {
-	pageHeader(c, "发现短剧", "按体裁和筛选条件浏览真实目录")
+	pageHeader(c, "发现短剧")
 	a.renderSearchBar(c)
 	ui.Column(c.Key("catalog-filter-card")).Padding(14, 18).Gap(10).Radius(14).
 		Material(glass.Glass{Clarity: 0.15}).
@@ -674,7 +674,7 @@ func (a *App) renderSearchBar(c *ui.Context) {
 }
 
 func (a *App) renderSearch(c *ui.Context) {
-	pageHeader(c, "搜索", "短剧、角色和演员")
+	pageHeader(c, "搜索")
 	a.renderSearchBar(c)
 	search := a.search
 	if a.query == "" && len(search.Items) == 0 && !search.Loading && search.Error == "" {
@@ -715,13 +715,13 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 
 	switch tab {
 	case libraryHistory:
-		pageHeader(c, "观看历史", "真实本地播放记录")
+		pageHeader(c, "观看历史")
 	case libraryFavorites:
-		pageHeader(c, "我的收藏", "保存在本机的短剧")
+		pageHeader(c, "我的收藏")
 	case libraryLikes:
-		pageHeader(c, "我的点赞", "真实点赞记录")
+		pageHeader(c, "我的点赞")
 	case libraryReservations:
-		pageHeader(c, "我的预约", "新剧上线提醒")
+		pageHeader(c, "我的预约")
 	}
 
 	if tab == libraryHistory {
@@ -816,7 +816,7 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		}
 	}
 	if library.Empty {
-		a.emptyView(c, "暂无记录", "浏览和播放后才会形成真实记录")
+		a.emptyView(c, "暂无记录", "浏览和播放后才会形成记录")
 		return
 	}
 	visibleItems := a.visibleLibrary(tab)
@@ -891,7 +891,7 @@ func (a *App) renderDetail(c *ui.Context) {
 		a.errorView(c, detail.Error, func() { go a.OpenDetail(detail.ID) })
 		return
 	}
-	pageHeader(c, "短剧详情", "")
+	pageHeader(c, "短剧详情")
 	scroll := ui.Scroll(c.Key("detail-page-scroll")).Grow(1).Gap(c.Theme().Space(2) + 2).TrackScroll(&a.detailScroll)
 	scroll.Children(func() {
 		ui.Row(c.Key("detail-top-bar")).AlignItems(ui.Center).Gap(12).Padding(0, 0, 4, 0).Children(func() {
@@ -1160,7 +1160,7 @@ func (a *App) renderDetailEpisodes(c *ui.Context, episodes []CatalogItem) {
 }
 
 func (a *App) detailSkeleton(c *ui.Context) {
-	pageHeader(c, "短剧详情", "")
+	pageHeader(c, "短剧详情")
 	skeleton := pageShimmer(c)
 	wide := detailTwoColumn(c.Size())
 	scroll := ui.Scroll(c.Key("detail-page-scroll-skeleton")).Grow(1).Gap(c.Theme().Space(2) + 2)

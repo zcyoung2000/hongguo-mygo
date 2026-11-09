@@ -116,21 +116,16 @@ func dramaSkeleton(c *ui.Context, count int, width float32) {
 
 // pageHeader establishes one shared rhythm across catalog, rank, release,
 // actor, search, library and detail pages.
-func pageHeader(c *ui.Context, title, subtitle string) {
+func pageHeader(c *ui.Context, title string) {
 	ui.Column(c.Key("page-header:"+title)).Gap(2).Padding(0, 0, 4, 0).Children(func() {
-		ui.Text(c, title).FontSize(20).Bold().LetterSpacing(-0.4).TextColor(c.Theme().Text).SingleLine()
-		if subtitle != "" {
-			ui.Text(c, subtitle).FontSize(12).TextColor(c.Theme().TextMuted).SingleLine()
-		}
+		ui.Text(c, title).FontSize(20).Bold().LetterSpacing(-0.4).TextColor(c.Theme().Text).SingleLine().
+			Role(ui.RoleHeading).Level(1)
 	})
 }
 
-func sectionHeader(c *ui.Context, title, detail string) {
+func sectionHeader(c *ui.Context, title string) {
 	ui.Row(c.Key("section-header:" + title)).AlignItems(ui.Baseline).Gap(10).Children(func() {
 		ui.Text(c, title).FontSize(17).Bold().TextColor(c.Theme().Text)
-		if detail != "" {
-			ui.Text(c, detail).FontSize(12).TextColor(c.Theme().TextMuted)
-		}
 	})
 }
 

@@ -60,7 +60,11 @@ func TestDiscoverSearchEntryAndCompactFilters(t *testing.T) {
 	if !ok || title.Y-filter.Y > 340 {
 		t.Fatalf("single filter leaves excessive empty space: filter=%+v title=%+v", filter, title)
 	}
-	tt.ClickAt(300, 115)
+	searchBar, searchBarOK := tt.Find("搜索短剧")
+	if !searchBarOK {
+		t.Fatalf("discover search bar missing: %v", tt.Texts())
+	}
+	tt.ClickAt(searchBar.X+searchBar.W/2, searchBar.Y+searchBar.H/2)
 	tt.Type("测试短剧")
 	tt.Key(0, ui.KeyEnter)
 	waitFor(time.Second, func() bool { return a.View() == "search" })
