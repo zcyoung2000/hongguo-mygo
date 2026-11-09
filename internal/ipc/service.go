@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"container/list"
 	"context"
 	"errors"
 	"fmt"
@@ -162,6 +163,8 @@ type HongguoService struct {
 	feedWarmupGeneration uint64
 	episodeMu            sync.Mutex
 	episodeCache         map[string]episodeCacheEntry
+	episodeCacheIndex    map[string]*list.Element
+	episodeCacheLRU      *list.List
 	episodeLoads         map[string]*episodeLoad
 }
 
@@ -194,20 +197,22 @@ func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 	}
 
 	svc := &HongguoService{
-		client:       client,
-		store:        store,
-		media:        media,
-		appDir:       appDir,
-		deviceID:     "4210501433995451",
-		iid:          "4210501433184459",
-		cdid:         "ad52a07c-7c54-41eb-8b47-750f78610278",
-		openudid:     "dcffb1368df39e9b",
-		userAgent:    "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)",
-		storeRegion:  "cn-gd",
-		httpClient:   &http.Client{Transport: tr, Timeout: 12 * time.Second},
-		cache:        make(map[string]cacheItem),
-		episodeCache: make(map[string]episodeCacheEntry),
-		episodeLoads: make(map[string]*episodeLoad),
+		client:            client,
+		store:             store,
+		media:             media,
+		appDir:            appDir,
+		deviceID:          "4210501433995451",
+		iid:               "4210501433184459",
+		cdid:              "ad52a07c-7c54-41eb-8b47-750f78610278",
+		openudid:          "dcffb1368df39e9b",
+		userAgent:         "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)",
+		storeRegion:       "cn-gd",
+		httpClient:        &http.Client{Transport: tr, Timeout: 12 * time.Second},
+		cache:             make(map[string]cacheItem),
+		episodeCache:      make(map[string]episodeCacheEntry),
+		episodeCacheLRU:   list.New(),
+		episodeCacheIndex: make(map[string]*list.Element),
+		episodeLoads:      make(map[string]*episodeLoad),
 	}
 	for _, opt := range opts {
 		opt(svc)
@@ -222,12 +227,14 @@ func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 		log.Printf("[device] stored identity unavailable: %v", err)
 	}
 	if userAgent, region, ok := svc.store.GetDeviceRuntime(); ok {
+		svc.identityMu.Lock()
 		if userAgent != "" {
 			svc.userAgent = userAgent
 		}
 		if region != "" {
 			svc.storeRegion = region
 		}
+		svc.identityMu.Unlock()
 	}
 
 	return svc
@@ -253,6 +260,18 @@ func (s *HongguoService) deviceIdentity() (deviceID, iid, cdid, openudid string)
 	s.identityMu.RLock()
 	defer s.identityMu.RUnlock()
 	return s.deviceID, s.iid, s.cdid, s.openudid
+}
+
+func (s *HongguoService) runtimeIdentity() (userAgent, storeRegion string) {
+	s.identityMu.RLock()
+	defer s.identityMu.RUnlock()
+	return s.userAgent, s.storeRegion
+}
+
+func (s *HongguoService) setUserAgent(userAgent string) {
+	s.identityMu.Lock()
+	s.userAgent = userAgent
+	s.identityMu.Unlock()
 }
 
 func (s *HongguoService) authCredentials() (cookies, token string) {
@@ -290,7 +309,8 @@ func (s *HongguoService) syncAuthTransport() {
 		return
 	}
 	cookies, token := s.authCredentials()
-	s.authTransport.SetCredentials(cookies, token, s.storeRegion)
+	_, storeRegion := s.runtimeIdentity()
+	s.authTransport.SetCredentials(cookies, token, storeRegion)
 }
 
 func (s *HongguoService) reloadDeviceIdentity() error {
@@ -688,16 +708,14 @@ func (s *HongguoService) GetRecommend(ctx context.Context) ([]SeriesCard, error)
 // listEpisodesCached deduplicates concurrent SDK calls and avoids repeating the
 // same series-detail request while a feed item is played and preloaded.
 func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error) {
-	const episodeCacheTTL = 5 * time.Minute
-
 	s.episodeMu.Lock()
-	if s.episodeCache == nil {
-		s.episodeCache = make(map[string]episodeCacheEntry)
-	}
+	s.ensureEpisodeCache()
+	s.forgetExpiredEpisodes(time.Now())
 	if s.episodeLoads == nil {
 		s.episodeLoads = make(map[string]*episodeLoad)
 	}
-	if entry, ok := s.episodeCache[seriesID]; ok && time.Now().Before(entry.expiresAt) {
+	if entry, ok := s.episodeCache[seriesID]; ok {
+		s.touchEpisode(seriesID)
 		s.episodeMu.Unlock()
 		return entry.page, nil
 	}
@@ -715,15 +733,71 @@ func (s *HongguoService) listEpisodesCached(ctx context.Context, seriesID string
 	s.episodeMu.Unlock()
 
 	page, err := s.client.ListEpisodes(ctx, seriesID, sdk.EpisodeOptions{})
+	fetchedAt := time.Now()
 	s.episodeMu.Lock()
 	delete(s.episodeLoads, seriesID)
 	if err == nil && page != nil && len(page.Items) > 0 {
-		s.episodeCache[seriesID] = episodeCacheEntry{page: page, expiresAt: time.Now().Add(episodeCacheTTL)}
+		s.rememberEpisode(seriesID, page, fetchedAt)
 	}
 	load.result = episodeListResult{page: page, err: err}
 	close(load.done)
 	s.episodeMu.Unlock()
 	return page, err
+}
+
+func (s *HongguoService) ensureEpisodeCache() {
+	if s.episodeCache == nil {
+		s.episodeCache = make(map[string]episodeCacheEntry)
+	}
+	if s.episodeCacheLRU == nil {
+		s.episodeCacheLRU = list.New()
+	}
+	if s.episodeCacheIndex == nil {
+		s.episodeCacheIndex = make(map[string]*list.Element)
+	}
+}
+
+func (s *HongguoService) forgetExpiredEpisodes(now time.Time) {
+	for id, entry := range s.episodeCache {
+		if !now.Before(entry.expiresAt) {
+			delete(s.episodeCache, id)
+			if element := s.episodeCacheIndex[id]; element != nil {
+				s.episodeCacheLRU.Remove(element)
+				delete(s.episodeCacheIndex, id)
+			}
+		}
+	}
+}
+
+func (s *HongguoService) touchEpisode(seriesID string) {
+	if _, ok := s.episodeCache[seriesID]; !ok {
+		return
+	}
+	if element := s.episodeCacheIndex[seriesID]; element != nil {
+		s.episodeCacheLRU.MoveToBack(element)
+	}
+}
+
+func (s *HongguoService) rememberEpisode(seriesID string, page *sdk.Page[model.Episode], now time.Time) {
+	const episodeCacheTTL = 5 * time.Minute
+	const maxEpisodeCacheEntries = 128
+
+	s.episodeCache[seriesID] = episodeCacheEntry{page: page, expiresAt: now.Add(episodeCacheTTL)}
+	if element := s.episodeCacheIndex[seriesID]; element != nil {
+		s.episodeCacheLRU.MoveToBack(element)
+	} else {
+		s.episodeCacheIndex[seriesID] = s.episodeCacheLRU.PushBack(seriesID)
+	}
+	for len(s.episodeCache) > maxEpisodeCacheEntries {
+		oldest := s.episodeCacheLRU.Front()
+		if oldest == nil {
+			break
+		}
+		oldestID, _ := oldest.Value.(string)
+		delete(s.episodeCache, oldestID)
+		s.episodeCacheLRU.Remove(oldest)
+		delete(s.episodeCacheIndex, oldestID)
+	}
 }
 
 func (s *HongguoService) listEpisodes(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error) {

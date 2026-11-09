@@ -21,17 +21,25 @@ func (s *HongguoService) ResetDevice(ctx context.Context) error {
 }
 
 func (s *HongguoService) resetDeviceWithContext(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if err := s.client.ResetDevice(ctx); err != nil {
-		return err
+	if s.resetDevice != nil {
+		if err := s.resetDevice(ctx); err != nil {
+			return err
+		}
+	} else if s.client != nil {
+		if err := s.client.ResetDevice(ctx); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("device reset is unavailable")
 	}
 	if s.deviceProfileStore != nil {
 		if err := s.reloadDeviceIdentity(); err != nil {
 			return err
 		}
 	}
-	s.invalidateUserDataCaches()
+	if s.store != nil && s.media != nil {
+		s.invalidateUserDataCaches()
+	}
 	return nil
 }
 
@@ -52,12 +60,13 @@ func (s *HongguoService) GetCacheSize(ctx context.Context) (int64, error) {
 
 func (s *HongguoService) GetDeviceInfo(ctx context.Context) (map[string]string, error) {
 	deviceID, iid, cdid, openudid := s.deviceIdentity()
+	_, storeRegion := s.runtimeIdentity()
 	return map[string]string{
 		"deviceId":    deviceID,
 		"installId":   iid,
 		"cdid":        cdid,
 		"openudid":    openudid,
-		"storeRegion": s.storeRegion,
+		"storeRegion": storeRegion,
 		"version":     "2.0.0",
 		"arch":        runtime.GOOS + "-" + runtime.GOARCH,
 	}, nil
@@ -96,13 +105,14 @@ func (s *HongguoService) LoginWithCookies(ctx context.Context, cookies, token st
 	if err != nil {
 		return nil, fmt.Errorf("创建验证请求失败: %w", err)
 	}
+	userAgent, storeRegion := s.runtimeIdentity()
 
-	req.Header.Set("User-Agent", s.userAgent)
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Cookie", cookies)
 	if token != "" {
 		req.Header.Set("x-tt-token", token)
 	}
-	req.Header.Set("x-tt-store-region", s.storeRegion)
+	req.Header.Set("x-tt-store-region", storeRegion)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := s.httpClient.Do(req)

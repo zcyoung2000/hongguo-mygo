@@ -62,11 +62,23 @@ func retryAnonymous[T any](s *HongguoService, ctx context.Context, op func(conte
 	if err == nil {
 		return val, nil
 	}
-	if errorsIsAnonymous(err) {
-		_ = s.client.ResetDevice(ctx)
-		return op(ctx)
+	if !errorsIsAnonymous(err) {
+		return val, err
 	}
-	return val, err
+	const anonymousRetryBudget = 5 * time.Second
+	if ctx.Err() != nil {
+		return val, err
+	}
+	deadline, ok := ctx.Deadline()
+	if ok && time.Until(deadline) < anonymousRetryBudget {
+		return val, err
+	}
+	retryCtx, cancel := context.WithTimeout(ctx, anonymousRetryBudget)
+	defer cancel()
+	if resetErr := s.ResetDevice(retryCtx); resetErr != nil {
+		return val, err
+	}
+	return op(retryCtx)
 }
 
 func errorsIsAnonymous(err error) bool {
@@ -95,11 +107,14 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 	}
 	s.cacheMu.RUnlock()
 
+	pageCtx, pageCancel := context.WithTimeout(ctx, seriesPageDetailBudget)
+	defer pageCancel()
+
 	// The batch and single-detail endpoints must not share one deadline.
 	// Otherwise a slow batch consumes the budget and guarantees that the
 	// fallback fails with the same context error, turning a transient
 	// endpoint delay into a failed detail page.
-	batchCtx, batchCancel := context.WithTimeout(ctx, seriesDetailTimeout)
+	batchCtx, batchCancel := context.WithTimeout(pageCtx, seriesDetailTimeout)
 	batch, batchErr := retryAnonymous(s, batchCtx, func(c context.Context) ([]model.SeriesDetail, error) {
 		return s.client.GetSeriesBatch(c, []string{seriesID})
 	})
@@ -113,7 +128,7 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 		// Some live-action cards resolve through the player batch endpoint but
 		// are missing (or arrive without episodes) from that response. The
 		// single-series detail endpoint is the detail page's fallback.
-		seriesCtx, seriesCancel := context.WithTimeout(ctx, seriesDetailTimeout)
+		seriesCtx, seriesCancel := context.WithTimeout(pageCtx, seriesDetailTimeout)
 		series, seriesErr := retryAnonymous(s, seriesCtx, func(c context.Context) (*model.Series, error) {
 			return s.client.GetSeries(c, seriesID)
 		})
@@ -131,7 +146,7 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 	}
 
 	if len(detail.Episodes) == 0 {
-		episodesCtx, episodesCancel := context.WithTimeout(ctx, seriesDetailTimeout)
+		episodesCtx, episodesCancel := context.WithTimeout(pageCtx, seriesDetailTimeout)
 		if episodes, episodeErr := s.client.ListEpisodes(episodesCtx, seriesID, sdk.EpisodeOptions{}); episodeErr == nil && episodes != nil {
 			detail.Episodes = episodes.Items
 		}
