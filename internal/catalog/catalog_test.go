@@ -1,10 +1,12 @@
 package catalog
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
-
 	"time"
+
+	"myguo/internal/resourcecache"
 )
 
 func TestParseAccountShortRankBuildsItemsAndCursor(t *testing.T) {
@@ -66,44 +68,62 @@ func TestParseAccountShortRankBuildsItemsAndCursor(t *testing.T) {
 
 func TestInvalidatePrefixesOnlyRemovesMatchingEntries(t *testing.T) {
 	service := NewService(nil, nil, nil, Dependencies{})
-	service.cacheMu.Lock()
-	service.cache["new_releases:today"] = cacheItem{val: "stale"}
-	service.cache["new_releases:tomorrow"] = cacheItem{val: "stale"}
-	service.cache["hot_search"] = cacheItem{val: "keep"}
-	service.cacheMu.Unlock()
+	service.cache.Set("new_releases:today", resourcecache.Item{Value: "stale"})
+	service.cache.Set("new_releases:tomorrow", resourcecache.Item{Value: "stale"})
+	service.cache.Set("hot_search", resourcecache.Item{Value: "keep", ExpiresAt: time.Now().Add(time.Minute)})
 
 	service.InvalidatePrefixes("new_releases:")
 
-	service.cacheMu.RLock()
-	keys := make([]string, 0, len(service.cache))
-	for key := range service.cache {
-		keys = append(keys, key)
+	if _, ok := service.cache.Get("new_releases:today"); ok {
+		t.Fatal("matching entry was not invalidated")
 	}
-	service.cacheMu.RUnlock()
-	if !reflect.DeepEqual(keys, []string{"hot_search"}) {
-		t.Fatalf("remaining cache keys = %#v, want hot_search only", keys)
+	if _, ok := service.cache.Get("new_releases:tomorrow"); ok {
+		t.Fatal("matching entry was not invalidated")
+	}
+	if item, ok := service.cache.Get("hot_search"); !ok || item.Value != "keep" {
+		t.Fatalf("unmatched entry = %#v, %v", item, ok)
 	}
 }
 
 func TestExpiredCatalogCacheIsNotServed(t *testing.T) {
 	service := NewService(nil, nil, nil, Dependencies{})
-	service.cacheMu.Lock()
-	service.cache["expired"] = cacheItem{val: "old", expiresAt: time.Now().Add(-time.Second)}
-	service.cache["fresh"] = cacheItem{val: "new", expiresAt: time.Now().Add(time.Minute)}
-	service.cacheMu.Unlock()
+	service.cache.Set("expired", resourcecache.Item{Value: "old", ExpiresAt: time.Now().Add(-time.Second)})
+	service.cache.Set("fresh", resourcecache.Item{Value: "new", ExpiresAt: time.Now().Add(time.Minute)})
 
-	service.cacheMu.RLock()
-	expired, expiredOK := service.cache["expired"]
-	fresh, freshOK := service.cache["fresh"]
-	service.cacheMu.RUnlock()
-	if expiredOK && time.Now().Before(expired.expiresAt) {
+	expired, expiredOK := service.cache.Get("expired")
+	fresh, freshOK := service.cache.Get("fresh")
+	if expiredOK {
 		t.Fatal("expired entry is still considered valid")
 	}
-	if !freshOK || time.Now().After(fresh.expiresAt) {
+	if !freshOK {
 		t.Fatal("fresh entry was rejected")
 	}
-	if fresh.val != "new" || expired.val != "old" {
-		t.Fatalf("cache vals = %v/%v", expired.val, fresh.val)
+	if fresh.Value != "new" || expired.Value != nil {
+		t.Fatalf("cache vals = %v/%v", expired.Value, fresh.Value)
+	}
+}
+
+func TestCatalogMetadataCacheEvictsAndRejectsOversizedKeys(t *testing.T) {
+	service := NewService(nil, nil, nil, Dependencies{})
+	keys := make([]string, 0, metadataCacheCapacity+1)
+	for index := 0; index <= metadataCacheCapacity; index++ {
+		key := fmt.Sprintf("catalog:%04d", index)
+		keys = append(keys, key)
+		service.cache.Set(key, resourcecache.Item{Value: index, ExpiresAt: time.Now().Add(time.Minute)})
+	}
+	if service.cache.Len() != metadataCacheCapacity {
+		t.Fatalf("cache length = %d, want %d", service.cache.Len(), metadataCacheCapacity)
+	}
+	if _, ok := service.cache.Get(keys[0]); ok {
+		t.Fatal("oldest entry was not evicted")
+	}
+	if item, ok := service.cache.Get(keys[len(keys)-1]); !ok || item.Value != metadataCacheCapacity {
+		t.Fatalf("newest entry = %#v, %v", item, ok)
+	}
+
+	oversized := make([]byte, resourcecache.MaxKeyLength+1)
+	if service.cache.Set(string(oversized), resourcecache.Item{Value: "rejected"}) {
+		t.Fatal("oversized cache key was accepted")
 	}
 }
 

@@ -39,16 +39,7 @@ func (s *HongguoService) libraryService() *library.Service {
 }
 
 func (s *HongguoService) invalidateCatalogCaches(prefixes ...string) {
-	s.cacheMu.Lock()
-	for key := range s.cache {
-		for _, prefix := range prefixes {
-			if len(prefix) == 0 || len(key) >= len(prefix) && key[:len(prefix)] == prefix {
-				delete(s.cache, key)
-				break
-			}
-		}
-	}
-	s.cacheMu.Unlock()
+	s.cache.InvalidatePrefixes(prefixes...)
 	s.catalogService().InvalidatePrefixes(prefixes...)
 }
 

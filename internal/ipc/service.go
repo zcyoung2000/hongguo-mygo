@@ -20,6 +20,7 @@ import (
 	"myguo/internal/media"
 	"myguo/internal/mediautil"
 	"myguo/internal/native"
+	"myguo/internal/resourcecache"
 	"myguo/internal/sanitize"
 	userstore "myguo/internal/store"
 	"myguo/internal/upstream"
@@ -109,10 +110,7 @@ func fileExists(path string) bool { return media.FileExists(path) }
 
 type FeedMetricDTO = userstore.FeedMetric
 
-type cacheItem struct {
-	val       any
-	expiresAt time.Time
-}
+const metadataCacheCapacity = 256
 
 type episodeCacheEntry struct {
 	page      *sdk.Page[model.Episode]
@@ -156,8 +154,7 @@ type HongguoService struct {
 	userAgent            string
 	storeRegion          string
 	httpClient           *http.Client
-	cacheMu              sync.RWMutex
-	cache                map[string]cacheItem
+	cache                *resourcecache.LRU
 	feedMu               sync.Mutex
 	feedWarmupMu         sync.Mutex
 	feedWarmupGeneration uint64
@@ -208,7 +205,7 @@ func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 		userAgent:         "com.phoenix.read/73932 (Linux; U; Android 14; zh_CN; Xiaomi 14; Build/UKQ1.230804.001; Cronet/TTNetVersion:8d40f833 QuicVersion:462f352c 2026-08-31)",
 		storeRegion:       "cn-gd",
 		httpClient:        &http.Client{Transport: tr, Timeout: 12 * time.Second},
-		cache:             make(map[string]cacheItem),
+		cache:             resourcecache.New(metadataCacheCapacity),
 		episodeCache:      make(map[string]episodeCacheEntry),
 		episodeCacheLRU:   list.New(),
 		episodeCacheIndex: make(map[string]*list.Element),
@@ -351,9 +348,7 @@ func (s *HongguoService) applyDeviceProfile(profile *sdk.DeviceProfile) {
 func (s *HongguoService) invalidateUserDataCaches() {
 	s.catalogService().Invalidate()
 	s.libraryService().InvalidateUserData()
-	s.cacheMu.Lock()
-	s.cache = make(map[string]cacheItem)
-	s.cacheMu.Unlock()
+	s.cache.Reset()
 }
 
 func (s *HongguoService) GetProfile(ctx context.Context) (UserProfile, error) {
@@ -686,21 +681,16 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 
 func (s *HongguoService) GetRecommend(ctx context.Context) ([]SeriesCard, error) {
 	cacheKey := "recommend"
-	s.cacheMu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.cacheMu.RUnlock()
-		return sanitizeIPC(entry.val.([]SeriesCard)), nil
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		return sanitizeIPC(entry.Value.([]SeriesCard)), nil
 	}
-	s.cacheMu.RUnlock()
 
 	res, err := s.GetRecommendFeed(ctx, "", "")
 	if err != nil {
 		return nil, err
 	}
 
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: res.Items, expiresAt: time.Now().Add(5 * time.Minute)}
-	s.cacheMu.Unlock()
+	s.cache.Set(cacheKey, resourcecache.Item{Value: res.Items, ExpiresAt: time.Now().Add(5 * time.Minute)})
 
 	return res.Items, nil
 }

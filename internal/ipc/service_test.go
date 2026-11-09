@@ -15,6 +15,7 @@ import (
 	"github.com/beilunyang/openhongguo/adapters/memstore"
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/resourcecache"
 	userstore "myguo/internal/store"
 )
 
@@ -295,7 +296,7 @@ func TestGetDiscoverUnavailableContentReturnsEmptyResponse(t *testing.T) {
 
 	svc := &HongguoService{
 		client: client,
-		cache:  make(map[string]cacheItem),
+		cache:  resourcecache.New(metadataCacheCapacity),
 	}
 
 	resp, err := svc.GetDiscover(context.Background(), "short_play", map[string]string{"category_dim_role": "cate_26"}, "")
