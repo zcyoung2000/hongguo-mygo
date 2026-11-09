@@ -393,7 +393,7 @@ func (a *App) SearchSubmitted() bool {
 			if a.generation != generation {
 				return
 			}
-			a.search = CatalogPage{Items: convertCards(items)}
+			a.search = CatalogPage{Items: removeSearchPageCardLabels(convertCards(items))}
 			if err != nil {
 				a.search.Error = "搜索失败：" + err.Error()
 			}
@@ -646,6 +646,14 @@ func (a *App) loadRelatedAt(seriesID string, generation uint64) {
 		a.detail.Related, a.detail.RelatedTitle = clearRelatedCollectionCardFields(convertCards(collection.Items)), collection.Title
 	}
 	a.invalidate()
+}
+
+func removeSearchPageCardLabels(items []CatalogItem) []CatalogItem {
+	for index := range items {
+		items[index].BadgeText = ""
+		items[index].Category = ""
+	}
+	return items
 }
 
 func clearRelatedCollectionCardFields(items []CatalogItem) []CatalogItem {

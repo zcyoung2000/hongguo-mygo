@@ -61,6 +61,23 @@ func TestRemovedFavoritePageCardLabel(t *testing.T) {
 	}
 }
 
+func TestSearchCardRemovesPageContextLabel(t *testing.T) {
+	app := NewTestApp()
+	app.view = "search"
+	item := CatalogItem{ID: "search", EpisodeID: "1", Title: "搜索样本", EpisodeCount: 812, BadgeText: "搜索结果"}
+	app.search.Items = []CatalogItem{item}
+	tester := ui.NewTester(func(c *ui.Context) {
+		app.catalogCardSized(c, item, 180)
+	}, 1000, 420)
+	tester.Frame()
+	if tester.HasText("搜索结果") {
+		t.Fatalf("search card still renders the page-context label: %v", tester.Texts())
+	}
+	if !tester.HasText("812集") {
+		t.Fatalf("search episode metadata missing: %v", tester.Texts())
+	}
+}
+
 func TestHistoryProgressBadgeSurvivesLabelCleanup(t *testing.T) {
 	app := NewTestApp()
 	app.view = "history"
