@@ -562,11 +562,9 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 				overlay := ui.Row(c.Key("overlay:"+item.ID+"|"+label)).
 					Absolute().Bottom(catalogOverlayInset).Left(catalogOverlayInset).Right(catalogOverlayInset).
 					Height(catalogOverlayHeight).Padding(0, 12).Radius(catalogOverlayHeight/2).
-					Background(ui.RGBA(0, 0, 0, 0.52)).
-					Border(1, ui.RGBA(255, 255, 255, 0.08)).
-					AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(label)
-				hoverBackground(overlay, ui.RGBA(0, 0, 0, 0.52), ui.RGBA(0, 0, 0, 0.72))
-				overlay.Border(1, ui.RGBA(255, 255, 255, 0.08))
+					Shadow(0, 3, 8, 0, ui.RGBA(0, 0, 0, 0.22)).
+					AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(label).
+					Material(glass.Glass{Style: glass.Clear, Interactive: true})
 				if overlay.Clicked() {
 					libraryTab := libraryHistory
 					switch a.view {
