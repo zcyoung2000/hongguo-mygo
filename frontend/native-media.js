@@ -63,12 +63,11 @@
           changingScene = false;
           // Preserve the selected native channel across navigation and renderer
           // recovery. loadRecommend keeps using the existing feed loader.
-          if (typeof payload.channel === 'string' && ['', '关注', '漫剧', '真人剧'].includes(payload.channel)
-              && payload.channel !== state.feed.channel) {
-            state.feed.channel = payload.channel;
-            state.feed.items = [];
-          }
           switchView('recommend', false);
+          ensureRecommendColdStart(payload.channel).catch(error => {
+            console.error('recommend feed cold start failed:', error);
+            showToast('加载推荐失败，请重试');
+          });
           break;
         case 'settings':
           changingScene = true;

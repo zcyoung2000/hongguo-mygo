@@ -345,6 +345,7 @@ function initFeedVideoPool() {
       isPriming: false,
       autoplayRetryTimer: null,
       sourceRetryTimer: null,
+      firstFrameWatchdogTimer: null,
       failureHintTimer: null,
       metricPreparedAt: 0,
       metricSourceAssignedAt: 0,
@@ -676,14 +677,12 @@ function clearFeedSlot(slot) {
     clearTimeout(slot.autoplayRetryTimer);
     slot.autoplayRetryTimer = null;
   }
-  if (slot.sourceRetryTimer) {
-    clearTimeout(slot.sourceRetryTimer);
-    slot.sourceRetryTimer = null;
-  }
+  clearFeedSourceRetry(slot);
   if (slot.failureHintTimer) {
     clearTimeout(slot.failureHintTimer);
     slot.failureHintTimer = null;
   }
+  clearFeedFirstFrameWatchdog(slot);
   slot.metricPreparedAt = 0;
   slot.metricSourceAssignedAt = 0;
   slot.metricFirstFrameAt = 0;
@@ -1008,7 +1007,7 @@ function hasWarmFeedHLS(playback) {
     feedWarmupSession?.pendingMedia?.has(key));
 }
 
-async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = null, primeFirstFrame = false, quality = null, episodeNum = 1, episodeId = '') {
+async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = null, primeFirstFrame = false, quality = null, episodeNum = 1, episodeId = '', sourceAttempt = 0) {
   if (!slot || !slot.video) return null;
   if (itemIndex < 0 || itemIndex >= state.feed.items.length) {
     clearFeedSlot(slot);
@@ -1059,21 +1058,28 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
   }
   if (feedSlots[feedSlotCurr] === slot) updateFeedPlayIndicator();
 
-  const loadPlayback = async () => {
+  const loadPlayback = async (nextAttempt = 0) => {
     // Metadata prefetch and the visible slot share one load. Warm slots keep
     // their HLS rendition; a foreground cold start can consume MP4 fragments
     // before the next source keyframe closes a complete HLS segment.
-    const pb = await prefetchFeedPlaybackInfo(itemIndex, true, requestedQuality, episodeNum, episodeId);
+    const pb = await prefetchFeedPlaybackInfo(itemIndex, true, requestedQuality, episodeNum, episodeId)
+      .catch(error => {
+        console.warn('feed playback load failed:', error);
+        return null;
+      });
     if (loadToken !== slot.loadToken) return;
     if (!pb || !pb.streamUrl) {
-      if (feedSlots[feedSlotCurr] === slot) reportFeedFailure(slot, '获取播放流失败');
+      state.feed.consecutiveSourceFailures++;
+      reportFeedFailure(slot, '获取播放流失败，正在重试', 0);
+      scheduleFeedSourceRetry(slot, itemIndex, nextAttempt);
       return;
     }
 
     const selectedQuality = pb.quality || requestedQuality;
+    const selectedKey = feedAssetKey(drama.id, episodeNum, selectedQuality);
     rememberFeedQuality(drama.id, selectedQuality);
     rememberFeedPlayback(requestedKey, pb);
-    rememberFeedPlayback(feedAssetKey(drama.id, episodeNum, selectedQuality), pb);
+    rememberFeedPlayback(selectedKey, pb);
 
     slot.episodeId = pb.episodeId || '';
     slot.episodeNum = pb.episodeNum || 1;
@@ -1100,6 +1106,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     slot.video.playbackRate = state.feed.playbackSpeed || 1;
     slot.metricSourceAssignedAt = performance.now();
     assignFeedMediaSource(slot, slot.streamUrl, progressive);
+    scheduleFeedFirstFrameWatchdog(slot, itemIndex, loadToken, sourceAttempt);
     slot.ready = true;
     slot.metricCacheHit = slot.completeCached;
     slot.metricStreamMode = pb.isFullCached
@@ -1229,7 +1236,7 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     }
   };
 
-  const preparing = loadPlayback();
+  const preparing = loadPlayback(sourceAttempt);
   slot.preparing = preparing;
   try {
     await preparing;
@@ -1250,12 +1257,27 @@ function clearFeedFailureHint(slot) {
   slot.failureHintTimer = null;
 }
 
+function clearFeedSourceRetry(slot) {
+  if (!slot?.sourceRetryTimer) return;
+  clearTimeout(slot.sourceRetryTimer);
+  slot.sourceRetryTimer = null;
+}
+
+function clearFeedFirstFrameWatchdog(slot) {
+  if (!slot?.firstFrameWatchdogTimer) return;
+  clearTimeout(slot.firstFrameWatchdogTimer);
+  slot.firstFrameWatchdogTimer = null;
+}
+
 function reportFeedFailure(slot, text, delay = 3000) {
   if (slot) slot.failed = true;
+  slot.preparing = null;
   recordFeedDiagnostic('media-failure', { reason: 'source-unavailable' }, slot);
   updateFeedPlayIndicator();
   if (!slot) return;
   clearFeedFailureHint(slot);
+  clearFeedSourceRetry(slot);
+  clearFeedFirstFrameWatchdog(slot);
   const loadToken = slot.loadToken;
   slot.failureHintTimer = setTimeout(() => {
     slot.failureHintTimer = null;
@@ -1338,7 +1360,7 @@ function prefetchFeedPlaybackInfo(itemIndex, preferHLS = true, quality = feedQua
       recordFeedDiagnostic('playback-info-failed', { toIndex: itemIndex,
         durationMs: Math.round(performance.now() - requestedAt), reason: 'request-failed' });
       console.warn('feed playback info prefetch failed:', drama.id, err);
-      return null;
+      throw err;
     })
     .finally(() => {
       if (state.feed.playbackInfoLoads.get(key) === load) {
@@ -2145,6 +2167,34 @@ function switchView(viewName) {
 // ==========================================================================
 
 let feedRequestToken = 0;
+let feedColdStartPromise = null;
+let feedColdStartRequestToken = 0;
+
+function ensureRecommendColdStart(channel) {
+  syncFeedScrollCapture();
+  const requestedChannel = typeof channel === 'string' ? channel : state.feed.channel;
+  const sameChannel = requestedChannel === state.feed.channel;
+  const validChannel = ['', '关注', '漫剧', '真人剧'].includes(requestedChannel);
+  if (state.feed.items.length > 0 && sameChannel) {
+    resumeFeedPlayback();
+    return Promise.resolve();
+  }
+  if (state.feed.items.length === 0 && sameChannel &&
+      feedColdStartPromise && feedColdStartRequestToken === feedRequestToken) {
+    return feedColdStartPromise;
+  }
+
+  if (typeof channel === 'string' && validChannel && !sameChannel) {
+    state.feed.channel = channel;
+    state.feed.items = [];
+  }
+  feedColdStartRequestToken = ++feedRequestToken;
+  feedColdStartPromise = loadFeed(true, state.feed.channel).finally(() => {
+    if (feedColdStartRequestToken === feedRequestToken) feedColdStartPromise = null;
+  });
+  return feedColdStartPromise;
+}
+
 function showFeedHint(text, spinner = false, duration = 2200) {
   const toast = document.getElementById('feed-hint-toast');
   const txt = document.getElementById('feed-hint-text');
@@ -2157,12 +2207,7 @@ function showFeedHint(text, spinner = false, duration = 2200) {
 }
 
 async function loadRecommend() {
-  syncFeedScrollCapture();
-  if (state.feed.items.length === 0) {
-    await loadFeed(true, state.feed.channel);
-  } else {
-    resumeFeedPlayback();
-  }
+  await ensureRecommendColdStart(state.feed.channel);
 }
 
 async function loadFeed(reset = false, channel = '', forceRefresh = false) {
@@ -2621,38 +2666,12 @@ function scheduleFeedAutoplayRetry(slot, attempt = 0) {
   }, attempt === 0 ? 120 : 300);
 }
 
-function ensureFeedSource(slot, itemIndex, attempt = 0) {
+function ensureFeedSource(slot, itemIndex, sourceAttempt = 0) {
   if (!slot || state.currentView !== 'recommend') return;
   if (feedSlots[feedSlotCurr] !== slot) return;
-  const preparing = prepareFeedSlot(slot, itemIndex, true);
+  const preparing = prepareFeedSlot(slot, itemIndex, true, null, false, null, 1, '', sourceAttempt);
   // Preparing a new source advances loadToken synchronously. Capture the
   // resulting generation so an initial load failure can actually be retried.
-  const loadToken = slot.loadToken;
-  preparing.then(() => {
-    if (loadToken !== slot.loadToken || slot.video?.src) return;
-    if (feedSlots[feedSlotCurr] !== slot) return;
-    state.feed.consecutiveSourceFailures++;
-    if (attempt >= 2) {
-      reportFeedFailure(slot, '获取播放流失败', 1200);
-      return;
-    }
-    if (slot.sourceRetryTimer) clearTimeout(slot.sourceRetryTimer);
-    slot.sourceRetryTimer = setTimeout(() => {
-      slot.sourceRetryTimer = null;
-      clearFeedFailureHint(slot);
-      ensureFeedSource(slot, itemIndex, attempt + 1);
-    }, 300 + attempt * 250);
-  }).catch(() => {
-    if (loadToken === slot.loadToken && feedSlots[feedSlotCurr] === slot && attempt < 2) {
-      state.feed.consecutiveSourceFailures++;
-      if (slot.sourceRetryTimer) clearTimeout(slot.sourceRetryTimer);
-      slot.sourceRetryTimer = setTimeout(() => {
-        slot.sourceRetryTimer = null;
-        clearFeedFailureHint(slot);
-        ensureFeedSource(slot, itemIndex, attempt + 1);
-      }, 300 + attempt * 250);
-    }
-  });
 }
 
 let isFeedAnimating = false;
@@ -3018,10 +3037,14 @@ function clearCommentSceneLayout() {
 }
 
 function renderFeedPlaylistDrawer() {
+  const configuredTotal = Number(state.feed.totalEpisodes);
+  const total = Number.isFinite(configuredTotal)
+    ? Math.max(0, configuredTotal)
+    : (state.feed.episodes?.length || 1);
   renderEpisodeGrid({
     grid: document.getElementById('feed-drawer-grid'),
     count: document.getElementById('feed-drawer-count'),
-    total: state.feed.totalEpisodes || (state.feed.episodes ? state.feed.episodes.length : 1),
+    total,
     current: state.feed.episodeNum,
     onSelect: episodeNum => enterSeriesPlayer(state.feed.seriesId, episodeNum)
   });
@@ -3030,7 +3053,16 @@ function renderFeedPlaylistDrawer() {
 function renderEpisodeGrid({ grid, count, total, current, onSelect }) {
   if (!grid) return;
   grid.innerHTML = '';
-  if (count) count.textContent = `共 ${total} 集`;
+  const validTotal = Math.max(0, Number(total) || 0);
+  if (count) count.textContent = `共 ${validTotal} 集`;
+
+  if (!validTotal) {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'drawer-empty-state';
+    emptyState.textContent = '剧集信息还没加载完成，请稍后重试';
+    grid.appendChild(emptyState);
+    return;
+  }
 
   for (let episodeNum = 1; episodeNum <= total; episodeNum++) {
     const button = document.createElement('button');
@@ -3040,6 +3072,113 @@ function renderEpisodeGrid({ grid, count, total, current, onSelect }) {
     button.onclick = () => onSelect(episodeNum);
     grid.appendChild(button);
   }
+}
+
+function feedPlaybackFailureState(slot) {
+  const feedVideo = typeof getFeedVideo === 'function' ? getFeedVideo() : null;
+  const currentSlot = feedSlotForVideo(feedVideo);
+  const failed = Boolean(feedVideo?.error || slot?.failed || currentSlot?.failed);
+  return { failed, currentSlot: slot || currentSlot };
+}
+
+function attachFeedLoadFailureRetry({ loader, stage }) {
+  if (!loader || loader.dataset.failureRetryAttached === 'true') return;
+  loader.dataset.failureRetryAttached = 'true';
+  loader.addEventListener('click', () => {
+    if (!stage?.classList.contains('is-load-failed')) return;
+    const feedVideo = getFeedVideo();
+    const slot = feedSlotForVideo(feedVideo);
+    if (!slot?.failed && !feedVideo?.error) return;
+    state.feed.consecutiveSourceFailures = 0;
+    slot.failed = false;
+    ensureFeedSource(slot, state.feed.index || 0);
+  });
+}
+
+function scheduleFeedFirstFrameWatchdog(slot, itemIndex, loadToken, sourceAttempt) {
+  clearFeedSourceRetry(slot);
+  clearFeedFirstFrameWatchdog(slot);
+  slot.firstFrameWatchdogTimer = setTimeout(() => {
+    slot.firstFrameWatchdogTimer = null;
+    if (loadToken !== slot.loadToken || feedSlots[feedSlotCurr] !== slot ||
+        slot.itemIndex !== itemIndex || state.feed.userPaused ||
+        state.currentView !== 'recommend' || slot.video?.error ||
+        feedVideoHasFirstFrame(slot.video)) return;
+    recordFeedDiagnostic('first-frame-timeout', { streamUrl: slot.streamUrl }, slot);
+    const fallbacks = [
+      {source: slot.progressiveStreamUrl, progressive: true, mode: 'progressive', flag: 'usedProgressiveFallback'},
+      {source: slot.hlsStreamUrl, progressive: false, mode: 'hls', flag: 'usedHLSFallback'},
+      {source: slot.fullStreamUrl, progressive: false, mode: 'full-fallback', flag: 'usedFullFallback'}
+    ];
+    const fallback = fallbacks.find(candidate => (
+      candidate.source &&
+      !slot[candidate.flag] &&
+      normalizeFeedMediaURL(candidate.source) !== normalizeFeedMediaURL(slot.streamUrl)
+    ));
+    if (fallback) {
+      slot.ready = false;
+      slot[fallback.flag] = true;
+      slot.streamUrl = fallback.source;
+      slot.metricStreamMode = fallback.mode;
+      slot.metricUsedFullFallback = fallback.mode === 'full-fallback';
+      assignFeedMediaSource(slot, fallback.source, fallback.progressive);
+      slot.ready = true;
+      scheduleFeedFirstFrameWatchdog(slot, itemIndex, loadToken, sourceAttempt);
+      if (state.currentView === 'recommend' && !state.feed.userPaused && feedSlots[feedSlotCurr] === slot) {
+        beginFeedPlayback(slot.video, feedPlayToken);
+        scheduleFeedAutoplayRetry(slot);
+      }
+      return;
+    }
+    scheduleFeedSourceRetry(slot, itemIndex, sourceAttempt);
+  }, 11000);
+}
+
+function scheduleFeedSourceRetry(slot, itemIndex, attempt) {
+  const retryToken = slot.loadToken;
+  if (attempt >= 3) {
+    if (feedSlots[feedSlotCurr] === slot) {
+      state.feed.consecutiveSourceFailures++;
+      reportFeedFailure(slot, '视频加载失败，请点击重试', 0);
+    }
+    return;
+  }
+  clearFeedSourceRetry(slot);
+  slot.sourceRetryTimer = setTimeout(() => {
+    slot.sourceRetryTimer = null;
+    if (slot.loadToken !== retryToken || feedSlots[feedSlotCurr] !== slot ||
+        slot.itemIndex !== itemIndex || state.currentView !== 'recommend') return;
+    clearFeedFailureHint(slot);
+    ensureFeedSource(slot, itemIndex, attempt + 1);
+  }, 300 + Math.min(attempt, 4) * 250);
+}
+
+function toggleFeedPlaylistDrawer({ drawer, drawerToggle, drawerGrid, drawerCount }) {
+  if (!drawer) return;
+  const willOpen = !drawer.classList.contains('open');
+  drawer.classList.toggle('open', willOpen);
+  drawerToggle?.setAttribute('aria-expanded', String(willOpen));
+  syncFeedScrollCapture();
+  if (!willOpen) return;
+  const configuredTotal = Number(state.feed.totalEpisodes);
+  const total = Number.isFinite(configuredTotal)
+    ? Math.max(0, configuredTotal)
+    : (state.feed.episodes?.length || 1);
+  renderEpisodeGrid({
+    grid: drawerGrid,
+    count: drawerCount,
+    total,
+    current: state.feed.episodeNum,
+    onSelect: episodeNum => enterSeriesPlayer(state.feed.seriesId, episodeNum)
+  });
+  scrollActiveDrawerEpisode('feed-drawer-grid', state.feed.episodeNum);
+}
+
+function closeFeedPlaylistDrawer({ drawer, drawerToggle }) {
+  if (!drawer) return;
+  drawer.classList.remove('open');
+  drawerToggle?.setAttribute('aria-expanded', 'false');
+  syncFeedScrollCapture();
 }
 
 function createEpisodeCollapseController({ grid, toggleWrap, toggle, collapsedClass = 'is-collapsed', rows = 3, rowHeight = 28, gap = 6 }) {
@@ -3824,9 +3963,12 @@ function updateFeedPlayIndicator() {
   if (!centerPlay) return;
 
   const slot = feedSlotForVideo(feedVideo);
-  const isFeedBuffering = state.currentView === 'recommend' && !state.feed.userPaused &&
-    state.feed.items.length > 0 && feedVideo && !feedVideo.ended &&
-    !feedVideo.error && !slot?.failed && (!feedVideo.src || feedVideo.readyState < 3 || slot?.mediaWaiting);
+  const hasCatalogItem = state.feed.items.length > 0;
+  const isFeedLoading = hasCatalogItem && (!feedVideo.src || feedVideo.readyState < 3 || slot?.mediaWaiting) &&
+    !feedVideo.ended && !feedVideo.error;
+  const failureState = feedPlaybackFailureState(slot);
+  const isFeedFailed = hasCatalogItem && failureState.failed;
+  const isFeedBuffering = state.currentView === 'recommend' && !state.feed.userPaused && isFeedLoading;
 
   if (!isFeedBuffering) {
     if (feedBufferingTimer) clearTimeout(feedBufferingTimer);
@@ -3843,8 +3985,11 @@ function updateFeedPlayIndicator() {
     }, 200);
   }
   loader?.setAttribute('aria-label', '加载中');
+  if (loader) loader.title = isFeedFailed ? '加载失败，点击重试' : '加载中';
+  if (loader) loader.style.cursor = isFeedFailed ? 'pointer' : '';
   if (feedStage) {
     feedStage.classList.toggle('is-buffering', Boolean(isFeedBuffering));
+    feedStage.classList.toggle('is-load-failed', Boolean(isFeedFailed));
   }
 
   // Keep the center control hidden while the active video is still buffering.
@@ -3879,6 +4024,8 @@ function initFeedControls() {
   const qualityMenu = document.getElementById('feed-quality-menu');
   const drawerToggle = document.getElementById('feed-drawer-toggle');
   const drawer = document.getElementById('feed-playlist-drawer');
+  const drawerGrid = document.getElementById('feed-drawer-grid');
+  const drawerCount = document.getElementById('feed-drawer-count');
   const closeDrawerBtn = document.getElementById('feed-close-drawer');
   const fullscreenBtn = document.getElementById('feed-fullscreen');
   const pipBtn = document.getElementById('feed-pip');
@@ -3927,6 +4074,10 @@ function initFeedControls() {
 
   if (playBtn) playBtn.addEventListener('click', toggleFeedPlay);
   if (centerPlay) centerPlay.addEventListener('click', toggleFeedPlay);
+  attachFeedLoadFailureRetry({
+    loader: document.getElementById('feed-loader'),
+    stage: feedStage
+  });
   if (feedStage) {
     feedStage.addEventListener('click', (e) => {
       if (feedContainer && feedContainer.classList.contains('clearscreen')) {
@@ -4154,13 +4305,7 @@ function initFeedControls() {
   }
 
   function toggleFeedDrawer() {
-    if (!drawer) return;
-    const willOpen = !drawer.classList.contains('open');
-    drawer.classList.toggle('open', willOpen);
-    syncFeedScrollCapture();
-    if (willOpen) {
-      scrollActiveDrawerEpisode('feed-drawer-grid', state.feed.episodeNum);
-    }
+    toggleFeedPlaylistDrawer({ drawer, drawerToggle, drawerGrid, drawerCount });
   }
 
   // Prevent any container accidental horizontal scrolling
@@ -4175,9 +4320,12 @@ function initFeedControls() {
     feedContainer.scrollLeft = 0;
   }
   if (drawerToggle) drawerToggle.addEventListener('click', toggleFeedDrawer);
+  drawer?.addEventListener('pointerdown', event => event.stopPropagation());
+  drawer?.addEventListener('click', event => {
+    if (event.target === drawer) closeFeedPlaylistDrawer({ drawer, drawerToggle });
+  });
   if (closeDrawerBtn) closeDrawerBtn.addEventListener('click', () => {
-    if (drawer) drawer.classList.remove('open');
-    syncFeedScrollCapture();
+    closeFeedPlaylistDrawer({ drawer, drawerToggle });
   });
 
   if (fullscreenBtn) {

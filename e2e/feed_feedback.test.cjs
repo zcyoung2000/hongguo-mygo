@@ -25,14 +25,15 @@ function harness() {
   const c = vm.createContext({ Event, video, window: {},
     performance: { now: () => now }, feedBufferingTimer: null, feedSwitchWaitReason: '',
     feedSlots: [slot], feedSlotCurr: 0, getFeedVideo: () => video, feedSlotForVideo: () => slot,
-    HTMLMediaElement: { HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4 },
+    HTMLMediaElement: { HAVE_CURRENT_DATA: 2, HAVE_FUTURE_DATA: 3, HAVE_ENOUGH_DATA: 4 },
     state: { currentView: 'recommend', feed: { index: 0, items: [{}], userPaused: false } },
     document: { getElementById: id => nodes[id] },
     setTimeout: (fn, delay) => { timers.set(++next, {fn, at: now + delay}); return next; },
     clearTimeout: id => timers.delete(id),
-    recordFeedDiagnostic: event => traces.push(event), wakeFeedWarmup() {}, restoreFeedFirstFrameSound() {}
+    recordFeedDiagnostic: event => traces.push(event), wakeFeedWarmup() {}, restoreFeedFirstFrameSound() {},
+    feedPlaybackFailureState: slot => ({failed: Boolean(slot?.failed || video.error), currentSlot: slot})
   });
-  for (const name of ['feedVideoHasPlaybackBuffer', 'attachFeedVideoMetrics', 'updateFeedPlayIndicator']) load(c, name);
+  for (const name of ['feedVideoHasPlaybackBuffer', 'feedVideoHasFirstFrame', 'attachFeedVideoMetrics', 'updateFeedPlayIndicator']) load(c, name);
   c.attachFeedVideoMetrics(slot);
   const start = source.indexOf("    video.addEventListener('waiting',", source.indexOf('function initFeedControls()'));
   const end = source.indexOf("    video.addEventListener('canplay',", start);

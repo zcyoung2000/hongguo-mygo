@@ -119,6 +119,9 @@ function playerHarness() {
     waitForMygoBridge: async () => ({call: async () => {}}),
     setInterval: () => 0,
     clearInterval: () => {},
+    attachFeedLoadFailureRetry: () => {},
+    toggleFeedPlaylistDrawer: () => {},
+    scheduleFeedSourceRetry: () => {},
   };
   runtime.apiCall = runtime.__api;
   vm.createContext(runtime);
