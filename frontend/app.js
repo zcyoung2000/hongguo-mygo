@@ -78,6 +78,12 @@ function fallbackQualityOptions(selected) {
   }));
 }
 
+function playerSpeedLabel(speed) {
+  const value = Number(speed);
+  if (!Number.isFinite(value)) return '1.0x';
+  return (value % 1 === 0 ? value.toFixed(1) : String(value)) + 'x';
+}
+
 function renderCommentSkeleton(count = 4) {
   let html = '';
   for (let i = 0; i < count; i++) {
@@ -714,13 +720,14 @@ function clearFeedSlot(slot) {
   }
 }
 
-function feedSlotMatches(slot, itemIndex, seriesId, quality) {
+function feedSlotMatches(slot, itemIndex, seriesId, quality, episodeNum = 1) {
   return Boolean(
     slot &&
     slot.ready &&
     (slot.expiresAt > Date.now() || feedVideoHasFirstFrame(slot.video)) &&
     slot.itemIndex === itemIndex &&
     slot.seriesId === seriesId &&
+    (slot.episodeNum || 1) === (Number(episodeNum) || 1) &&
     (slot.quality === quality || slot.requestedQuality === quality) &&
     slot.streamUrl &&
     slot.video?.src &&
@@ -1014,13 +1021,14 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
   const requestedKey = feedAssetKey(drama.id, episodeNum, requestedQuality);
 
   if (slot.preparing && slot.itemIndex === itemIndex && slot.seriesId === drama.id &&
+      (slot.episodeNum || 1) === (Number(episodeNum) || 1) &&
       (slot.quality === requestedQuality || slot.requestedQuality === requestedQuality)) {
     const loadToken = slot.loadToken;
     await slot.preparing;
     if (loadToken !== slot.loadToken || !slot.ready) return null;
   }
 
-  if (feedSlotMatches(slot, itemIndex, drama.id, requestedQuality)) {
+  if (feedSlotMatches(slot, itemIndex, drama.id, requestedQuality, episodeNum)) {
     syncActiveFeedSlot(slot);
     requestFeedDramaMetadata(slot);
     state.feed.consecutiveSourceFailures = 0;
@@ -2751,7 +2759,7 @@ function schedulePendingFeedSwitch(dir, delay = 50, reason = 'first-frame') {
 function prepareFeedTargetForSwitch(slot, itemIndex, quality) {
   const drama = state.feed.items[itemIndex];
   if (!slot || !drama) return;
-  if (feedSlotMatches(slot, itemIndex, drama.id, quality)) {
+  if (feedSlotMatches(slot, itemIndex, drama.id, quality, state.feed.episodeNum)) {
     if (!feedVideoHasFirstFrame(slot.video) && !slot.firstFramePriming) {
       slot.firstFramePriming = primeFeedSlotFirstFrame(slot);
     }
@@ -2829,7 +2837,7 @@ function switchFeedDrama(dir, request = null) {
   const targetSlot = dir > 0 ? feedSlots[feedSlotNext] : feedSlots[feedSlotPrev];
   const offscreenSlot = dir > 0 ? feedSlots[feedSlotPrev] : feedSlots[feedSlotNext];
   const requestedTargetQuality = feedQualityForItem(targetIdx);
-  const targetReadyBeforeMove = feedSlotMatches(targetSlot, targetIdx, targetDrama.id, requestedTargetQuality);
+  const targetReadyBeforeMove = feedSlotMatches(targetSlot, targetIdx, targetDrama.id, requestedTargetQuality, state.feed.episodeNum);
   const targetWaitMs = feedSwitchWaitDir === dir && feedSwitchWaitOrigin === state.feed.index
     ? now - feedSwitchWaitStartedAt : 0;
   const targetStartupDeadline = 350;
@@ -2867,7 +2875,7 @@ function switchFeedDrama(dir, request = null) {
     feedSlotPrev = offscreenSlot.id;
   }
 
-  const targetReady = feedSlotMatches(targetSlot, targetIdx, targetDrama.id, requestedTargetQuality);
+  const targetReady = feedSlotMatches(targetSlot, targetIdx, targetDrama.id, requestedTargetQuality, state.feed.episodeNum);
   const targetBuffered = Boolean(targetReady && feedVideoHasPlaybackBuffer(targetSlot.video));
   activateFeedDrama(targetDrama, targetIdx, targetReady ? targetSlot : null);
   if (targetReady) prepareFeedStartPosition(targetSlot, dir);
@@ -4120,6 +4128,7 @@ function initFeedControls() {
     });
   }
   if (speedBtn && speedMenu) {
+    speedBtn.textContent = playerSpeedLabel(state.feed.playbackSpeed || 1);
     speedBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       speedMenu.style.display = speedMenu.style.display === 'none' ? 'block' : 'none';
@@ -4130,8 +4139,9 @@ function initFeedControls() {
         e.stopPropagation();
         const spd = parseFloat(opt.dataset.speed);
         state.feed.playbackSpeed = spd;
-        getFeedVideo().playbackRate = spd;
-        speedBtn.textContent = spd + 'x';
+        const feedVideo = getFeedVideo();
+        if (feedVideo) feedVideo.playbackRate = spd;
+        speedBtn.textContent = opt.textContent || playerSpeedLabel(spd);
         speedMenu.querySelectorAll('.speed-opt').forEach(o => o.classList.remove('active'));
         opt.classList.add('active');
         speedMenu.style.display = 'none';

@@ -28,8 +28,15 @@ function initializeNativeHost(context, runtimeCalls = []) {
   const listeners = {};
   context.document.addEventListener = (name, handler) => { listeners[name] = handler; };
   context.document.body = {classList: {add() {}}};
-  const chromeNode = {classList: {contains: () => false}, getBoundingClientRect: () => ({left: 350, width: 300})};
-  context.document.getElementById = id => ['feed-cat-bar', 'feed-container', 'view-recommend'].includes(id) ? chromeNode : null;
+  const chromeNode = {
+    classList: {contains: () => false},
+    getBoundingClientRect: () => ({left: 350, width: 300}),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    addEventListener: () => {}
+  };
+  const prevGetElementById = context.document.getElementById?.bind(context.document);
+  context.document.getElementById = id => ['feed-cat-bar', 'feed-container', 'view-recommend'].includes(id) ? chromeNode : (prevGetElementById?.(id) || null);
   context.window.addEventListener = (name, handler) => { listeners[name] = handler; };
   context.notify = async () => {};
   context.enterSeriesPlayer = async (...args) => { runtimeCalls.push(['enterSeriesPlayer', ...args]); };
@@ -53,28 +60,54 @@ function playerHarness() {
   const node = id => {
     if (!nodes.has(id)) {
       nodes.set(id, {
-        id, textContent: '', style: {}, value: '', dataset: {}, disabled: false,
+        id, textContent: '', style: {}, value: '', dataset: {}, disabled: false, attributes: {},
         classList: {values: new Set(), add(...names) { names.forEach(name => this.values.add(name)); },
           remove(...names) { names.forEach(name => this.values.delete(name)); },
           toggle(name, force) { force ? this.values.add(name) : this.values.delete(name); },
           contains(name) { return this.values.has(name); }},
         handlers: {}, addEventListener(name, handler) { this.handlers[name] ||= []; this.handlers[name].push(handler); },
-        querySelector() { return null; }, appendChild(child) { this.children ||= []; this.children.push(child); },
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        getAttribute(name) { return this.attributes[name] || null; },
+        querySelector() { return null; },
+        querySelectorAll(selector) {
+          if (this.id === 'feed-speed-menu' && selector === '.speed-opt') return this.speedOptions || [];
+          return [];
+        },
+        appendChild(child) { this.children ||= []; this.children.push(child); },
+        contains(node) { return node === this; },
         focus() {}, scrollTop: 0, clientHeight: 96, offsetHeight: 28, offsetTop: 0, scrollHeight: 200, innerHTML: ''
       });
     }
     return nodes.get(id);
   };
-  const video = {src: '', currentTime: 0, duration: 60, paused: false, playbackRate: 1, readyState: 4};
+  const video = {
+    src: '', currentTime: 0, duration: 60, paused: false, playbackRate: 1, readyState: 4, dataset: {},
+    addEventListener() {}, removeAttribute() {}, load() {}, pause() {}
+  };
   const runtime = {
     console, setTimeout, clearTimeout, setImmediate,
-    document: {getElementById: node, querySelectorAll: () => [], createElement: () => ({style: {}, dataset: {}, classList: {add() {}, remove() {}, toggle() {}, contains() { return false; }}, appendChild() {}})},
-    window: {}, state: {currentView: 'recommend', feed: {
+    document: {
+      getElementById: node,
+      querySelectorAll: () => [],
+      querySelector: () => null,
+      addEventListener(name, handler) { this.handlers ||= {}; this.handlers[name] = handler; },
+      createElement: () => ({
+        style: {}, dataset: {}, className: '', textContent: '',
+        classList: {values: new Set(), add(...names) { names.forEach(name => this.values.add(name)); },
+          remove(...names) { names.forEach(name => this.values.delete(name)); },
+          toggle(name, force) { force ? this.values.add(name) : this.values.delete(name); },
+          contains() { return false; }},
+        handlers: {}, addEventListener(name, handler) { this.handlers[name] = handler; },
+        appendChild() {}
+      })
+    },
+    window: {addEventListener() {}}, state: {currentView: 'recommend', feed: {
       index: 0, seriesId: '710000000000001', episodeNum: 2, episodeId: '710000000000102',
       totalEpisodes: 12, episodes: Array.from({length: 12}, (_, i) => ({id: `e${i + 1}`, number: i + 1})),
       quality: '720p', qualityOptions: [], playbackSpeed: 1, preloadMap: new Map(), playbackInfoLoads: new Map(),
       userPaused: false
     }},
+    requestAnimationFrame: callback => callback(0),
     feedSlots: [{id: 0, video, ready: true, episodeNum: 2, quality: '720p'}], feedSlotCurr: 0,
     feedWarmupToken: 0, feedWarmupCenterKey: '', feedWarmupSession: null, feedPreloadRevision: 0,
     feedPlaybackGeneration: 0, getFeedVideo: () => video, __api: async (method, ...args) => {
@@ -82,6 +115,10 @@ function playerHarness() {
       if (method === 'PlayEpisode') return {episodeId: args[2] === 'e4' ? 'e4' : 'e4', episodeNum: args[2] === 'e4' ? 4 : 4, quality: args[3], streamUrl: `local-${args[3]}`, durationSec: 60};
       return {};
     },
+    performance: {now: () => Date.now()},
+    waitForMygoBridge: async () => ({call: async () => {}}),
+    setInterval: () => 0,
+    clearInterval: () => {},
   };
   runtime.apiCall = runtime.__api;
   vm.createContext(runtime);
@@ -128,4 +165,125 @@ test('complete episode drawer renders every episode and marks only the current o
   assert.equal(grid.children[1].textContent, 2);
   grid.children[3].onclick();
   assert.deepEqual(JSON.parse(JSON.stringify(h.runtime.calls)), [['select', 4]]);
+});
+
+test('a prepared episode slot cannot satisfy a different selected episode', async () => {
+  const h = playerHarness();
+  loadFunction(h.runtime, 'prepareFeedSlot');
+  loadFunction(h.runtime, 'feedSlotMatches');
+  loadFunction(h.runtime, 'normalizeFeedMediaURL');
+  h.runtime.safeImageCSS = () => 'none';
+  h.runtime.updateFeedPlayIndicator = () => {};
+  h.runtime.feedVideoHasFirstFrame = () => false;
+  h.runtime.syncActiveFeedSlot = () => {};
+  h.runtime.requestFeedDramaMetadata = () => {};
+  h.runtime.clearFeedSlot = slot => {
+    slot.loadToken++;
+    slot.poster = {style: {}, classList: {remove() {}, add() {}}};
+    h.runtime.calls.push(['clearFeedSlot', slot.episodeNum]);
+  };
+  h.runtime.prefetchFeedPlaybackInfo = () => Promise.reject(new Error('selection should reload'));
+  h.runtime.reportFeedFailure = () => {};
+  h.runtime.feedQualityForItem = () => '720p';
+  h.runtime.feedAssetKey = (seriesId, episodeNum, quality) => `${seriesId}:${episodeNum}:${quality}`;
+  const selectedSeriesId = '710000000000001';
+  h.runtime.state.feed.items = [{id: selectedSeriesId, title: 'series', coverUrl: ''}];
+  const slot = {
+    id: 0, video: h.video, ready: true, expiresAt: Date.now() + 1000, itemIndex: 0,
+    seriesId: '710000000000001', episodeNum: 2, quality: '720p', requestedQuality: '720p',
+    streamUrl: 'episode-2', loadToken: 1
+  };
+  h.video.src = 'episode-2';
+  h.runtime.feedSlots[0] = slot;
+
+  assert.equal(h.runtime.feedSlotMatches(slot, 0, slot.seriesId, '720p', 4), false,
+    'episode 4 must not reuse the prepared episode 2 slot');
+  await h.runtime.prepareFeedSlot(slot, 0, false, null, false, '720p', 4);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.runtime.calls)), [['clearFeedSlot', 2]]);
+});
+
+test('local quality menu opens and selection changes playback quality', async () => {
+  const h = playerHarness();
+  initializeNativeHost(h.runtime, h.runtime.calls);
+  loadFunction(h.runtime, 'playerSpeedLabel');
+  loadFunction(h.runtime, 'initFeedControls');
+  loadFunction(h.runtime, 'renderFeedQualityMenu');
+  loadFunction(h.runtime, 'changeFeedPlaybackQuality');
+  h.runtime.cancelScheduledFeedWarmup = () => {};
+  h.runtime.state.feed.qualityOptions = [
+    {id: '540p', label: '540P', available: true, active: false},
+    {id: '720p', label: '720P', available: true, active: true}
+  ];
+  h.runtime.calls.length = 0;
+  vm.runInContext('initFeedControls()', h.runtime);
+  vm.runInContext('renderFeedQualityMenu()', h.runtime);
+  const active = h.runtime.state.feed.qualityOptions.find(option => option.active);
+  assert.equal(active.label, '720P', 'quality renderer must receive menu options');
+  const qualityBtn = h.node('feed-quality');
+  const qualityMenu = h.node('feed-quality-menu');
+  qualityMenu.style.display = 'none';
+  assert.equal(qualityBtn.textContent, '720P');
+  assert.equal(qualityMenu.children.length, 2);
+
+  qualityBtn.handlers.click[0]({stopPropagation() {}});
+  assert.equal(qualityMenu.style.display, 'block');
+  assert.equal(qualityBtn.attributes['aria-expanded'], 'true');
+
+  const option = qualityMenu.children[0];
+  assert.equal(typeof option.handlers.click, 'function', 'available quality option must be clickable');
+  option.handlers.click({stopPropagation() {}});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(qualityMenu.style.display, 'none');
+  assert.equal(qualityBtn.attributes['aria-expanded'], 'false');
+  assert.equal(h.runtime.state.feed.quality, '540p');
+  assert.deepEqual(JSON.parse(JSON.stringify(h.runtime.calls.find(([name]) => name === 'playFeedIndex'))),
+    ['playFeedIndex', 0, 0]);
+});
+
+test('speed indicator keeps the selected menu text across all fixed formats', () => {
+  const h = playerHarness();
+  loadFunction(h.runtime, 'playerSpeedLabel');
+  h.runtime.state.feed.playbackSpeed = 1.5;
+  h.runtime.speedOptions = [
+    {
+      dataset: {speed: '0.75'}, textContent: '0.75x',
+      classList: {remove() {}, add() {}}
+    },
+    {
+      dataset: {speed: '1.0'}, textContent: '1.0x',
+      classList: {remove() {}, add() {}}
+    },
+    {
+      dataset: {speed: '1.25'}, textContent: '1.25x',
+      classList: {remove() {}, add() {}}
+    },
+    {
+      dataset: {speed: '1.5'}, textContent: '1.5x',
+      classList: {remove() {}, add() {}}
+    },
+    {
+      dataset: {speed: '2.0'}, textContent: '2.0x',
+      classList: {remove() {}, add() {}}
+    }
+  ];
+  h.runtime.speedOptions.forEach(option => {
+    option.addEventListener = (name, handler) => { option.handlers = {[name]: [handler]}; };
+  });
+  h.node('feed-speed-menu').speedOptions = h.runtime.speedOptions;
+  h.runtime.speedOptions.forEach(option => {
+    option.handlers = {click: [event => { event.stopPropagation(); option.onclick?.(event); }]};
+  });
+  loadFunction(h.runtime, 'initFeedControls');
+  vm.runInContext('initFeedControls()', h.runtime);
+  const speedBtn = h.node('feed-speed');
+  assert.equal(speedBtn.textContent, '1.5x');
+
+  h.runtime.speedOptions[4].handlers.click[0]({stopPropagation() {}});
+  assert.equal(h.runtime.state.feed.playbackSpeed, 2);
+  assert.equal(h.video.playbackRate, 2);
+  assert.equal(speedBtn.textContent, '2.0x');
+
+  h.runtime.speedOptions[1].handlers.click[0]({stopPropagation() {}});
+  assert.equal(speedBtn.textContent, '1.0x');
+  assert.equal(h.runtime.playerSpeedLabel(2.5), '2.5x');
 });
