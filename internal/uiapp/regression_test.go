@@ -163,8 +163,8 @@ func TestShelfDeadlineDoesNotBlockOrDisguiseCoreDetail(t *testing.T) {
 	if !tt.HasText("播放 / 继续观看") {
 		t.Fatalf("core detail controls missing: %v", tt.Texts())
 	}
-	if tt.HasText("正在加载...") || tt.HasText("重试") {
-		t.Fatalf("wide detail rendered supplement state after independent shelf failure: %v", tt.Texts())
+	if !tt.HasText("正在加载...") && !tt.HasText("重试") {
+		t.Fatalf("wide detail did not render independent supplement state: %v", tt.Texts())
 	}
 
 	screenshotDir := "/tmp/mygo-ui-bugs/regression"

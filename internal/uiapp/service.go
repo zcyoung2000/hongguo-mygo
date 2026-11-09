@@ -168,6 +168,8 @@ type App struct {
 	playerFixture               bool
 	detailEpisodesExpanded      bool
 	detailScroll                ui.ScrollState
+	detailLeftScroll            ui.ScrollState
+	detailRightScroll           ui.ScrollState
 	sidebarWidth                float32
 	preferencesPath             string
 	preferencesLoaded           bool
@@ -513,7 +515,7 @@ func (a *App) LoadMoreCatalog() {
 	}
 	a.loadCatalog(true)
 }
-func (a *App) LoadMoreSearch() bool        { return false }
+func (a *App) LoadMoreSearch() bool { return false }
 func (a *App) RefreshLibrary(tab LibraryTab) {
 	if !a.testMode {
 		go a.loadLibraryWithRefresh(tab, true)
