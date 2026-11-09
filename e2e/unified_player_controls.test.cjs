@@ -130,6 +130,108 @@ function playerHarness() {
   return {runtime, calls, node, video};
 }
 
+test('episode selection updates the info badge immediately and after playback resolves', async () => {
+  const h = playerHarness();
+  loadFunction(h.runtime, 'activateFeedDrama');
+  loadFunction(h.runtime, 'updateFeedDramaInfo');
+  loadFunction(h.runtime, 'syncActiveFeedSlot');
+  h.runtime.updateFeedCommentCount = () => {};
+  const drama = {id: '710000000000001', title: '同步集数剧'};
+  const slot = h.runtime.feedSlots[0];
+  h.runtime.feedVideoHasFirstFrame = () => false;
+  h.runtime.clearFeedSlot = () => {};
+  h.runtime.feedAssetKey = (seriesId, episodeNum, quality) => `${seriesId}:${episodeNum}:${quality}`;
+  h.runtime.feedQualityForItem = () => '720p';
+  h.runtime.feedDesiredQuality = () => '720p';
+  h.runtime.feedPlaybackKey = (seriesId, episodeNum, quality) => `${seriesId}:${episodeNum}:${quality}`;
+  h.runtime.state.feed.playbackPositions = new Map();
+  h.runtime.prefetchFeedPlaybackInfo = () => Promise.resolve({
+    episodeId: 'e5', episodeNum: 5, quality: '720p', streamUrl: 'episode-5', durationSec: 68
+  });
+  h.runtime.rememberFeedQuality = () => {};
+  h.runtime.rememberFeedPlayback = () => {};
+  h.runtime.assignFeedMediaSource = () => {};
+  h.runtime.scheduleFeedFrameMetric = () => {};
+  h.runtime.scheduleFeedFirstFrameWatchdog = () => {};
+  h.runtime.recordFeedDiagnostic = () => {};
+  h.runtime.assessFeedMediaCapabilities = () => {};
+  h.runtime.feedVideoBufferAhead = () => 0;
+  h.runtime.showFeedSkeleton = () => {};
+  h.runtime.beginFeedPlayback = () => {};
+  h.runtime.scheduleFeedAutoplayRetry = () => {};
+  h.runtime.scheduleFeedWarmup = () => {};
+  h.runtime.reportFeedFailure = () => {};
+  h.runtime.feedMediaDuration = () => 0;
+  h.runtime.updateFeedPlayIndicator = () => {};
+  h.runtime.feedPlayToken = 0;
+  h.runtime.hasWarmFeedHLS = () => false;
+  h.runtime.updateFeedQualityControls = () => {};
+  h.runtime.syncFeedMediaChrome = () => {};
+  loadFunction(h.runtime, 'normalizeFeedMediaURL');
+  h.runtime.ensureFeedItemsAhead = () => {};
+  h.runtime.requestFeedDramaMetadata = () => {};
+  slot.itemIndex = 0;
+  slot.seriesId = drama.id;
+  slot.episodeId = 'e1';
+  slot.episodeNum = 1;
+  slot.quality = '720p';
+  h.runtime.state.feed.items = [drama];
+
+  h.runtime.activateFeedDrama(drama, 0, slot);
+  assert.equal(h.node('feed-episode-badge').textContent, '第 1 集');
+
+  loadFunction(h.runtime, 'feedSlotMatches');
+  loadFunction(h.runtime, 'prepareFeedSlot');
+  await h.runtime.prepareFeedSlot(slot, 0, true, null, false, '720p', 5, 'e5');
+  assert.equal(h.runtime.state.feed.episodeNum, 5);
+  assert.equal(h.node('feed-episode-badge').textContent, '第 5 集');
+});
+
+test('episode drawer close works for pointer and Escape interactions', () => {
+  const h = playerHarness();
+  loadFunction(h.runtime, 'playerSpeedLabel');
+  for (const name of ['closeFeedPlaylistDrawer', 'toggleFeedPlaylistDrawer', 'initFeedControls']) {
+    loadFunction(h.runtime, name);
+  }
+  h.runtime.toggleFeedPlaylistDrawer = (elements) => {
+    elements.drawer.classList.add('open');
+    elements.drawerToggle.setAttribute('aria-expanded', 'true');
+    elements.drawerToggle.ariaExpanded = 'true';
+  };
+  h.runtime.closeFeedPlaylistDrawer = (elements) => {
+    elements.drawer.classList.remove('open');
+    elements.drawerToggle.setAttribute('aria-expanded', 'false');
+    elements.drawerToggle.ariaExpanded = 'false';
+  };
+  h.runtime.syncFeedScrollCapture = () => {};
+  loadFunction(h.runtime, 'shouldCaptureFeedScroll');
+  h.runtime.document.addEventListener = (name, handler) => {
+    h.runtime.document.handlers ||= {};
+    h.runtime.document.handlers[name] ||= [];
+    h.runtime.document.handlers[name].push(handler);
+  };
+  vm.runInContext('initFeedControls()', h.runtime);
+  const drawer = h.node('feed-playlist-drawer');
+  const toggle = h.node('feed-drawer-toggle');
+  const close = h.node('feed-close-drawer');
+  const documentHandlers = h.runtime.document.handlers;
+
+  toggle.handlers.click[0]();
+  assert.equal(drawer.classList.contains('open'), true);
+  close.handlers.pointerup[0]({stopPropagation() {}});
+  assert.equal(drawer.classList.contains('open'), false);
+
+  toggle.handlers.click[0]();
+  close.handlers.click[0]({stopPropagation() {}});
+  assert.equal(drawer.classList.contains('open'), false);
+
+  toggle.handlers.click[0]();
+  const keydownHandler = documentHandlers.keydown.find(handler => handler.toString().includes("e.key === 'Escape'"));
+  assert.equal(typeof keydownHandler, 'function');
+  keydownHandler({target: h.node('feed-stage'), key: 'Escape', code: 'Escape', stopPropagation() {}, preventDefault() {}});
+  assert.equal(drawer.classList.contains('open'), false);
+});
+
 test('native episode command replays the selected episode in bounds and ignores invalid episodes', async () => {
   const h = playerHarness();
   initializeNativeHost(h.runtime, h.runtime.calls);

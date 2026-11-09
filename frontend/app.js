@@ -1298,7 +1298,12 @@ function syncActiveFeedSlot(slot, playback = null) {
   // Preloading a background slot must never steal the active media chrome.
   if (!slot || feedSlots[feedSlotCurr] !== slot) return;
   state.feed.episodeId = slot.episodeId || state.feed.episodeId;
-  state.feed.episodeNum = slot.episodeNum || 1;
+  const episodeNum = Number(playback?.episodeNum || slot.episodeNum || 1) || 1;
+  if (state.feed.episodeNum !== episodeNum) {
+    state.feed.episodeNum = episodeNum;
+    const epBadge = document.getElementById('feed-episode-badge');
+    if (epBadge) epBadge.textContent = `第 ${episodeNum} 集`;
+  }
   state.feed.quality = slot.quality || state.feed.quality;
   if (playback) {
     state.feed.isLiked = Boolean(playback.isLiked);
@@ -3181,6 +3186,10 @@ function closeFeedPlaylistDrawer({ drawer, drawerToggle }) {
   syncFeedScrollCapture();
 }
 
+function isFeedPlaylistDrawerEvent(event) {
+  return event.target?.closest?.('#feed-playlist-drawer') != null;
+}
+
 function createEpisodeCollapseController({ grid, toggleWrap, toggle, collapsedClass = 'is-collapsed', rows = 3, rowHeight = 28, gap = 6 }) {
   const collapsedHeight = rows * rowHeight + (rows - 1) * gap;
   let expanded = false;
@@ -4321,12 +4330,26 @@ function initFeedControls() {
   }
   if (drawerToggle) drawerToggle.addEventListener('click', toggleFeedDrawer);
   drawer?.addEventListener('pointerdown', event => event.stopPropagation());
+  drawer?.addEventListener('pointerup', event => {
+    if (isFeedPlaylistDrawerEvent(event)) event.stopPropagation();
+  });
   drawer?.addEventListener('click', event => {
+    if (isFeedPlaylistDrawerEvent(event)) event.stopPropagation();
     if (event.target === drawer) closeFeedPlaylistDrawer({ drawer, drawerToggle });
   });
-  if (closeDrawerBtn) closeDrawerBtn.addEventListener('click', () => {
-    closeFeedPlaylistDrawer({ drawer, drawerToggle });
-  });
+  if (closeDrawerBtn) {
+    closeDrawerBtn.addEventListener('pointerdown', event => {
+      event.stopPropagation();
+    });
+    closeDrawerBtn.addEventListener('pointerup', event => {
+      event.stopPropagation();
+      closeFeedPlaylistDrawer({ drawer, drawerToggle });
+    });
+    closeDrawerBtn.addEventListener('click', event => {
+      event.stopPropagation();
+      closeFeedPlaylistDrawer({ drawer, drawerToggle });
+    });
+  }
 
   if (fullscreenBtn) {
     fullscreenBtn.addEventListener('click', () => {
@@ -4556,6 +4579,12 @@ function initFeedControls() {
   document.addEventListener('keydown', (e) => {
     const targetTag = e.target.tagName;
     const typing = targetTag === 'INPUT' || targetTag === 'TEXTAREA' || e.target.isContentEditable;
+    if (e.key === 'Escape' && drawer?.classList.contains('open') && !typing) {
+      e.preventDefault();
+      e.stopPropagation();
+      closeFeedPlaylistDrawer({ drawer, drawerToggle });
+      return;
+    }
     if (!shouldCaptureFeedScroll() || typing) {
       if (state.currentView === 'recommend' && ['ArrowDown', 'ArrowUp'].includes(e.code) && !e.repeat) {
         recordFeedDiagnostic('navigation-ignored', { reason: typing ? 'editable-focus' : 'overlay-open', inputSource: 'keyboard' });

@@ -770,10 +770,10 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 			if item.Upcoming && item.PublishAt != "" {
 				ui.Text(c, formatPublishDate(item.PublishAt)).TextColor(t.TextMuted).SingleLine().Width(width)
 			}
-			if !item.Upcoming && item.BadgeText != "" {
+			if a.view != "search" && !item.Upcoming && item.BadgeText != "" {
 				ui.Text(c, item.BadgeText).TextColor(t.TextMuted).Width(width)
 			}
-			if !item.Upcoming && item.Category != "" {
+			if a.view != "search" && !item.Upcoming && item.Category != "" {
 				ui.Text(c, item.Category).TextColor(t.TextMuted).SingleLine().Width(width)
 			}
 			if !item.Upcoming && (item.Heat != "" || item.EpisodeCount > 0) {
