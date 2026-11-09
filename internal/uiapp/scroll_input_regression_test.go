@@ -90,12 +90,11 @@ func TestDetailWideWheelInputScrollsColumnsIndependently(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.detail = detailWideFixture()
-	app.detailEpisodesExpanded = true
 	app.sidebarWidth = 0
 	tt := scrollInputTester(app, 1600, 1000)
 	tt.Frame()
-	if app.detailLeftScroll.MaxY <= 1 || app.detailRightScroll.MaxY <= 1 {
-		t.Fatalf("detail columns cannot accept wheel events: left-max=%v right-max=%v", app.detailLeftScroll.MaxY, app.detailRightScroll.MaxY)
+	if app.detailLeftScroll.MaxY <= 1 || app.detailEpisodesScroll.MaxY <= 1 {
+		t.Fatalf("detail columns cannot accept wheel events: left-max=%v right-max=%v", app.detailLeftScroll.MaxY, app.detailEpisodesScroll.MaxY)
 	}
 
 	seasons, seasonsOK := tt.Find("同系列短剧")
@@ -108,8 +107,8 @@ func TestDetailWideWheelInputScrollsColumnsIndependently(t *testing.T) {
 	if app.detailLeftScroll.Y != leftDelta {
 		t.Fatalf("left detail wheel did not scroll by the event delta: y=%v want=%v", app.detailLeftScroll.Y, leftDelta)
 	}
-	if app.detailRightScroll.Y != 0 {
-		t.Fatalf("left detail wheel changed the right column: y=%v", app.detailRightScroll.Y)
+	if app.detailEpisodesScroll.Y != 0 {
+		t.Fatalf("left detail wheel changed the right column: y=%v", app.detailEpisodesScroll.Y)
 	}
 
 	tt.Frame()
@@ -117,10 +116,10 @@ func TestDetailWideWheelInputScrollsColumnsIndependently(t *testing.T) {
 	if !ok {
 		t.Fatal("right detail landmark disappeared after left-column wheel")
 	}
-	rightDelta := min(120, app.detailRightScroll.MaxY)
+	rightDelta := min(120, app.detailEpisodesScroll.MaxY)
 	tt.Wheel(episodes.X+episodes.W/2, episodes.Y+episodes.H/2, 0, rightDelta)
-	if app.detailRightScroll.Y != rightDelta {
-		t.Fatalf("right detail wheel did not scroll by the event delta: y=%v want=%v", app.detailRightScroll.Y, rightDelta)
+	if app.detailEpisodesScroll.Y != rightDelta {
+		t.Fatalf("right detail wheel did not scroll by the event delta: y=%v want=%v", app.detailEpisodesScroll.Y, rightDelta)
 	}
 	if app.detailLeftScroll.Y != leftDelta {
 		t.Fatalf("right detail wheel changed the left column: y=%v want=%v", app.detailLeftScroll.Y, leftDelta)
