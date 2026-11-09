@@ -166,10 +166,10 @@ type App struct {
 	rankScroll                  ui.ScrollState
 	actorScroll                 ui.ScrollState
 	playerFixture               bool
-	detailEpisodesExpanded      bool
+	detailEpisodesList          ui.ListState
+	detailEpisodesScroll        ui.ScrollState
 	detailScroll                ui.ScrollState
 	detailLeftScroll            ui.ScrollState
-	detailRightScroll           ui.ScrollState
 	sidebarWidth                float32
 	preferencesPath             string
 	preferencesLoaded           bool
@@ -499,7 +499,6 @@ func (a *App) ChooseEpisode(num int) {
 	a.mu.Lock()
 	loaded := num > 0 && a.media != nil && !a.detail.Loading && a.detail.ID != "" && !a.detail.Upcoming
 	if loaded {
-		a.detailEpisodesExpanded = false
 		a.detailScroll.Y = 0
 	}
 	a.mu.Unlock()
@@ -793,7 +792,6 @@ func (a *App) open(view, seriesID string) {
 	a.notice = ""
 	a.resetResumeLocked(seriesID)
 	a.mediaOn = false
-	a.detailEpisodesExpanded = false
 	if a.media != nil {
 		a.media.Stop()
 	}

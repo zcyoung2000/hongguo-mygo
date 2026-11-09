@@ -126,6 +126,21 @@ func TestFavoriteDuringDetailLoadDoesNotRefetchContent(t *testing.T) {
 	<-done
 }
 
+func TestFavoriteMutationBumpsOneDetailRevision(t *testing.T) {
+	app := NewTestApp()
+	app.detail = Detail{ID: "123456"}
+	app.favorite = &instantFavorite{favorite: true}
+	app.SetInvalidator(func() {})
+
+	before := app.detailRevisions["123456"]
+	app.ToggleDetailFavorite()
+	waitFor(time.Second, func() bool { return app.DetailState().Favorite })
+	after := app.detailRevisions["123456"]
+	if after != before+1 {
+		t.Fatalf("favorite mutation revisions = %d, want exactly one bump", after-before)
+	}
+}
+
 func testActorPage() []ipc.ActorInfo {
 	return []ipc.ActorInfo{{Name: "可跳转演员", Role: "演员", ActorID: "7407367786839676185"}, {Name: "无ID演员", Role: "演员"}}
 }

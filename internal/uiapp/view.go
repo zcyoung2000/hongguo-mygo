@@ -1096,7 +1096,7 @@ func (a *App) renderDetail(c *ui.Context) {
 					left.TrackScroll(&a.detailLeftScroll)
 					left.Gap(16).Label("detail-left-scroll").WidthPercent(48).MinWidth(340).Height(760)
 					right = ui.Scroll(c).Scrollbars(false)
-					right.TrackScroll(&a.detailRightScroll)
+					right.TrackScroll(&a.detailEpisodesScroll)
 					right.Gap(16).Label("detail-right-scroll").WidthPercent(52).MinWidth(380).Height(700)
 				} else {
 					left.FillWidth()
@@ -1137,6 +1137,7 @@ func (a *App) renderDetail(c *ui.Context) {
 										playLabel = fmt.Sprintf("继续观看第 %d 集", a.resume.ResumeEpisode)
 									}
 									playBtn := ui.Row(c.Key("detail-hero-play")).Height(36).Padding(0, 20).Radius(8).
+										MinWidth(158).
 										LinearGradient(ui.LinearGradient{From: ui.Hex("#d91b42"), To: ui.Hex("#b81235"), Angle: 180}).
 										Border(1, ui.RGBA(255, 255, 255, 0.22)).
 										Shadow(0, 3, 10, 0, ui.RGBA(0, 0, 0, 0.35)).
@@ -1274,74 +1275,68 @@ func (a *App) renderDetailEpisodes(c *ui.Context, episodes []CatalogItem) {
 		ui.Text(c, "暂无可播放选集").TextColor(c.Theme().TextMuted)
 		return
 	}
-	buttonWidth, buttonHeight := float32(68), float32(44)
+	buttonWidth, buttonHeight := float32(54), float32(36)
 	if detailTwoColumn(c.Size()) {
-		buttonWidth, buttonHeight = float32(64), float32(46)
+		buttonWidth, buttonHeight = float32(52), float32(36)
 	}
-	visibleIndexes := a.detailEpisodeCollapsedIndexes(episodes)
-	ui.Row(c.Key("detail-episodes-wrap")).Wrap().Gap(10).Children(func() {
-		for index, episode := range episodes {
-			if !a.detailEpisodesExpanded {
-				shown := false
-				for _, visibleIndex := range visibleIndexes {
-					if index == visibleIndex {
-						shown = true
-						break
+	host := ui.Column(c.Key("detail-episodes-host")).Height(1000).MinWidth(0).MinHeight(0).FillWidth()
+	gap := c.Theme().Space(2)
+	buttonStride := buttonWidth + gap
+	width, pageHeight := c.Size()
+	width -= defaultSidebarWidth + 100
+	if detailTwoColumn(width, pageHeight) {
+		width = max(380, (width-28)*0.52)
+	}
+	hostW := host.Bounds().W
+	if hostW > 0 && hostW < width {
+		width = hostW
+	}
+	columns := max(1, int(width/buttonStride))
+	rowCount := (len(episodes) + columns - 1) / columns
+	listState := &a.detailEpisodesList
+	listState.Key = func(row int) any { return fmt.Sprintf("episodes:%d:%d", columns, row) }
+	listState.Label = func(row int) string {
+		start := row*columns + 1
+		end := min((row+1)*columns, len(episodes))
+		if start == end {
+			return fmt.Sprintf("第%d集", start)
+		}
+		return fmt.Sprintf("第%d集至第%d集", start, end)
+	}
+	host.Children(func() {
+		ui.Column(c).MinWidth(0).FillWidth().Children(func() {
+			ui.List(c, listState, rowCount, func(row int) {
+				ui.Row(c.Key(fmt.Sprintf("episode-row:%d", row))).Height(buttonHeight).MinWidth(0).Clip().Gap(gap).Children(func() {
+					for index := row * columns; index < min(len(episodes), (row+1)*columns); index++ {
+						episode := episodes[index]
+						isActive := a.resume.ResumeEpisode == episode.EpisodeCount
+						epBtn := ui.Row(c.Key(fmt.Sprintf("ep-%d", episode.EpisodeCount))).
+							Width(buttonWidth).Height(buttonHeight).Radius(10).
+							AlignItems(ui.Center).Justify(ui.Center).
+							Role(ui.RoleButton).Label(fmt.Sprintf("第%d集", episode.EpisodeCount))
+						if isActive {
+							epBtn.LinearGradient(ui.LinearGradient{From: ui.Hex("#d91b42"), To: ui.Hex("#b81235"), Angle: 135}).
+								Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 6, 0, ui.RGBA(0, 0, 0, 0.35))
+						} else {
+							hoverBackground(epBtn, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
+							epBtn.Border(1, ui.RGBA(255, 255, 255, 0.08))
+						}
+						if epBtn.Clicked() {
+							go a.ChooseEpisode(episode.EpisodeCount)
+						}
+						epBtn.Children(func() {
+							txt := ui.Text(c, fmt.Sprintf("%d", episode.EpisodeCount)).FontSize(12)
+							if isActive {
+								txt.Bold().TextColor(ui.Hex("#ffffff"))
+							} else {
+								txt.TextColor(ui.RGBA(255, 255, 255, 0.85))
+							}
+						})
 					}
-				}
-				if !shown {
-					continue
-				}
-			}
-			ep := episode
-			isActive := a.resume.ResumeEpisode == ep.EpisodeCount
-			numStr := fmt.Sprintf("%d", ep.EpisodeCount)
-			epBtn := ui.Row(c.Key(fmt.Sprintf("ep-%d", ep.EpisodeCount))).
-				Width(buttonWidth).Height(buttonHeight).Radius(10).
-				AlignItems(ui.Center).Justify(ui.Center).
-				Role(ui.RoleButton).Label(fmt.Sprintf("第%d集", ep.EpisodeCount))
-			if isActive {
-				epBtn.LinearGradient(ui.LinearGradient{From: ui.Hex("#d91b42"), To: ui.Hex("#b81235"), Angle: 135}).
-					Border(1, ui.RGBA(255, 255, 255, 0.22)).Shadow(0, 2, 6, 0, ui.RGBA(0, 0, 0, 0.35))
-			} else {
-				hoverBackground(epBtn, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
-				epBtn.Border(1, ui.RGBA(255, 255, 255, 0.08))
-			}
-			if epBtn.Clicked() {
-				go a.ChooseEpisode(ep.EpisodeCount)
-			}
-			epBtn.Children(func() {
-				txt := ui.Text(c, numStr).FontSize(12)
-				if isActive {
-					txt.Bold().TextColor(ui.Hex("#ffffff"))
-					epBtn.ScrollIntoView()
-				} else {
-					txt.TextColor(ui.RGBA(255, 255, 255, 0.85))
-				}
+				})
 			})
-		}
-	})
-	if len(episodes) > detailEpisodeCollapsedCount(len(episodes)) {
-		toggleLabel := "展开全部"
-		if a.detailEpisodesExpanded {
-			toggleLabel = "收起"
-		}
-		toggle := ui.Row(c.Key("detail-episode-toggle")).Height(34).Padding(0, 14).Radius(8).
-			Border(1, ui.RGBA(255, 255, 255, 0.08)).
-			AlignItems(ui.Center).Justify(ui.Center).Gap(6).
-			Role(ui.RoleButton).Label(toggleLabel)
-		hoverBackground(toggle, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.12))
-		if toggle.Clicked() {
-			a.detailEpisodesExpanded = !a.detailEpisodesExpanded
-		}
-		toggle.Children(func() {
-			icon := ui.Icon(c, chevronIcon).Size(16, 16).TextColor(ui.RGBA(255, 255, 255, 0.72))
-			if a.detailEpisodesExpanded {
-				icon.Rotate(180)
-			}
-			ui.Text(c, toggleLabel).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.85))
 		})
-	}
+	})
 }
 
 func (a *App) detailSkeleton(c *ui.Context) {
