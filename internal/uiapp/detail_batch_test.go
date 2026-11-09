@@ -39,7 +39,8 @@ func TestDetailActorsUseSchemaIDOrRemoveButtonAffordance(t *testing.T) {
 	app.view = "detail"
 	app.detail = Detail{ID: "123456", Actors: testActorPage()}
 	tt := renderTesterAndAdvance(t, app, 1200, 800)
-	if _, ok := tt.AccessByRole(ui.RoleButton, "演员主页：可跳转演员"); !ok {
+	_, ok := tt.AccessByRole(ui.RoleButton, "演员主页：可跳转演员")
+	if !ok {
 		t.Fatalf("actor with schema ID missing button role")
 	}
 	if _, ok := tt.AccessByRole(ui.RoleButton, "演员主页：无ID演员"); ok {
@@ -47,6 +48,14 @@ func TestDetailActorsUseSchemaIDOrRemoveButtonAffordance(t *testing.T) {
 	}
 	if _, ok := tt.Find("无ID演员"); !ok {
 		t.Fatalf("non-clickable actor disappeared")
+	}
+	if err := tt.Click("演员主页：可跳转演员"); err != nil {
+		t.Fatalf("click clickable actor chip: %v", err)
+	}
+	wantActorID := "7407367786839676185"
+	waitFor(time.Second, func() bool { return app.view == "actor" && app.actor.ID == wantActorID })
+	if app.view != "actor" || app.actor.ID != wantActorID {
+		t.Fatalf("actor chip navigation mismatch: view=%q id=%q", app.view, app.actor.ID)
 	}
 }
 
@@ -118,7 +127,7 @@ func TestFavoriteDuringDetailLoadDoesNotRefetchContent(t *testing.T) {
 }
 
 func testActorPage() []ipc.ActorInfo {
-	return []ipc.ActorInfo{{Name: "可跳转演员", Role: "演员", UserID: "710000000000001"}, {Name: "无ID演员", Role: "演员"}}
+	return []ipc.ActorInfo{{Name: "可跳转演员", Role: "演员", ActorID: "7407367786839676185"}, {Name: "无ID演员", Role: "演员"}}
 }
 
 func renderTesterAndAdvance(t *testing.T, app *App, width, height int) *ui.Tester {

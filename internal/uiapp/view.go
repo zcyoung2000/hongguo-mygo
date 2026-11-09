@@ -1227,10 +1227,15 @@ func (a *App) renderDetail(c *ui.Context) {
 										Background(ui.RGBA(255, 255, 255, 0.06)).
 										Border(1, ui.RGBA(255, 255, 255, 0.08)).
 										AlignItems(ui.Center).Gap(6)
-									if act.UserID != "" {
+									actorID := act.UserID
+									if actorID == "" {
+										actorID = act.ActorID
+									}
+									if actorID != "" {
 										chip.Role(ui.RoleButton).Label("演员主页：" + act.Name).Focusable()
+										hoverBackground(chip, ui.RGBA(255, 255, 255, 0.06), ui.RGBA(255, 255, 255, 0.12))
 										if chip.Clicked() || chip.Shortcut(0, ui.KeyEnter) || chip.Shortcut(0, ui.KeySpace) {
-											go a.OpenActor(act.UserID)
+											go a.OpenActor(actorID)
 										}
 									}
 									chip.Children(func() {
