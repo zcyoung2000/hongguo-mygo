@@ -114,7 +114,7 @@ func TestSkeletonGeometryMatchesReadyContent(t *testing.T) {
 	tester := ui.NewTester(app.Render, 1600, 1000)
 	tester.Frame()
 	loadingBar, loadingBarOK := tester.Find("搜索短剧")
-	loadingHeader, loadingHeaderOK := tester.Find("短剧、角色和演员")
+	loadingHeader, loadingHeaderOK := tester.Find("搜索")
 	skeleton, skeletonOK := tester.AccessByRole(ui.RoleImage, "加载海报占位")
 	if !skeletonOK {
 		t.Fatal("search skeleton bone missing")

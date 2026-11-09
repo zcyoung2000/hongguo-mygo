@@ -37,7 +37,7 @@ func TestRenderLibraryShowsRealLocalEmptyState(t *testing.T) {
 	app.library.History = Library{Empty: true}
 	app.OpenView("history")
 	tt := ui.NewTester(app.Render, 1200, 800)
-	if !tt.HasText("暂无记录") || !tt.HasText("浏览和播放后才会形成真实记录") {
+	if !tt.HasText("暂无记录") || !tt.HasText("浏览和播放后才会形成记录") {
 		t.Fatalf("empty history texts = %v", tt.Texts())
 	}
 }

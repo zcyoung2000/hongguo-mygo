@@ -373,7 +373,7 @@ func settingsMeta(label, value string) (string, float32) {
 }
 
 func (a *App) renderSettings(c *ui.Context) {
-	pageHeader(c, "系统与账号设置", "管理登录状态、设备指纹与本地解密媒体缓存")
+	pageHeader(c, "设置")
 	state := a.settings
 	scroll := ui.Scroll(c.Key("settings-scroll")).Grow(1).Gap(22).Padding(0, 0, 18, 0)
 	scroll.Children(func() {
@@ -482,7 +482,7 @@ func (a *App) renderSettingsLogin(c *ui.Context, state Settings) {
 	ui.Column(c.Key("settings-login")).Gap(14).Children(func() {
 		ui.Column(c).Gap(2).Children(func() {
 			ui.Text(c, "账号凭据登录").FontSize(14).Bold().TextColor(ui.Hex("#ffffff"))
-			ui.Text(c, "通过 Cookie / Token 同步真实红果/番茄短剧账户数据").FontSize(12).TextColor(c.Theme().TextMuted)
+			ui.Text(c, "通过 Cookie / Token 同步红果/番茄短剧账户数据").FontSize(12).TextColor(c.Theme().TextMuted)
 		})
 		ui.Column(c).Gap(6).Children(func() {
 			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Children(func() {
