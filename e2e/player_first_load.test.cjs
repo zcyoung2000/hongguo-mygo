@@ -93,6 +93,7 @@ function node(id) {
     handlers: {},
     children: [],
     innerHTML: '',
+    closest: () => null,
     scrollTop: 0,
     clientHeight: 96,
     offsetHeight: 28,
@@ -161,6 +162,7 @@ function drawerHarness() {
     feedSlotForVideo: () => runtime.feedSlots[0],
     getFeedVideo: () => runtime.feedSlots[0].video,
     syncFeedScrollCapture: () => calls.push(['sync']),
+    schedulePlaybackVideoFit: () => {},
     renderFeedPlaylistDrawer: () => calls.push(['render']),
     scrollActiveDrawerEpisode: () => calls.push(['scroll']),
     showToast: message => calls.push(['toast', message])
