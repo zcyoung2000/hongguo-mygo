@@ -789,7 +789,6 @@ func (a *App) beginMutationLocked(key string) bool {
 		a.mutations = map[string]bool{}
 	}
 	a.mutations[key] = true
-	a.bumpDetailRevisionLocked(key)
 	a.invalidateLibraryReadsLocked()
 	return true
 }
