@@ -3158,6 +3158,8 @@ function toggleFeedPlaylistDrawer({ drawer, drawerToggle, drawerGrid, drawerCoun
   const willOpen = !drawer.classList.contains('open');
   drawer.classList.toggle('open', willOpen);
   drawerToggle?.setAttribute('aria-expanded', String(willOpen));
+  drawer.closest('.feed-container')?.classList.toggle('episode-drawer-open', willOpen);
+  schedulePlaybackVideoFit();
   syncFeedScrollCapture();
   if (!willOpen) return;
   const configuredTotal = Number(state.feed.totalEpisodes);
@@ -3178,6 +3180,8 @@ function closeFeedPlaylistDrawer({ drawer, drawerToggle }) {
   if (!drawer) return;
   drawer.classList.remove('open');
   drawerToggle?.setAttribute('aria-expanded', 'false');
+  drawer.closest('.feed-container')?.classList.remove('episode-drawer-open');
+  schedulePlaybackVideoFit();
   syncFeedScrollCapture();
 }
 

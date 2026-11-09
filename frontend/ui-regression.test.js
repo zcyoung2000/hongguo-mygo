@@ -130,6 +130,20 @@ assert.match(css, /\.feed-playlist-drawer\s+\.episodes-grid\.is-collapsed\s*\{[^
   assert.match(cssWithoutComments, /\.feed-controls\s*\{[^}]*left:\s*var\(--stage-chrome-inset/);
   assert.match(cssWithoutComments, /\.feed-controls\s*\{[^}]*bottom:\s*var\(--stage-chrome-inset/);
   assert.match(cssWithoutComments, /body\.comments-open\s+\.feed-stage\s*\{[^}]*inset:\s*0\s+var\(--comment-sheet-width\)/);
+  assert.match(
+    cssWithoutComments,
+    /\.feed-container\.episode-drawer-open\s+\.feed-stage\s*\{[^}]*inset:\s*0\s+var\(--player-drawer-width\)/
+  );
+  assert.match(
+    cssWithoutComments,
+    /\.feed-container\.episode-drawer-open\s+\.feed-rail\s*\{[^}]*right:\s*calc\(var\(--player-drawer-width\)\s*\+/,
+    'open episode drawer must reserve space for the vertical action rail'
+  );
+  assert.match(
+    cssWithoutComments,
+    /\.feed-container\.episode-drawer-open\s+\.feed-controls\s*\{[^}]*right:\s*calc\(var\(--player-drawer-width\)\s*\+/,
+    'open episode drawer must reserve space for the bottom control bar'
+  );
   assert.match(cssWithoutComments, /\.comment-sheet-overlay\s*\{[^}]*position:\s*fixed/);
   assert.match(cssWithoutComments, /\.comment-sheet\s*\{[^}]*display:\s*flex/);
   assert.match(cssWithoutComments, /\.comment-list\s*\{[^}]*overflow-y:\s*auto/);

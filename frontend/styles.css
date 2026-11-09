@@ -1081,6 +1081,24 @@ body.comments-open .feed-playlist-drawer {
   visibility: hidden;
 }
 
+.feed-container.episode-drawer-open .feed-stage {
+  inset: 0 var(--player-drawer-width) 0 0;
+  width: auto;
+  height: auto;
+}
+
+.feed-container.episode-drawer-open .feed-rail {
+  right: calc(var(--player-drawer-width) + var(--stage-chrome-inset, 18px));
+}
+
+.feed-container.episode-drawer-open .feed-controls {
+  right: calc(var(--player-drawer-width) + var(--stage-chrome-inset, 0px));
+}
+
+.feed-container.episode-drawer-open .cat-bar {
+  left: calc((100% - var(--player-drawer-width)) / 2) !important;
+}
+
 .feed-playlist-drawer .drawer-header {
   padding: 10px 12px;
   border-bottom: 1px solid var(--border-subtle);
