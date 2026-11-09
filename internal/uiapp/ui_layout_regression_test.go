@@ -2,7 +2,9 @@ package uiapp
 
 import (
 	"fmt"
+	"image/png"
 	"os"
+	"path/filepath"
 	"regexp"
 	"testing"
 	"time"
@@ -158,9 +160,15 @@ func TestDiscoverPageScrollAndCollapsedFilters(t *testing.T) {
 	if app.discoverPageScroll.MaxY <= 0 {
 		t.Fatal("discover grid does not contribute fixed page height")
 	}
-	if err := tt.Click("收起筛选"); err != nil {
-		t.Fatal("collapse control did not click")
+
+	// 初始态：展开，显示各筛选维度
+	if !tt.HasText("维度1") {
+		t.Fatal("initial discover should be expanded with filter rows")
 	}
+
+	// 1. 下滑越过阈值（> 48px）-> 自动收起
+	app.discoverPageScroll.Y = 60
+	tt.Frame()
 	tt.Advance(260 * time.Millisecond)
 	tt.Frame()
 	if !tt.HasText("筛选 · 真人剧") {
@@ -180,12 +188,57 @@ func TestDiscoverPageScrollAndCollapsedFilters(t *testing.T) {
 	if !secondOK || !thirdOK || secondCard.Y+secondCard.H > collapsedPage.Y+collapsedPage.H || thirdCard.Y > collapsedPage.Y+collapsedPage.H {
 		t.Fatalf("collapsed discover does not show two full rows: second=%+v third=%+v page=%+v", secondCard, thirdCard, collapsedPage)
 	}
-	if err := tt.Click("展开筛选"); err == nil {
-		tt.Advance(260 * time.Millisecond)
-		tt.Frame()
-		if !tt.HasText("维度1") {
-			t.Fatal("expanded filter rows did not return")
+
+	// 2. 中段滚动防抖（4px < Y <= 48px，例如 20px）-> 保持当前收起态，不翻转
+	app.discoverPageScroll.Y = 20
+	tt.Frame()
+	tt.Advance(260 * time.Millisecond)
+	tt.Frame()
+	if tt.HasText("维度1") {
+		t.Fatal("intermediate scroll jitter: filters should stay collapsed at y=20")
+	}
+	if !tt.HasText("筛选 · 真人剧") {
+		t.Fatal("intermediate scroll should keep collapsed summary")
+	}
+
+	// 3. 回到顶部（Y <= 4px，例如 2px）-> 自动展开
+	app.discoverPageScroll.Y = 2
+	tt.Frame()
+	tt.Advance(260 * time.Millisecond)
+	tt.Frame()
+	if !tt.HasText("维度1") {
+		t.Fatal("scrolling to top (y<=4) did not restore expanded filter rows")
+	}
+
+	// 4. 从展开态进入中段（例如 30px，未超过 48px）-> 保持展开态，不翻转
+	app.discoverPageScroll.Y = 30
+	tt.Frame()
+	tt.Advance(260 * time.Millisecond)
+	tt.Frame()
+	if !tt.HasText("维度1") {
+		t.Fatal("intermediate scroll jitter: filters should stay expanded at y=30")
+	}
+
+	// 导出截图到 MYGUO_DISCOVER_SHOT_DIR 或 /Users/Henry/hg_shots_discover/
+	shotDir := os.Getenv("MYGUO_DISCOVER_SHOT_DIR")
+	if shotDir == "" {
+		shotDir = "/Users/Henry/hg_shots_discover"
+	}
+	if err := os.MkdirAll(shotDir, 0755); err == nil {
+		saveShot := func(name string, y float32) {
+			app.discoverPageScroll.Y = y
+			tt.Frame()
+			tt.Advance(260 * time.Millisecond)
+			tt.Frame()
+			if file, err := os.Create(filepath.Join(shotDir, name)); err == nil {
+				defer file.Close()
+				_ = png.Encode(file, tt.Image())
+			}
 		}
+		// 展开态截图（y = 0）
+		saveShot("discover-expanded.png", 0)
+		// 收起态截图（y = 60，越过收起阈值且展示至少2整行卡片）
+		saveShot("discover-collapsed.png", 60)
 	}
 }
 

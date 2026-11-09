@@ -375,6 +375,7 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 
 func (a *App) renderCatalog(c *ui.Context) {
 	catalog := a.catalog
+	a.updateDiscoverFiltersOnScroll(a.discoverPageScroll.Y)
 	a.maybeLoadMore(a.discoverPageScroll.Y, a.discoverPageScroll.MaxY, catalog.HasMore, catalog.Loading || catalog.LoadingMore, a.LoadMoreCatalog)
 
 	a.renderCatalogHeader(c)
@@ -453,6 +454,19 @@ func (a *App) catalogFilterSummary(catalog Catalog) string {
 	return "筛选 · " + strings.Join(selected, " · ")
 }
 
+const (
+	discoverFilterCollapseThreshold float32 = 48
+	discoverFilterExpandThreshold   float32 = 4
+)
+
+func (a *App) updateDiscoverFiltersOnScroll(y float32) {
+	if y > discoverFilterCollapseThreshold {
+		a.discoverFilterState = discoverCollapsed
+	} else if y <= discoverFilterExpandThreshold {
+		a.discoverFilterState = discoverExpanded
+	}
+}
+
 func (a *App) toggleCatalogFilters() {
 	if a.discoverFilterState == discoverExpanded {
 		a.discoverFilterState = discoverCollapsed
@@ -463,33 +477,11 @@ func (a *App) toggleCatalogFilters() {
 }
 
 func (a *App) renderCatalogFilterHeader(c *ui.Context, catalog Catalog) {
-	collapsed := a.discoverFilterState == discoverCollapsed
-	label := "收起"
-	if collapsed {
-		label = "展开"
-	}
 	summary := a.catalogFilterSummary(catalog)
 	header := ui.Row(c.Key("catalog-filter-header")).Height(34).Padding(0, 10).Radius(8).
-		Role(ui.RoleButton).Label(label + "筛选").Focusable().
 		AlignItems(ui.Center).Gap(8).Transition(layoutTransition)
-	hoverBackground(header, ui.RGBA(255, 255, 255, 0.06), ui.RGBA(255, 255, 255, 0.12))
-	if header.Clicked() || header.Shortcut(0, ui.KeyEnter) || header.Shortcut(0, ui.KeySpace) {
-		a.toggleCatalogFilters()
-	}
 	header.Children(func() {
 		ui.Text(c, summary).FontSize(13).Bold().TextColor(ui.RGBA(255, 255, 255, 0.9))
-		labelColor := ui.RGBA(255, 255, 255, 0.85)
-		toggle := ui.Row(c.Key("catalog-filter-toggle")).Padding(4, 10).Radius(12).
-			AlignItems(ui.Center).Transition(selectionTransition)
-		if collapsed {
-			toggle.Border(1, ui.RGBA(255, 255, 255, 0.16))
-		} else {
-			toggle.Background(ui.RGBA(217, 27, 66, 255))
-			labelColor = ui.RGB(255, 255, 255)
-		}
-		toggle.Children(func() {
-			ui.Text(c, label).FontSize(12).TextColor(labelColor)
-		})
 	})
 }
 
