@@ -57,11 +57,13 @@ func (a *App) LoadSettings() {
 
 func (a *App) finishSettingsLoad(version uint64, profile ipc.UserProfile, cacheSize int64, device map[string]string, legacy map[string]any, err error) {
 	a.mu.Lock()
+	defer a.mu.Unlock()
+	success := a.settings.Success
 	a.finishSettingsLoadLocked(version, profile, cacheSize, device, legacy, err)
+	a.settings.Success = success
 }
 
 func (a *App) finishSettingsLoadLocked(version uint64, profile ipc.UserProfile, cacheSize int64, device map[string]string, legacy map[string]any, err error) {
-	defer a.mu.Unlock()
 	if version != uint64(a.generation) {
 		return
 	}
@@ -295,15 +297,36 @@ func (a *App) beginSettingsMutationLocked(key string) bool {
 func (a *App) runSettingsMutation(key string, action func(context.Context) (string, error)) {
 	ctx, cancel := context.WithTimeout(context.Background(), serviceTimeout)
 	defer cancel()
-	_, err := action(ctx)
+	message, err := action(ctx)
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	delete(a.settingsMutations, key)
+	a.settings.Success = ""
 	a.settings.Error = settingsError(err)
 	if err != nil {
+		a.invalidate()
+		a.mu.Unlock()
 		return
 	}
+	a.settings.Success = message
+	a.settings.Loading = true
+	a.settings.Error = ""
 	a.invalidate()
+	a.mu.Unlock()
+	provider := a.settingsProvider()
+	a.mu.Lock()
+	if provider == nil {
+		a.settings.Loading = false
+		a.settings.Error = settingsError(errSettingsUnavailable)
+		a.invalidate()
+		return
+	}
+	a.mu.Unlock()
+	profile, profileErr := provider.GetProfile(ctx)
+	cacheSize, cacheErr := provider.GetCacheSize(ctx)
+	device, deviceErr := provider.GetDeviceInfo(ctx)
+	legacy, legacyErr := provider.CheckExistingAccount(ctx)
+	err = firstError(profileErr, cacheErr, deviceErr, legacyErr)
+	a.finishSettingsLoad(0, profile, cacheSize, device, legacy, err)
 }
 
 func (a *App) settingsButton(c *ui.Context, key, label, variant string, action func()) {
@@ -449,6 +472,12 @@ func (a *App) renderSettings(c *ui.Context) {
 				ui.Spinner(c)
 				ui.Text(c, "正在加载设置...").TextColor(c.Theme().TextMuted)
 			})
+		}
+		if state.Error != "" {
+			ui.Text(c, state.Error).FontSize(12).TextColor(ui.Hex("#ff8f98"))
+		}
+		if state.Success != "" {
+			ui.Text(c, state.Success).FontSize(12).TextColor(ui.Hex("#4ade80"))
 		}
 	})
 }

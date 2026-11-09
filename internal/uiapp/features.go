@@ -548,17 +548,18 @@ func (a *App) RemoveLibraryItem(tab LibraryTab, item CatalogItem) {
 	if provider == nil {
 		provider = a.service
 	}
+	var enabled bool
 	var err error
 	switch tab {
 	case libraryFavorites:
-		_, err = provider.ToggleFavorite(ctx, item.ID, item.Title, item.CoverURL, item.Description, item.EpisodeCount)
+		enabled, err = provider.ToggleFavorite(ctx, item.ID, item.Title, item.CoverURL, item.Description, item.EpisodeCount)
 	case libraryLikes:
-		_, err = provider.ToggleLike(ctx, item.ID, item.EpisodeID, item.Title, item.CoverURL, item.ResumeEpisode)
+		enabled, err = provider.ToggleLike(ctx, item.ID, item.EpisodeID, item.Title, item.CoverURL, item.ResumeEpisode)
 	case libraryReservations:
 		if confirm != nil && !confirm("确认取消预约《"+item.Title+"》？") {
 			return
 		}
-		_, err = provider.ToggleReservation(ctx, item.ID, item.Title, item.CoverURL, item.Description, item.PublishAt)
+		enabled, err = provider.ToggleReservation(ctx, item.ID, item.Title, item.CoverURL, item.Description, item.PublishAt)
 	}
 	a.mu.Lock()
 	if err != nil {
@@ -566,17 +567,26 @@ func (a *App) RemoveLibraryItem(tab LibraryTab, item CatalogItem) {
 		a.mu.Unlock()
 		return
 	}
-	if tab == libraryReservations {
-		a.applyReservationLocked(item.ID, false)
-	}
-	if tab == libraryFavorites && a.detail.ID == item.ID {
-		a.detail.Favorite = false
+	switch tab {
+	case libraryFavorites:
+		if a.detail.ID == item.ID {
+			a.detail.Favorite = enabled
+		}
+	case libraryReservations:
+		a.applyReservationLocked(item.ID, enabled)
 	}
 	a.libraryGeneration[tab]++
 	library := a.libraryAt(tab)
 	rows := make([]CatalogItem, 0, len(library.Items))
 	for _, row := range library.Items {
 		if row.ID == item.ID && (tab != libraryLikes || row.EpisodeID == item.EpisodeID) {
+			if enabled {
+				if tab == libraryReservations {
+					row.Reserved, row.Upcoming = true, a.reservationsPending
+				}
+				rows = append(rows, row)
+				continue
+			}
 			continue
 		}
 		rows = append(rows, row)
