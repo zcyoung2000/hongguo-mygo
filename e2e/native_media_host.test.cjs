@@ -18,6 +18,14 @@ function host() {
     },
     closePlayer() { calls.push(['close']); context.window.nativeMediaClosed?.(); },
     enterSeriesPlayer(id, episode) { calls.push(['play', id, episode]); return Promise.resolve(); },
+    ensureRecommendColdStart(channel) {
+      calls.push(['cold-start', channel]);
+      if (channel && channel !== context.state.feed.channel) {
+        context.state.feed.channel = channel;
+        context.state.feed.items = [];
+      }
+      return Promise.resolve();
+    },
     getFeedVideo() { return null; },
     loadSeriesDetail(id) { calls.push(['detail-load', id]); },
     handleMediaCommand(payload) { calls.push(['command', payload.command, payload.position]); },
@@ -66,9 +74,13 @@ test('media host keeps runtime state and resume bridge required by playback', ()
 test('native scenes stop outgoing media before selecting feed or settings', () => {
   const h = host();
   h.send({event:'recommend'});
-  assert.deepEqual(h.calls.map(call=>call[0]+':'+(call[1]||'')), ['view:native-idle','view:recommend']);
+  assert.deepEqual(
+    h.calls.filter(call => call[0] === 'view').map(call=>call[0]+':'+(call[1]||'')),
+    ['view:native-idle','view:recommend']
+  );
   h.send({event:'settings'});
-  assert.deepEqual(h.calls.slice(3).map(call=>call[0]+':'+(call[1]||'')), ['view:settings']);
+  assert.equal(h.calls.at(-1)[0], 'view');
+  assert.equal(h.calls.at(-1)[1], 'settings');
   assert.equal(h.calls.some(call=>call[0]==='NativeShell.Closed'), false, 'internal transitions must not close native detail');
 });
 test('settings remains a hosted scene and returns to a replaced feed', () => {
@@ -77,7 +89,10 @@ test('settings remains a hosted scene and returns to a replaced feed', () => {
   assert.deepEqual(h.calls.map(call=>call[0]+':'+(call[1]||'')), ['view:native-idle','view:settings']);
   assert.equal(h.context.state.currentView, 'settings');
   h.send({event:'recommend', channel:'真人剧'});
-  assert.deepEqual(h.calls.slice(2).map(call=>call[0]+':'+(call[1]||'')), ['view:native-idle','view:recommend']);
+  assert.deepEqual(
+    h.calls.filter(call => call[0] === 'view').map(call=>call[0]+':'+(call[1]||'')),
+    ['view:native-idle', 'view:settings', 'view:native-idle', 'view:recommend']
+  );
   assert.equal(h.context.state.feed.channel, '真人剧');
   assert.equal(h.context.state.currentView, 'recommend');
 });

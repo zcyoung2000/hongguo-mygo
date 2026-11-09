@@ -29,6 +29,7 @@ function harness() {
     syncActiveFeedSlot: () => {}, assessFeedMediaCapabilities: () => {},
     scheduleFeedFrameMetric: () => {}, scheduleFeedAutoplayRetry: () => {},
     scheduleFeedWarmup: () => {}, clearFeedFailureHint: () => {},
+    scheduleFeedFirstFrameWatchdog: () => {}, clearFeedSourceRetry: () => {},
     ensureFeedItemsAhead() {}, loadFeedDramaMetadata: () => Promise.resolve(true),
     recordFeedPlaybackMetric() {},
     recordFeedDiagnostic() {}, updateFeedPlayIndicator() {},
@@ -48,7 +49,7 @@ function harness() {
     'primeFeedSlotFirstFrame', 'scheduleFeedFrameMetric',
     'requestFeedDramaMetadata', 'playFeedIndex',
     'prefetchFeedPlaybackInfo', 'assignFeedMediaSource', 'hasWarmFeedHLS', 'prepareFeedSlot', 'beginFeedPlayback',
-    'ensureFeedSource',
+    'ensureFeedSource', 'scheduleFeedSourceRetry',
     'playbackBufferedRange', 'updatePlaybackBufferIndicator'
   ]) {
     const index = functions.findIndex(match => match[1] === name);
@@ -409,6 +410,8 @@ test('a failed new source retries against the newly allocated slot generation', 
   c.setTimeout = callback => { timers.push(callback); return timers.length; };
   let calls = 0;
   c.apiCall = () => { calls++; return Promise.resolve(null); };
+  c.reportFeedFailure = () => {};
+  c.feedPlaybackGeneration = 0;
   const slot = videoSlot();
   c.feedSlots = [slot];
   c.ensureFeedSource(slot, 0);

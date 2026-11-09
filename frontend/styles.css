@@ -1172,6 +1172,31 @@ body.comments-open .feed-playlist-drawer {
   overflow-y: auto;
 }
 
+.feed-playlist-drawer .drawer-empty-state {
+  grid-column: 1 / -1;
+  padding: 28px 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* A final load failure must remain visibly actionable rather than become an
+   indefinitely black first slot. */
+.feed-stage.is-load-failed #feed-loader {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  color: #ff5c75;
+}
+
+.feed-stage.is-load-failed #feed-loader::after {
+  content: '加载失败，点击重试';
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 /* Floating Feedback Hint Toast */
 .feed-hint-toast {
   position: absolute;

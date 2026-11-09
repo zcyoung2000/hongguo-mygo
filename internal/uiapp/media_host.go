@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo"
 	"myguo/internal/native"
@@ -112,6 +113,13 @@ func (h *MediaHost) drain() {
 		}
 		if err != nil {
 			log.Printf("[media-host] command failed: %v", err)
+			h.mu.Lock()
+			if h.ready {
+				h.queue = append([]map[string]any{payload}, h.queue...)
+				time.AfterFunc(200*time.Millisecond, func() { h.startLocked() })
+			}
+			h.mu.Unlock()
+			return
 		}
 	}
 }
