@@ -649,6 +649,14 @@ func (a *App) catalogCard(c *ui.Context, item CatalogItem) {
 }
 
 func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
+	a.catalogCardContent(c, item, width)
+}
+
+func (a *App) fixedHeightCatalogCardSized(c *ui.Context, item CatalogItem, width, rowHeight float32) {
+	a.catalogCardContent(c, item, width).Height(rowHeight)
+}
+
+func (a *App) catalogCardContent(c *ui.Context, item CatalogItem, width float32) ui.Element {
 	t := c.Theme()
 	card := ui.Column(c.Key(item.ID + "|" + item.EpisodeID)).Role(ui.RoleButton).Label(item.Title).Focusable().
 		Width(width).MinWidth(width).MaxWidth(width).Gap(6)
@@ -797,6 +805,7 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 			}
 		}
 	})
+	return card
 }
 
 func (a *App) renderSearchBar(c *ui.Context) {

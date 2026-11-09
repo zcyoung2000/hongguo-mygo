@@ -19,7 +19,7 @@ func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scr
 	cardWidth := max(150, (width-float32(columns-1)*gap)/float32(columns)-4)
 	configureDramaGrid(state, items)
 	textHeight := a.collectionRowHeight(c, cardWidth, items)
-	height := textHeight + cardWidth*posterAspectRatio + extra
+	height := textHeight + cardWidth*posterAspectRatio + cardGridVerticalGap + extra
 	host.Children(func() {
 		c.SetTheme(&gridTheme)
 		defer c.SetTheme(&baseTheme)
@@ -27,7 +27,7 @@ func (a *App) sharedCardGrid(c *ui.Context, key string, state *ui.GridState, scr
 			c.SetTheme(&baseTheme)
 			defer c.SetTheme(&gridTheme)
 			item := items[index]
-			a.catalogCardSized(c, item, cardWidth)
+			a.fixedHeightCatalogCardSized(c, item, cardWidth, height)
 			if after != nil {
 				after(item)
 			}

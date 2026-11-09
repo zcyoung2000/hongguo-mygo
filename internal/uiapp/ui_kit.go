@@ -13,6 +13,7 @@ const (
 	posterAspectRatio    float32 = float32(4) / float32(3)
 	dramaMinCardWidth    float32 = 160
 	dramaCardGap         float32 = 14
+	cardGridVerticalGap  float32 = 10
 	catalogFooterHeight  float32 = 40
 	pageContentTopSpace  float32 = 14
 	pageContentBottomPad float32 = 12
