@@ -405,18 +405,74 @@ func (a *App) renderCatalog(c *ui.Context) {
 			a.catalogGrid = &ui.GridState{}
 		}
 		width := a.gridContentWidth(c)
-		displayItems := catalog.Items
-		if len(displayItems) > 120 {
-			displayItems = displayItems[:120]
+		columns := dramaColumns(width)
+		cardWidth := dramaCardWidth(width)
+		sampleItems := catalog.Items
+		if len(sampleItems) > 60 {
+			sampleItems = sampleItems[:60]
 		}
+		rowHeight := a.collectionRowHeight(c, cardWidth, sampleItems) + cardWidth*posterAspectRatio
+		totalRows := (len(catalog.Items) + columns - 1) / columns
+
+		filterOffset := float32(420)
+		if a.discoverFilterState == discoverCollapsed {
+			filterOffset = 54
+		}
+		gridTopOffset := filterOffset + 10
+
+		relY := a.discoverPageScroll.Y - gridTopOffset
+		if relY < 0 {
+			relY = 0
+		}
+		startRow := int(relY / rowHeight)
+		if startRow > 2 {
+			startRow -= 2
+		} else {
+			startRow = 0
+		}
+		if startRow >= totalRows {
+			startRow = max(0, totalRows-1)
+		}
+
+		_, winH := c.Size()
+		if winH <= 0 {
+			winH = 800
+		}
+		visibleRows := int((winH + rowHeight - 1) / rowHeight)
+		endRow := startRow + visibleRows + 4
+		if endRow > totalRows {
+			endRow = totalRows
+		}
+
+		startIdx := startRow * columns
+		if startIdx > len(catalog.Items) {
+			startIdx = len(catalog.Items)
+		}
+		endIdx := endRow * columns
+		if endIdx > len(catalog.Items) {
+			endIdx = len(catalog.Items)
+		}
+		displayItems := catalog.Items[startIdx:endIdx]
+
+		topSpacerHeight := float32(startRow) * rowHeight
+		bottomSpacerHeight := float32(totalRows-endRow) * rowHeight
+
+		if topSpacerHeight > 0 {
+			ui.Box(c.Key("catalog-grid-top-spacer")).Height(topSpacerHeight)
+		}
+		gridRows := endRow - startRow
+		gridHeight := max(1, float32(gridRows)*rowHeight+catalogFooterHeight)
 		grid := a.cardGrid(c, "catalog-grid", a.catalogGrid, nil, displayItems, catalogFooterHeight, nil)
-		grid.Height(a.catalogSectionHeight(c, catalog.Items, width))
+		grid.Height(gridHeight)
 		grid.Transition(ui.ElementTransition{
 			Duration: 260 * time.Millisecond,
 			Ease:     ui.CubicBezier(0.22, 1, 0.36, 1),
 			Position: true,
 			Size:     true,
 		})
+		if bottomSpacerHeight > 0 {
+			ui.Box(c.Key("catalog-grid-bottom-spacer")).Height(bottomSpacerHeight)
+		}
 		a.scrollLoading(c, catalog.LoadingMore)
 	})
 }

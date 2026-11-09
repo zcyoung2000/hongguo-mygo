@@ -219,8 +219,11 @@ func TestDiscoverPageScrollAndCollapsedFilters(t *testing.T) {
 		t.Fatal("intermediate scroll jitter: filters should stay expanded at y=30")
 	}
 
-	// 导出截图到 MYGUO_DISCOVER_SHOT_DIR 或 /Users/Henry/hg_shots_discover/
-	shotDir := os.Getenv("MYGUO_DISCOVER_SHOT_DIR")
+	// 导出截图到 MYGUO_NATIVE_SCREENSHOT_DIR, MYGUO_DISCOVER_SHOT_DIR 或 /Users/Henry/hg_shots_discover/
+	shotDir := os.Getenv("MYGUO_NATIVE_SCREENSHOT_DIR")
+	if shotDir == "" {
+		shotDir = os.Getenv("MYGUO_DISCOVER_SHOT_DIR")
+	}
 	if shotDir == "" {
 		shotDir = "/Users/Henry/hg_shots_discover"
 	}

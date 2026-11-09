@@ -294,6 +294,120 @@ func TestDiscoverFiveThousandItemsStayVirtualized(t *testing.T) {
 	}
 }
 
+func TestDiscoverDeepScrollVirtualizedWindow(t *testing.T) {
+	items := make([]CatalogItem, 5000)
+	for index := range items {
+		items[index] = CatalogItem{
+			ID: fmt.Sprintf("catalog-%d", index), EpisodeID: "1",
+			Title: fmt.Sprintf("五千米样本 %d", index), CoverURL: fmt.Sprintf("perf:%d", index),
+		}
+	}
+	items[0].Title = "响应收敛首项"
+	targetDeepIndex := 600
+	items[targetDeepIndex].Title = "深处定位剧集 600"
+	targetLastIndex := 4999
+	items[targetLastIndex].Title = "触底终项剧集 4999"
+
+	app := NewTestApp()
+	app.catalog.Items = items
+	app.view = "discover"
+	tester := ui.NewTester(app.Render, 1200, 800)
+	tester.Frame()
+
+	// 1. 顶部验证：首批条目可见，深处与底端条目不可见，节点数有界
+	if !tester.HasText("响应收敛首项") {
+		t.Fatal("virtual catalog omitted first visible item at top")
+	}
+	if tester.HasText("深处定位剧集 600") {
+		t.Fatal("deep item unexpectedly rendered at top scroll position")
+	}
+	if tester.HasText("触底终项剧集 4999") {
+		t.Fatal("last item unexpectedly rendered at top scroll position")
+	}
+	textsTop := tester.Texts()
+	visibleTop := 0
+	for _, text := range textsTop {
+		if len(text) >= len("五千米样本") && text[:len("五千米样本")] == "五千米样本" {
+			visibleTop++
+		}
+	}
+	if visibleTop == 0 || visibleTop >= 1000 {
+		t.Fatalf("top viewport item count is not bounded: %d", visibleTop)
+	}
+
+	// 2. 深度滚动到第 600 条附近（根据 1200 宽度的网格几何）：深处条目构建并显示，首项不渲染，节点数依然严格有界
+	// 1200 宽度下 5 列，每行 263.2，第 600 条在第 120 行左右 (120 * 263.2 ≈ 31584)
+	app.discoverPageScroll.Y = 31600
+	tester.Frame()
+	tester.Advance(260 * time.Millisecond)
+	tester.Frame()
+
+	if !tester.HasText("深处定位剧集 600") {
+		t.Fatalf("deep item 600 missing after scrolling to Y=31600: texts sample=%v", tester.Texts()[:min(10, len(tester.Texts()))])
+	}
+	if tester.HasText("响应收敛首项") {
+		t.Fatal("first item unexpectedly retained in deep scrolled viewport")
+	}
+	textsDeep := tester.Texts()
+	visibleDeep := 0
+	for _, text := range textsDeep {
+		if len(text) >= len("五千米样本") && text[:len("五千米样本")] == "五千米样本" {
+			visibleDeep++
+		}
+	}
+	if visibleDeep == 0 || visibleDeep >= 1000 {
+		t.Fatalf("deep viewport item count is not bounded: %d", visibleDeep)
+	}
+
+	// 3. 滚动到接近底部（MaxY 附近）
+	if app.discoverPageScroll.MaxY > 0 {
+		app.discoverPageScroll.Y = app.discoverPageScroll.MaxY
+		tester.Frame()
+		tester.Advance(260 * time.Millisecond)
+		tester.Frame()
+
+		if !tester.HasText("触底终项剧集 4999") {
+			t.Fatal("last item missing when scrolled to bottom")
+		}
+		if tester.HasText("响应收敛首项") || tester.HasText("深处定位剧集 600") {
+			t.Fatal("top or intermediate items unexpectedly retained at bottom scroll")
+		}
+		textsBottom := tester.Texts()
+		visibleBottom := 0
+		for _, text := range textsBottom {
+			if len(text) >= len("五千米样本") && text[:len("五千米样本")] == "五千米样本" {
+				visibleBottom++
+			}
+		}
+		if visibleBottom == 0 || visibleBottom >= 1000 {
+			t.Fatalf("bottom viewport item count is not bounded: %d", visibleBottom)
+		}
+	}
+
+	// 4. 回到顶部：首批条目正常恢复显示，深处条目消失
+	app.discoverPageScroll.Y = 0
+	tester.Frame()
+	tester.Advance(260 * time.Millisecond)
+	tester.Frame()
+
+	if !tester.HasText("响应收敛首项") {
+		t.Fatal("first visible item did not reappear after scrolling back to top")
+	}
+	if tester.HasText("深处定位剧集 600") {
+		t.Fatal("deep item remained visible after scrolling back to top")
+	}
+	textsBackTop := tester.Texts()
+	visibleBackTop := 0
+	for _, text := range textsBackTop {
+		if len(text) >= len("五千米样本") && text[:len("五千米样本")] == "五千米样本" {
+			visibleBackTop++
+		}
+	}
+	if visibleBackTop == 0 || visibleBackTop >= 1000 {
+		t.Fatalf("back-to-top viewport item count is not bounded: %d", visibleBackTop)
+	}
+}
+
 func TestAllCatalogCollectionsUseSharedVirtualPaths(t *testing.T) {
 	source := readFile(t, "view.go") + readFile(t, "feature_views.go")
 	required := map[string][]string{

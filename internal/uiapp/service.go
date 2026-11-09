@@ -507,7 +507,12 @@ func (a *App) ChooseEpisode(num int) {
 	a.playLocked(num, -1)
 }
 func (a *App) OpenRelated(seriesID string) { a.OpenDetail(seriesID) }
-func (a *App) LoadMoreCatalog()            { a.loadCatalog(true) }
+func (a *App) LoadMoreCatalog() {
+	if a.testMode && a.detailProvider() == nil {
+		return
+	}
+	a.loadCatalog(true)
+}
 func (a *App) LoadMoreSearch() bool        { return false }
 func (a *App) RefreshLibrary(tab LibraryTab) {
 	if !a.testMode {
@@ -549,8 +554,12 @@ func (a *App) loadCatalog(more bool) {
 		a.mu.Unlock()
 		return
 	}
-	a.catalog.Loading, a.catalog.LoadingMore = !more, more
 	genre, generation, provider := a.catalogGenre(), a.catalogGeneration, a.detailProvider()
+	if provider == nil {
+		a.mu.Unlock()
+		return
+	}
+	a.catalog.Loading, a.catalog.LoadingMore = !more, more
 	values := catalogValues(genre, a.catalog.Filters, a.catalog.Selection)
 	cursor := ""
 	if more {
@@ -648,7 +657,10 @@ func (a *App) detailProvider() detailProvider {
 	if a.detailSource != nil {
 		return a.detailSource
 	}
-	return a.service
+	if a.service != nil {
+		return a.service
+	}
+	return nil
 }
 func (a *App) libraryAt(tab LibraryTab) *Library {
 	switch tab {
