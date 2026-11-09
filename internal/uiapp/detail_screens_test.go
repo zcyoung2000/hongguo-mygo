@@ -19,7 +19,7 @@ func TestExportDetailLoadingAndReadyScreens(t *testing.T) {
 		detail Detail
 	}{
 		{"detail-loading", Detail{Loading: true}},
-		{"detail-ready", detailWideFixture()},
+		{"detail-ready", longDetailEpisodesFixture(812)},
 	}
 	for _, state := range states {
 		for _, width := range []int{1200, 1600} {

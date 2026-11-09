@@ -96,7 +96,6 @@ func TestHoverFeedbackCoversClickableNativeSurfaces(t *testing.T) {
 		`hoverBackground[(]playBtn,`,
 		`hoverBackground[(]backBtn,`,
 		`hoverBackground[(]epBtn,`,
-		`hoverBackground[(]toggle,`,
 	} {
 		if !containsRegexp(source, pattern) {
 			t.Fatalf("hover feedback pattern missing: %s", pattern)

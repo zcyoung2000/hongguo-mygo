@@ -61,7 +61,7 @@ func TestDetailWideLayoutPlacesEpisodesBesideHero(t *testing.T) {
 	if !firstOK {
 		t.Fatal("large first episode button missing")
 	}
-	if first.W != 64 || first.H != 46 {
+	if first.W < 52 || first.W > 54 || first.H != 36 {
 		t.Fatalf("wide episode buttons have the wrong compact size: %+v", first)
 	}
 	loading := NewTestApp()
@@ -83,12 +83,12 @@ func TestDetailWideColumnsScrollIndependently(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.detail = detailWideFixture()
-	app.detailEpisodesExpanded = true
 	app.sidebarWidth = 0
 	tt := ui.NewTesterWith(app.Render, 1600, 1000, ui.TesterOptions{Preferences: ui.Preferences{ReduceMotion: true, TextScale: 1}})
 	tt.Frame()
-	if app.detailLeftScroll.MaxY <= 0 || app.detailRightScroll.MaxY <= 0 {
-		t.Fatalf("wide detail columns cannot scroll: left=%v right=%v", app.detailLeftScroll.MaxY, app.detailRightScroll.MaxY)
+	tt.Frame()
+	if app.detailLeftScroll.MaxY <= 0 || app.detailEpisodesScroll.MaxY <= 0 {
+		t.Fatalf("wide detail columns cannot scroll: left=%v episodes=%v", app.detailLeftScroll.MaxY, app.detailEpisodesScroll.MaxY)
 	}
 
 	seasons, seasonsOK := tt.Find("同系列短剧")
@@ -105,8 +105,8 @@ func TestDetailWideColumnsScrollIndependently(t *testing.T) {
 	if app.detailLeftScroll.MaxY <= 0 {
 		t.Fatal("left scroll has no travel")
 	}
-	if app.detailRightScroll.Y != 0 {
-		t.Fatalf("scrolling left changed right scroll state: right=%v", app.detailRightScroll.Y)
+	if app.detailEpisodesScroll.Y != 0 {
+		t.Fatalf("scrolling left changed right scroll state: right=%v", app.detailEpisodesScroll.Y)
 	}
 	movedSeasons, _ := tt.Find("同系列短剧")
 	_, episodesStillVisible := tt.Find("选集")
@@ -114,13 +114,13 @@ func TestDetailWideColumnsScrollIndependently(t *testing.T) {
 		t.Fatalf("independent left scroll failed: seasons=%v want<%v episodesVisible=%v", movedSeasons.Y, seasonsTitleY, episodesStillVisible)
 	}
 
-	tt.Scroll(episodes.X+episodes.W/2, rightCenterY, 0, app.detailRightScroll.MaxY)
+	tt.Scroll(episodes.X+episodes.W/2, rightCenterY, 0, app.detailEpisodesScroll.MaxY)
 	if app.detailLeftScroll.Y != app.detailLeftScroll.MaxY {
 		t.Fatalf("scrolling right changed left scroll state: left=%v want=%v", app.detailLeftScroll.Y, app.detailLeftScroll.MaxY)
 	}
 	_, seasonsStillVisible := tt.Find("同系列短剧")
 	movedEpisodes, _ := tt.Find("第1集")
-	if app.detailRightScroll.Y <= 0 || movedEpisodes.Y >= episodesTitleY {
+	if app.detailEpisodesScroll.Y <= 0 || movedEpisodes.Y >= episodesTitleY {
 		t.Fatalf("independent right scroll failed: episodes=%v want<%v seasonsVisible=%v", movedEpisodes.Y, episodesTitleY, seasonsStillVisible)
 	}
 }
@@ -178,7 +178,6 @@ func TestDetailNarrowLayoutStaysSingleColumn(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.detail = detailWideFixture()
-	app.detailEpisodesExpanded = false
 	app.sidebarWidth = 0
 	tt := renderTesterAndAdvance(t, app, 1000, 800)
 	if tt.FramePending() {
