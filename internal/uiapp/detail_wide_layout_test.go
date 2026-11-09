@@ -49,6 +49,9 @@ func TestDetailWideLayoutPlacesEpisodesBesideHero(t *testing.T) {
 	if first.W < 80 || first.H < 42 {
 		t.Fatalf("wide episode buttons too small: %+v", first)
 	}
+	if tt.HasText("同系列短剧") || tt.HasText("同一剧本改编") {
+		t.Fatal("wide detail right column must contain only episodes")
+	}
 	loading := NewTestApp()
 	loading.detail = Detail{Loading: true}
 	loading.OpenDetail("123456")
@@ -106,14 +109,24 @@ func TestDetailNarrowLayoutStaysSingleColumn(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.detail = detailWideFixture()
-	tt := renderTesterAndAdvance(t, app, 1200, 800)
-	hero, _ := tt.Find("宽屏详情")
-	episodes, episodesOK := tt.Find("选集")
+	app.detailEpisodesExpanded = false
+	app.sidebarWidth = 0
+	tt := renderTesterAndAdvance(t, app, 1000, 800)
+	if tt.FramePending() {
+		tt.Advance(200)
+	}
+	_, episodesOK := tt.Find("选集")
 	if !episodesOK {
 		t.Fatal("episodes missing")
 	}
-	if episodes.Y <= hero.Y {
-		t.Fatalf("narrow detail unexpectedly used two columns: hero=%v episodes=%v", hero, episodes)
+	source, sourceOK := tt.Find("原著小说")
+	seasons, seasonsOK := tt.Find("同系列短剧")
+	adaptations, adaptationsOK := tt.Find("同一剧本改编")
+	if !sourceOK || !seasonsOK || !adaptationsOK {
+		t.Fatalf("narrow detail collections missing: source=%v seasons=%v adaptations=%v", sourceOK, seasonsOK, adaptationsOK)
+	}
+	if source.Y+source.H > seasons.Y || seasons.Y+seasons.H > adaptations.Y {
+		t.Fatalf("narrow detail collection order changed: source=%+v seasons=%+v adaptations=%+v", source, seasons, adaptations)
 	}
 }
 

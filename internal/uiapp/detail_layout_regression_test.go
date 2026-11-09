@@ -20,22 +20,24 @@ func TestDetailVerticalRhythmAndCollectionSpacing(t *testing.T) {
 		Adaptations: DetailCollection{Title: "同一剧本改编", Items: []CatalogItem{{ID: "adapt-1", Title: "同一剧本改编剧", Category: "漫剧"}}},
 		Episodes:    []CatalogItem{{ID: "123456", Title: "紧凑详情页", EpisodeID: "1"}},
 	}
-	tt := ui.NewTester(app.Render, 1200, 800)
+	app.sidebarWidth = 150
+	tt := ui.NewTester(app.Render, 1000, 800)
 	if tt.FramePending() {
 		tt.Advance(200)
 	}
 
 	title, ok := tt.Find("紧凑详情页")
 	source, sourceOK := tt.Find("原著小说")
+	seasons, seasonsOK := tt.Find("同系列短剧")
 	collectionLabel, collectionOK := tt.Find("同一剧本改编")
-	if !ok || !sourceOK || !collectionOK {
-		t.Fatalf("detail sections missing: title=%+v source=%+v collection=%+v", title, source, collectionLabel)
+	if !ok || !sourceOK || !seasonsOK || !collectionOK {
+		t.Fatalf("detail sections missing: title=%+v source=%+v seasons=%+v collection=%+v", title, source, seasons, collectionLabel)
 	}
 	if title.Y+title.H > source.Y || source.Y+source.H > collectionLabel.Y {
 		t.Fatalf("detail sections overlap or clip: title=%+v source=%+v collection=%+v", title, source, collectionLabel)
 	}
-	gap := float64(collectionLabel.Y - (source.Y + source.H))
-	if gap < 6 || collectionLabel.Y+collectionLabel.H > 800 {
-		t.Fatalf("detail collection spacing or viewport bounds wrong: gap=%.1f label=%+v", gap, collectionLabel)
+	gap := float64(collectionLabel.Y - (seasons.Y + seasons.H))
+	if gap < 6 || collectionLabel.Y+collectionLabel.H > 820 {
+		t.Fatalf("detail collection spacing or viewport bounds wrong: gap=%.1f label=%+v seasons=%+v", gap, collectionLabel, seasons)
 	}
 }

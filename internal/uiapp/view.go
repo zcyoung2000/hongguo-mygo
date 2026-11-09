@@ -1076,10 +1076,12 @@ func (a *App) renderDetail(c *ui.Context) {
 						})
 					})
 				}
+				if !wide {
+					a.renderCollection(c, "同系列短剧", detail.Seasons, func() { go a.RetrySupplement(false) })
+					a.renderCollection(c, "同一剧本改编", detail.Adaptations, func() { go a.RetrySupplement(true) })
+				}
 			})
 			right.Children(func() {
-				a.renderCollection(c, "同系列短剧", detail.Seasons, func() { go a.RetrySupplement(false) })
-				a.renderCollection(c, "同一剧本改编", detail.Adaptations, func() { go a.RetrySupplement(true) })
 				a.renderDetailEpisodes(c, detail.Episodes)
 			})
 		})

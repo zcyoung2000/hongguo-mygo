@@ -58,7 +58,7 @@ func TestDetailCollectionEmptyStateDistinguishesFromError(t *testing.T) {
 		Seasons:     DetailCollection{Title: "同系列短剧"},
 		Adaptations: DetailCollection{Title: "同一剧本改编", Error: "加载失败"},
 	}
-	tt := renderTesterAndAdvance(t, app, 1200, 800)
+	tt := renderTesterAndAdvance(t, app, 1000, 1000)
 	if !tt.HasText("暂无同系列短剧") {
 		t.Fatalf("collection empty state missing")
 	}

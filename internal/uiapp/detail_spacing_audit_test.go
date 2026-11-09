@@ -35,7 +35,7 @@ func TestDetailCollectionVerticalSpacingAudit(t *testing.T) {
 		},
 		Episodes: []CatalogItem{{ID: "episode-1", EpisodeID: "episode-1", EpisodeCount: 1}},
 	}
-	tt := ui.NewTester(app.Render, 1200, 1080)
+	tt := ui.NewTester(app.Render, 1000, 1080)
 	tt.SetDark(true)
 	if tt.FramePending() {
 		tt.Advance(200)
