@@ -503,6 +503,7 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 	}
 
 	topLeftBadge := ""
+	topRightBadge := ""
 	bottomRightBadge := ""
 
 	if a.view == "new" {
@@ -519,12 +520,12 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 	} else if a.view == "favorites" {
 		topLeftBadge = "收藏"
 		if item.EpisodeCount > 0 {
-			bottomRightBadge = fmt.Sprintf("%d集", item.EpisodeCount)
+			topRightBadge = fmt.Sprintf("%d集", item.EpisodeCount)
 		}
 	} else if a.view == "likes" {
 		topLeftBadge = "点赞"
 		if item.EpisodeCount > 0 {
-			bottomRightBadge = fmt.Sprintf("%d集", item.EpisodeCount)
+			topRightBadge = fmt.Sprintf("%d集", item.EpisodeCount)
 		}
 	}
 
@@ -548,6 +549,39 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 					Children(func() {
 						ui.Text(c, bottomRightBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
 					})
+			}
+			if topRightBadge != "" {
+				ui.Row(c.Key("badge-tr")).Absolute().Top(catalogOverlayInset).Right(catalogOverlayInset).
+					Padding(2, 6).Radius(4).Background(ui.RGBA(0, 0, 0, 0.65)).
+					Children(func() {
+						ui.Text(c, topRightBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
+					})
+			}
+			if a.view == "favorites" || a.view == "likes" || a.view == "reservations" {
+				label := map[string]string{"favorites": "取消收藏", "likes": "取消点赞", "reservations": "取消预约"}[a.view]
+				overlay := ui.Row(c.Key("overlay:"+item.ID+"|"+label)).
+					Absolute().Bottom(catalogOverlayInset).Left(catalogOverlayInset).Right(catalogOverlayInset).
+					Height(catalogOverlayHeight).Padding(0, 12).Radius(catalogOverlayHeight/2).
+					Background(ui.RGBA(0, 0, 0, 0.52)).
+					Border(1, ui.RGBA(255, 255, 255, 0.08)).
+					AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(label)
+				hoverBackground(overlay, ui.RGBA(0, 0, 0, 0.52), ui.RGBA(0, 0, 0, 0.72))
+				overlay.Border(1, ui.RGBA(255, 255, 255, 0.08))
+				if overlay.Clicked() {
+					libraryTab := libraryHistory
+					switch a.view {
+					case "favorites":
+						libraryTab = libraryFavorites
+					case "likes":
+						libraryTab = libraryLikes
+					case "reservations":
+						libraryTab = libraryReservations
+					}
+					go a.RemoveLibraryItem(libraryTab, item)
+				}
+				overlay.Children(func() {
+					ui.Text(c, label).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.92))
+				})
 			}
 		})
 
@@ -844,39 +878,17 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 		}
 		return title[:cut] + "…"
 	}
-	a.cardGrid(c, "library-grid", a.library.Grids[grid], nil, visibleItems, 40, func(item CatalogItem) {
-		if tab == libraryHistory {
-			return
-		}
-		label := map[LibraryTab]string{libraryFavorites: "取消收藏", libraryLikes: "取消点赞", libraryReservations: "取消预约"}[tab]
-		actBtn := ui.Row(c.Key("act:"+item.ID+"|"+label)).Height(28).Padding(0, 10).Radius(6).
-			Background(ui.RGBA(255, 255, 255, 0.05)).
-			Border(1, ui.RGBA(255, 255, 255, 0.08)).
-			AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(label)
-		hoverBackground(actBtn, ui.RGBA(255, 255, 255, 0.05), ui.RGBA(255, 255, 255, 0.10))
-		actBtn.Border(1, ui.RGBA(255, 255, 255, 0.08))
-		if actBtn.Clicked() {
-			go a.RemoveLibraryItem(tab, item)
-		}
-		actBtn.Children(func() {
-			txt := ui.Text(c, label).FontSize(12)
-			if actBtn.Hovered() {
-				txt.TextColor(ui.Hex("#ffffff"))
-			} else {
-				txt.TextColor(ui.RGBA(255, 255, 255, 0.72))
-			}
-		})
-	}).Grow(1)
+	a.cardGrid(c, "library-grid", a.library.Grids[grid], nil, visibleItems, 0, nil).Grow(1)
 }
 
 func reservationCounts(items []CatalogItem) (int, int) {
 	online, pending := 0, 0
 	for _, item := range items {
-	if item.Upcoming {
-		pending++
-	} else {
-		online++
-	}
+		if item.Upcoming {
+			pending++
+		} else {
+			online++
+		}
 	}
 	return online, pending
 }
