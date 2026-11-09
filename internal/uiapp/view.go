@@ -1220,6 +1220,7 @@ func (a *App) renderDetail(c *ui.Context) {
 										AlignItems(ui.Center).Gap(6)
 									if act.UserID != "" {
 										chip.Role(ui.RoleButton).Label("演员主页：" + act.Name).Focusable()
+										hoverBackground(chip, ui.RGBA(255, 255, 255, 0.06), ui.RGBA(255, 255, 255, 0.12))
 										if chip.Clicked() || chip.Shortcut(0, ui.KeyEnter) || chip.Shortcut(0, ui.KeySpace) {
 											go a.OpenActor(act.UserID)
 										}

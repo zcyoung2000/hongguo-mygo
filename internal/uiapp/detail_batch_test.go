@@ -39,7 +39,8 @@ func TestDetailActorsUseSchemaIDOrRemoveButtonAffordance(t *testing.T) {
 	app.view = "detail"
 	app.detail = Detail{ID: "123456", Actors: testActorPage()}
 	tt := renderTesterAndAdvance(t, app, 1200, 800)
-	if _, ok := tt.AccessByRole(ui.RoleButton, "演员主页：可跳转演员"); !ok {
+	_, ok := tt.AccessByRole(ui.RoleButton, "演员主页：可跳转演员")
+	if !ok {
 		t.Fatalf("actor with schema ID missing button role")
 	}
 	if _, ok := tt.AccessByRole(ui.RoleButton, "演员主页：无ID演员"); ok {
@@ -47,6 +48,13 @@ func TestDetailActorsUseSchemaIDOrRemoveButtonAffordance(t *testing.T) {
 	}
 	if _, ok := tt.Find("无ID演员"); !ok {
 		t.Fatalf("non-clickable actor disappeared")
+	}
+	if err := tt.Click("演员主页：可跳转演员"); err != nil {
+		t.Fatalf("click clickable actor chip: %v", err)
+	}
+	waitFor(time.Second, func() bool { return app.view == "actor" && app.actor.ID == "710000000000001" })
+	if app.view != "actor" || app.actor.ID != "710000000000001" {
+		t.Fatalf("actor chip navigation mismatch: view=%q id=%q", app.view, app.actor.ID)
 	}
 }
 
