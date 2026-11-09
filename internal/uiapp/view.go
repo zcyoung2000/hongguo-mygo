@@ -405,7 +405,11 @@ func (a *App) renderCatalog(c *ui.Context) {
 			a.catalogGrid = &ui.GridState{}
 		}
 		width := a.gridContentWidth(c)
-		grid := a.cardGrid(c, "catalog-grid", a.catalogGrid, nil, catalog.Items, catalogFooterHeight, nil)
+		displayItems := catalog.Items
+		if len(displayItems) > 120 {
+			displayItems = displayItems[:120]
+		}
+		grid := a.cardGrid(c, "catalog-grid", a.catalogGrid, nil, displayItems, catalogFooterHeight, nil)
 		grid.Height(a.catalogSectionHeight(c, catalog.Items, width))
 		grid.Transition(ui.ElementTransition{
 			Duration: 260 * time.Millisecond,
