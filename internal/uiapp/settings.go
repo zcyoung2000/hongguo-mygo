@@ -444,13 +444,6 @@ func (a *App) renderSettings(c *ui.Context) {
 			a.settingsItemRow(c, "device-row", "匿名设备指纹", "当匿名模式触发官方频控限制或需要重置个性化推荐流时，重新生成设备指纹", state.DeviceID, "重置设备", "danger", a.ResetSettingsDevice)
 		})
 
-		ui.Text(c, "关于").FontSize(12).Bold().TextColor(c.Theme().TextMuted)
-		a.settingsCard(c, "settings-about", func() {
-			a.settingsInfoRow(c, "version-row", "客户端版本", state.DeviceVersion)
-			ui.Box(c.Key("version-divider")).Height(1).Grow(1).Background(c.Theme().Border)
-			a.settingsInfoRow(c, "arch-row", "运行平台", state.DeviceArch)
-		})
-
 		if state.Loading {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Justify(ui.Center).Padding(8).Children(func() {
 				ui.Spinner(c)
@@ -468,13 +461,6 @@ func settingsAccountID(state Settings) string {
 		return "已同步"
 	}
 	return "anonymous"
-}
-
-func (a *App) settingsInfoRow(c *ui.Context, key, label, value string) {
-	ui.Row(c.Key(key)).Gap(16).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, label).FontSize(12).TextColor(c.Theme().TextMuted).Width(88)
-		ui.Text(c, value).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.82)).SingleLine()
-	})
 }
 
 func (a *App) renderSettingsLogin(c *ui.Context, state Settings) {
