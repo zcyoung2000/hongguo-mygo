@@ -125,6 +125,70 @@ func TestVirtualGridsUseStableItemKeys(t *testing.T) {
 	}
 }
 
+func TestDiscoverPageScrollAndCollapsedFilters(t *testing.T) {
+	rows := make([]FilterRow, 7)
+	for index := range rows {
+		rows[index] = FilterRow{
+			Title:   fmt.Sprintf("维度%d", index+1),
+			Options: []FilterOption{{Label: "全部", Value: ""}, {Label: fmt.Sprintf("条件%d", index+1), Value: fmt.Sprint(index + 1)}},
+		}
+	}
+	items := make([]CatalogItem, 40)
+	for index := range items {
+		items[index] = CatalogItem{
+			ID: fmt.Sprintf("discover-%d", index), EpisodeID: "1",
+			Title: fmt.Sprintf("找剧结果%d", index+1), EpisodeCount: 32,
+		}
+	}
+	app := NewTestApp()
+	app.catalog.Filters = rows
+	app.catalog.Items = items
+	app.catalog.HasMore = true
+	app.view = "discover"
+	tt := ui.NewTester(app.Render, 1600, 1000)
+	tt.Frame()
+	_, ok := tt.Find("discover-page-scroll")
+	if !ok {
+		t.Fatal("discover page scroll missing")
+	}
+	_, cardOK := tt.Find("找剧结果1")
+	if !cardOK {
+		t.Fatalf("expanded discover missing card: %v", tt.Texts())
+	}
+	if app.discoverPageScroll.MaxY <= 0 {
+		t.Fatal("discover grid does not contribute fixed page height")
+	}
+	if err := tt.Click("收起筛选"); err != nil {
+		t.Fatal("collapse control did not click")
+	}
+	tt.Advance(260 * time.Millisecond)
+	tt.Frame()
+	if !tt.HasText("筛选 · 真人剧") {
+		t.Fatal("collapsed discover lacks selection summary")
+	}
+	for index := range rows {
+		if tt.HasText(fmt.Sprintf("维度%d", index+1)) {
+			t.Fatalf("collapsed filter row remained visible: %d", index+1)
+		}
+	}
+	collapsedPage, _ := tt.Find("discover-page-scroll")
+	if collapsedPage.H < 850 {
+		t.Fatalf("collapsed page scroll is too short: %.1f", collapsedPage.H)
+	}
+	secondCard, secondOK := tt.Find("找剧结果9")
+	thirdCard, thirdOK := tt.Find("找剧结果17")
+	if !secondOK || !thirdOK || secondCard.Y+secondCard.H > collapsedPage.Y+collapsedPage.H || thirdCard.Y > collapsedPage.Y+collapsedPage.H {
+		t.Fatalf("collapsed discover does not show two full rows: second=%+v third=%+v page=%+v", secondCard, thirdCard, collapsedPage)
+	}
+	if err := tt.Click("展开筛选"); err == nil {
+		tt.Advance(260 * time.Millisecond)
+		tt.Frame()
+		if !tt.HasText("维度1") {
+			t.Fatal("expanded filter rows did not return")
+		}
+	}
+}
+
 func TestFrontendPerformanceAndHardRuleInvariants(t *testing.T) {
 	css := readFile(t, "../../frontend/styles.css")
 	liquid := readFile(t, "../../frontend/liquid-controls.css")

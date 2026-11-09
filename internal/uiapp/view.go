@@ -375,77 +375,183 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 
 func (a *App) renderCatalog(c *ui.Context) {
 	catalog := a.catalog
-	a.maybeLoadMore(a.catalogScroll.Y, a.catalogScroll.MaxY, catalog.HasMore, catalog.Loading || catalog.LoadingMore, a.LoadMoreCatalog)
+	a.maybeLoadMore(a.discoverPageScroll.Y, a.discoverPageScroll.MaxY, catalog.HasMore, catalog.Loading || catalog.LoadingMore, a.LoadMoreCatalog)
 
-	a.renderCatalogControls(c, catalog)
-	if catalog.Loading && len(catalog.Items) == 0 {
-		ui.Column(c.Key("discover-loading")).Grow(1).Gap(14).Children(func() {
-			ui.Text(c, "正在加载目录...").TextColor(c.Theme().TextMuted)
-			a.filterSkeleton(c)
-			a.gridSkeleton(c, 12, a.gridContentWidth(c))
-		})
-		return
-	}
-	if catalog.Error != "" {
-		a.errorView(c, catalog.Error, func() { go a.loadCatalog(len(catalog.Items) > 0) })
-		if len(catalog.Items) == 0 {
+	a.renderCatalogHeader(c)
+	scroll := ui.Scroll(c.Key("discover-page-scroll")).Grow(1).Gap(10).
+		Role(ui.RoleGroup).Label("discover-page-scroll").TrackScroll(&a.discoverPageScroll)
+	scroll.Children(func() {
+		a.renderCatalogControls(c, catalog)
+		if catalog.Loading && len(catalog.Items) == 0 {
+			ui.Column(c.Key("discover-loading")).Grow(1).Gap(14).Children(func() {
+				ui.Text(c, "正在加载目录...").TextColor(c.Theme().TextMuted)
+				a.filterSkeleton(c)
+				a.gridSkeleton(c, 12, a.gridContentWidth(c))
+			})
 			return
 		}
+		if catalog.Error != "" {
+			a.errorView(c, catalog.Error, func() { go a.loadCatalog(len(catalog.Items) > 0) })
+			if len(catalog.Items) > 0 {
+				return
+			}
+		}
+		if len(catalog.Items) == 0 {
+			a.emptyView(c, "暂无短剧", "换个筛选条件试试")
+			return
+		}
+		if a.catalogGrid == nil {
+			a.catalogGrid = &ui.GridState{}
+		}
+		width := a.gridContentWidth(c)
+		grid := a.cardGrid(c, "catalog-grid", a.catalogGrid, nil, catalog.Items, catalogFooterHeight, nil)
+		grid.Height(a.catalogSectionHeight(c, catalog.Items, width))
+		grid.Transition(ui.ElementTransition{
+			Duration: 260 * time.Millisecond,
+			Ease:     ui.CubicBezier(0.22, 1, 0.36, 1),
+			Position: true,
+			Size:     true,
+		})
+		a.scrollLoading(c, catalog.LoadingMore)
+	})
+}
+
+func (a *App) renderCatalogHeader(c *ui.Context) {
+	pageHeader(c, "发现短剧")
+	a.renderSearchBar(c)
+}
+
+func (a *App) catalogSectionHeight(c *ui.Context, items []CatalogItem, width float32) float32 {
+	columns := dramaColumns(width)
+	cardWidth := dramaCardWidth(width)
+	rowHeight := a.collectionRowHeight(c, cardWidth, items) + cardWidth*posterAspectRatio
+	return max(1, float32((len(items)+columns-1)/columns)*rowHeight+catalogFooterHeight)
+}
+
+func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *ui.ScrollState, items []CatalogItem, extra float32, after func(CatalogItem)) ui.Element {
+	return a.sharedCardGrid(c, key, state, scroll, items, extra, after)
+}
+
+func (a *App) catalogFilterSummary(catalog Catalog) string {
+	var selected []string
+	if catalog.GenreIndex >= 0 && catalog.GenreIndex < len(catalog.Genre) {
+		selected = append(selected, catalog.Genre[catalog.GenreIndex])
 	}
-	if len(catalog.Items) == 0 {
-		a.emptyView(c, "暂无短剧", "换个筛选条件试试")
-		return
+	for rowIndex, row := range catalog.Filters {
+		if rowIndex >= len(catalog.Selection) {
+			continue
+		}
+		optionIndex := catalog.Selection[rowIndex]
+		if optionIndex <= 0 || optionIndex >= len(row.Options) {
+			continue
+		}
+		selected = append(selected, row.Options[optionIndex].Label)
 	}
-	if a.catalogGrid == nil {
-		a.catalogGrid = &ui.GridState{}
+	if len(selected) == 0 {
+		return "筛选"
 	}
-	configureDramaGrid(a.catalogGrid, catalog.Items)
-	a.cardGrid(c, "catalog-grid", a.catalogGrid, &a.catalogScroll, catalog.Items, catalogFooterHeight, nil).Grow(1)
-	a.scrollLoading(c, catalog.LoadingMore)
+	return "筛选 · " + strings.Join(selected, " · ")
+}
+
+func (a *App) toggleCatalogFilters() {
+	if a.discoverFilterState == discoverExpanded {
+		a.discoverFilterState = discoverCollapsed
+	} else {
+		a.discoverFilterState = discoverExpanded
+	}
+	a.invalidate()
+}
+
+func (a *App) renderCatalogFilterHeader(c *ui.Context, catalog Catalog) {
+	collapsed := a.discoverFilterState == discoverCollapsed
+	label := "收起"
+	if collapsed {
+		label = "展开"
+	}
+	summary := a.catalogFilterSummary(catalog)
+	header := ui.Row(c.Key("catalog-filter-header")).Height(34).Padding(0, 10).Radius(8).
+		Role(ui.RoleButton).Label(label + "筛选").Focusable().
+		AlignItems(ui.Center).Gap(8).Transition(layoutTransition)
+	hoverBackground(header, ui.RGBA(255, 255, 255, 0.06), ui.RGBA(255, 255, 255, 0.12))
+	if header.Clicked() || header.Shortcut(0, ui.KeyEnter) || header.Shortcut(0, ui.KeySpace) {
+		a.toggleCatalogFilters()
+	}
+	header.Children(func() {
+		ui.Text(c, summary).FontSize(13).Bold().TextColor(ui.RGBA(255, 255, 255, 0.9))
+		labelColor := ui.RGBA(255, 255, 255, 0.85)
+		toggle := ui.Row(c.Key("catalog-filter-toggle")).Padding(4, 10).Radius(12).
+			AlignItems(ui.Center).Transition(selectionTransition)
+		if collapsed {
+			toggle.Border(1, ui.RGBA(255, 255, 255, 0.16))
+		} else {
+			toggle.Background(ui.RGBA(217, 27, 66, 255))
+			labelColor = ui.RGB(255, 255, 255)
+		}
+		toggle.Children(func() {
+			ui.Text(c, label).FontSize(12).TextColor(labelColor)
+		})
+	})
 }
 
 func (a *App) renderCatalogControls(c *ui.Context, catalog Catalog) {
-	pageHeader(c, "发现短剧")
-	a.renderSearchBar(c)
-	ui.Column(c.Key("catalog-filter-card")).Padding(14, 18).Gap(10).Radius(14).
+	collapsed := a.discoverFilterState == discoverCollapsed
+	card := ui.Column(c.Key("catalog-filter-card")).Padding(10, 14).Radius(14).
 		Material(glass.Glass{Clarity: 0.15}).
-		Border(1, ui.RGBA(255, 255, 255, 0.08)).Children(func() {
-		ui.Row(c.Key("genre-row")).Gap(12).AlignItems(ui.Start).Children(func() {
-			ui.Text(c, "体裁").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
+		Border(1, ui.RGBA(255, 255, 255, 0.08)).
+		Transition(ui.ElementTransition{
+			Duration: 260 * time.Millisecond,
+			Ease:     ui.CubicBezier(0.22, 1, 0.36, 1),
+			Position: true,
+			Size:     true,
+			Colors:   true,
+			Enter:    &ui.Motion{Opacity: 0},
+			Exit:     &ui.Motion{Opacity: 0},
+		})
+	card.Children(func() {
+		a.renderCatalogFilterHeader(c, catalog)
+		if collapsed {
+			return
+		}
+		ui.Column(c.Key("catalog-filter-content")).Padding(4, 0, 0, 0).Gap(10).Children(func() {
+			a.renderFilterRows(c, catalog)
+		})
+	})
+}
+
+func (a *App) renderFilterRows(c *ui.Context, catalog Catalog) {
+	ui.Row(c.Key("genre-row")).Gap(12).AlignItems(ui.Start).Children(func() {
+		ui.Text(c, "体裁").FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
+		ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
+			for index, genre := range catalog.Genre {
+				gIndex := index
+				selected := gIndex == catalog.GenreIndex
+				a.pillChip(c, "genre:"+genre, genre, selected, func() {
+					go a.SelectGenre(gIndex)
+				})
+			}
+		})
+	})
+	for rowIndex, row := range catalog.Filters {
+		rIdx := rowIndex
+		rTitle := row.Title
+		rOptions := row.Options
+		selected := 0
+		if rIdx < len(catalog.Selection) {
+			selected = catalog.Selection[rIdx]
+		}
+		ui.Row(c.Key(fmt.Sprintf("filter-row-%d", rIdx))).Gap(12).AlignItems(ui.Start).Children(func() {
+			ui.Text(c, rTitle).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
 			ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
-				for index, genre := range catalog.Genre {
-					gIndex := index
-					selected := gIndex == catalog.GenreIndex
-					a.pillChip(c, "genre:"+genre, genre, selected, func() {
-						go a.SelectGenre(gIndex)
+				for optIndex, opt := range rOptions {
+					oIdx := optIndex
+					oLabel := opt.Label
+					a.pillChip(c, fmt.Sprintf("opt-%d-%d", rIdx, oIdx), oLabel, oIdx == selected, func() {
+						go a.SelectFilter(rIdx, oIdx)
 					})
 				}
 			})
 		})
-		if len(catalog.Filters) > 0 {
-			for rowIndex, row := range catalog.Filters {
-				rIdx := rowIndex
-				rTitle := row.Title
-				rOptions := row.Options
-				selected := 0
-				if rIdx < len(catalog.Selection) {
-					selected = catalog.Selection[rIdx]
-				}
-				ui.Row(c.Key(fmt.Sprintf("filter-row-%d", rIdx))).Gap(12).AlignItems(ui.Start).Children(func() {
-					ui.Text(c, rTitle).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.65)).Width(40).Padding(5, 0, 0, 0)
-					ui.Row(c).Wrap().Gap(8).Grow(1).Children(func() {
-						for optIndex, opt := range rOptions {
-							oIdx := optIndex
-							oLabel := opt.Label
-							a.pillChip(c, fmt.Sprintf("opt-%d-%d", rIdx, oIdx), oLabel, oIdx == selected, func() {
-								go a.SelectFilter(rIdx, oIdx)
-							})
-						}
-					})
-				})
-			}
-		}
-	})
+	}
 }
 
 func (a *App) maybeLoadMore(y, maxY float32, hasMore, loading bool, load func()) {

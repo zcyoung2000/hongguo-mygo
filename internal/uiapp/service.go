@@ -110,6 +110,13 @@ type Catalog struct {
 	Items       []CatalogItem
 }
 
+type discoverSection int
+
+const (
+	discoverExpanded discoverSection = iota
+	discoverCollapsed
+)
+
 type LibraryTab int
 
 const (
@@ -154,6 +161,7 @@ type App struct {
 	feedChannel                 string
 	feedChrome                  FeedChrome
 	feedChromeKnown             bool
+	discoverPageScroll          ui.ScrollState
 	catalogScroll               ui.ScrollState
 	rankScroll                  ui.ScrollState
 	actorScroll                 ui.ScrollState
@@ -182,6 +190,7 @@ type App struct {
 	libraryVisible              [4][]CatalogItem
 	searchGrid                  *ui.GridState
 	catalogGrid                 *ui.GridState
+	discoverFilterState         discoverSection
 	releaseGrid                 *ui.GridState
 	actorWorksGrid              *ui.GridState
 	suggestions                 []string
@@ -337,6 +346,7 @@ func (a *App) resetCatalog() {
 	a.catalog.Items, a.catalog.Cursor, a.catalog.Error = nil, "", ""
 	a.catalog.HasMore, a.catalog.Loading, a.catalog.LoadingMore = true, false, false
 	a.catalog.seenCursors = nil
+	a.discoverPageScroll.Y = 0
 	a.invalidate()
 }
 func (a *App) SelectFilter(rowIndex, optionIndex int) {
