@@ -200,9 +200,7 @@ func (s *HongguoService) Logout(ctx context.Context) error {
 	}
 	s.setAuthCredentials("", "")
 
-	s.cacheMu.Lock()
-	s.cache = make(map[string]cacheItem)
-	s.cacheMu.Unlock()
+	s.cache.Reset()
 	s.invalidateUserDataCaches()
 
 	return nil

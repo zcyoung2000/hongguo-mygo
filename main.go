@@ -18,6 +18,7 @@ import (
 	"myguo/internal/ipc"
 	"myguo/internal/media"
 	"myguo/internal/native"
+	"myguo/internal/resourcelog"
 	userstore "myguo/internal/store"
 	"myguo/internal/uiapp"
 )
@@ -41,7 +42,11 @@ func main() {
 	}
 
 	// GUI launches discard stdout/stderr, so retain backend diagnostics on disk.
-	if logFile, err := os.OpenFile(filepath.Join(appDir, "app.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+	if logFile, err := resourcelog.OpenRotated(
+		filepath.Join(appDir, "app.log"),
+		resourcelog.DefaultMaxLogBytes,
+		resourcelog.DefaultMaxLogFiles,
+	); err == nil {
 		defer logFile.Close()
 		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
 	}

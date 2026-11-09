@@ -14,6 +14,7 @@ import (
 
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/resourcecache"
 	"myguo/internal/sanitize"
 )
 
@@ -88,12 +89,9 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 	}
 
 	cacheKey := "series_page:" + seriesID
-	s.cacheMu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.cacheMu.RUnlock()
-		return s.withSeriesUserState(entry.val.(*SeriesDetailPageDTO)), nil
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		return s.withSeriesUserState(entry.Value.(*SeriesDetailPageDTO)), nil
 	}
-	s.cacheMu.RUnlock()
 
 	// The batch and single-detail endpoints must not share one deadline.
 	// Otherwise a slow batch consumes the budget and guarantees that the
@@ -143,9 +141,7 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 	page.EpisodesTitle = fmt.Sprintf("共 %d 集", page.EpisodeCount)
 	page = sanitizeIPC(page)
 
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: page, expiresAt: time.Now().Add(5 * time.Minute)}
-	s.cacheMu.Unlock()
+	s.cache.Set(cacheKey, resourcecache.Item{Value: page, ExpiresAt: time.Now().Add(5 * time.Minute)})
 
 	return s.withSeriesUserState(page), nil
 }
@@ -288,20 +284,16 @@ func (s *HongguoService) GetSeriesAdaptations(ctx context.Context, seriesID, sou
 }
 
 func (s *HongguoService) cachedCollection(cacheKey string) (*SeriesCollectionDTO, bool) {
-	s.cacheMu.RLock()
-	entry, ok := s.cache[cacheKey]
-	s.cacheMu.RUnlock()
-	if !ok || time.Now().After(entry.expiresAt) {
+	entry, ok := s.cache.Get(cacheKey)
+	if !ok {
 		return nil, false
 	}
-	collection, ok := entry.val.(*SeriesCollectionDTO)
+	collection, ok := entry.Value.(*SeriesCollectionDTO)
 	return collection, ok
 }
 
 func (s *HongguoService) cacheCollection(cacheKey string, collection *SeriesCollectionDTO) {
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: collection, expiresAt: time.Now().Add(5 * time.Minute)}
-	s.cacheMu.Unlock()
+	s.cache.Set(cacheKey, resourcecache.Item{Value: collection, ExpiresAt: time.Now().Add(5 * time.Minute)})
 }
 
 func albumTitle(album *model.Album) string {
@@ -312,13 +304,11 @@ func albumTitle(album *model.Album) string {
 }
 
 func (s *HongguoService) cachedSeriesAlbum(seriesID string) *model.Album {
-	s.cacheMu.RLock()
-	entry, ok := s.cache["series_album:"+seriesID]
-	s.cacheMu.RUnlock()
-	if !ok || time.Now().After(entry.expiresAt) {
+	entry, ok := s.cache.Get("series_album:" + seriesID)
+	if !ok {
 		return nil
 	}
-	album, _ := entry.val.(*model.Album)
+	album, _ := entry.Value.(*model.Album)
 	return album
 }
 
@@ -326,9 +316,7 @@ func (s *HongguoService) cacheSeriesAlbum(seriesID string, album *model.Album) {
 	if seriesID == "" || album == nil {
 		return
 	}
-	s.cacheMu.Lock()
-	s.cache["series_album:"+seriesID] = cacheItem{val: album, expiresAt: time.Now().Add(5 * time.Minute)}
-	s.cacheMu.Unlock()
+	s.cache.Set("series_album:"+seriesID, resourcecache.Item{Value: album, ExpiresAt: time.Now().Add(5 * time.Minute)})
 }
 
 func parseIDList(value string) map[string]bool {

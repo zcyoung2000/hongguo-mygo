@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"myguo/internal/resourcecache"
 	userstore "myguo/internal/store"
 )
 
@@ -174,7 +175,7 @@ func TestSeriesPageRefreshesUserFlagsWithoutMutatingCache(t *testing.T) {
 	service, store := accountTestService(t, t.TempDir(), t.TempDir())
 	const id = "710000000000001"
 	cached := &SeriesDetailPageDTO{SeriesDetailDTO: SeriesDetailDTO{ID: id, Title: "Catalog metadata"}}
-	service.cache["series_page:"+id] = cacheItem{val: cached, expiresAt: time.Now().Add(5 * time.Minute)}
+	service.cache.Set("series_page:"+id, resourcecache.Item{Value: cached, ExpiresAt: time.Now().Add(5 * time.Minute)})
 	if _, err := service.ToggleFavorite(context.Background(), id, "Catalog metadata", "", "", 10); err != nil {
 		t.Fatal(err)
 	}

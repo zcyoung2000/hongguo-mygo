@@ -6,10 +6,11 @@ import (
 	"time"
 
 	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/resourcecache"
 )
 
 func TestRelatedFilterSelectionsMapsExactMetadata(t *testing.T) {
-	service := &HongguoService{cache: make(map[string]cacheItem)}
+	service := &HongguoService{cache: resourcecache.New(metadataCacheCapacity)}
 	page := &SeriesDetailPageDTO{
 		Category:    "恋爱",
 		ContentType: int(model.ContentMotionComic),
@@ -21,10 +22,10 @@ func TestRelatedFilterSelectionsMapsExactMetadata(t *testing.T) {
 		{Key: "category_dim_epoch", Options: []model.FilterOption{{Name: "都市", Value: "cate_1"}}},
 		{Key: "sort", Options: []model.FilterOption{{Name: "最高热度", Value: "hot_score"}}},
 	}
-	service.cache["series_related_panel:comic_series"] = cacheItem{
-		val:       panel,
-		expiresAt: time.Now().Add(time.Hour),
-	}
+	service.cache.Set("series_related_panel:comic_series", resourcecache.Item{
+		Value:     panel,
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
 
 	selections := service.relatedFilterSelections(context.Background(), page)
 	if len(selections["category_dim_epoch"]) != 1 || selections["category_dim_epoch"][0] != "cate_1" {

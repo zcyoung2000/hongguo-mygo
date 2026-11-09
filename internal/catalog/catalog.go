@@ -13,8 +13,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"myguo/internal/resourcecache"
 )
 
 type SeriesCard struct {
@@ -151,10 +152,7 @@ type SeriesDetailDTO struct {
 	IsFavorite   bool         `json:"isFavorite"`
 }
 
-type cacheItem struct {
-	val       any
-	expiresAt time.Time
-}
+const metadataCacheCapacity = 256
 
 type Dependencies struct {
 	Credentials       func() (cookies, token string)
@@ -175,8 +173,7 @@ type Service struct {
 	reservedSeriesIDs func(ctx context.Context) ([]string, error)
 	episodes          func(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error)
 	isFavorite        func(seriesID string) bool
-	cacheMu           sync.RWMutex
-	cache             map[string]cacheItem
+	cache             *resourcecache.LRU
 }
 
 func NewService(client *sdk.Client, imageURL func(string) string, httpClient *http.Client, deps Dependencies) *Service {
@@ -208,14 +205,12 @@ func NewService(client *sdk.Client, imageURL func(string) string, httpClient *ht
 		credentials: deps.Credentials, deviceIdentity: deps.DeviceIdentity,
 		runtime: deps.Runtime, reservedSeriesIDs: deps.ReservedSeriesIDs,
 		episodes: deps.Episodes, isFavorite: deps.IsFavorite,
-		cache: make(map[string]cacheItem),
+		cache: resourcecache.New(metadataCacheCapacity),
 	}
 }
 
 func (s *Service) Invalidate() {
-	s.cacheMu.Lock()
-	s.cache = make(map[string]cacheItem)
-	s.cacheMu.Unlock()
+	s.cache.Reset()
 }
 
 func (s *Service) InvalidatePrefixes(prefixes ...string) {
@@ -223,16 +218,7 @@ func (s *Service) InvalidatePrefixes(prefixes ...string) {
 		s.Invalidate()
 		return
 	}
-	s.cacheMu.Lock()
-	for key := range s.cache {
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(key, prefix) {
-				delete(s.cache, key)
-				break
-			}
-		}
-	}
-	s.cacheMu.Unlock()
+	s.cache.InvalidatePrefixes(prefixes...)
 }
 
 func shortFilterSelections(genre string, values map[string]string) map[string][]string {
@@ -353,12 +339,9 @@ func hotBoards(hot *model.HotSearch) []model.HotBoard {
 
 func (s *Service) GetFilterPanel(ctx context.Context, genre string) ([]FilterRowDTO, error) {
 	cacheKey := "filter_panel:" + genre
-	s.cacheMu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.cacheMu.RUnlock()
-		return entry.val.([]FilterRowDTO), nil
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		return entry.Value.([]FilterRowDTO), nil
 	}
-	s.cacheMu.RUnlock()
 
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -383,9 +366,7 @@ func (s *Service) GetFilterPanel(ctx context.Context, genre string) ([]FilterRow
 		res = append(res, rowDTO)
 	}
 
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: res, expiresAt: time.Now().Add(1 * time.Hour)}
-	s.cacheMu.Unlock()
+	s.cache.Set(cacheKey, resourcecache.Item{Value: res, ExpiresAt: time.Now().Add(1 * time.Hour)})
 
 	return res, nil
 }
@@ -396,12 +377,9 @@ func (s *Service) GetDiscover(ctx context.Context, genre string, selections map[
 		return DiscoverResponse{}, fmt.Errorf("encode discover selections: %w", err)
 	}
 	cacheKey := fmt.Sprintf("discover:%s:%s:%s", genre, selectionJSON, cursor)
-	s.cacheMu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.cacheMu.RUnlock()
-		return entry.val.(DiscoverResponse), nil
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		return entry.Value.(DiscoverResponse), nil
 	}
-	s.cacheMu.RUnlock()
 
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -419,9 +397,7 @@ func (s *Service) GetDiscover(ctx context.Context, genre string, selections map[
 				HasMore: false,
 				Cursor:  "",
 			}
-			s.cacheMu.Lock()
-			s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
-			s.cacheMu.Unlock()
+			s.cache.Set(cacheKey, resourcecache.Item{Value: resp, ExpiresAt: time.Now().Add(5 * time.Minute)})
 			return resp, nil
 		}
 		return DiscoverResponse{}, err
@@ -456,9 +432,7 @@ func (s *Service) GetDiscover(ctx context.Context, genre string, selections map[
 		Cursor:  shortFilterCursor(res),
 	}
 
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
-	s.cacheMu.Unlock()
+	s.cache.Set(cacheKey, resourcecache.Item{Value: resp, ExpiresAt: time.Now().Add(5 * time.Minute)})
 
 	return resp, nil
 }
@@ -470,12 +444,9 @@ func (s *Service) GetRankings(ctx context.Context, contentId, boardId, cursor st
 		rankScope = "account"
 	}
 	cacheKey := fmt.Sprintf("rank:%s:%s:%s:%s", rankScope, contentId, boardId, cursor)
-	s.cacheMu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.cacheMu.RUnlock()
-		return entry.val.(RankResponse), nil
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		return entry.Value.(RankResponse), nil
 	}
-	s.cacheMu.RUnlock()
 
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -574,12 +545,10 @@ func (s *Service) GetRankings(ctx context.Context, contentId, boardId, cursor st
 		HasMore:  shortRankHasMore(rank),
 	}
 
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
+	s.cache.Set(cacheKey, resourcecache.Item{Value: resp, ExpiresAt: time.Now().Add(5 * time.Minute)})
 	if rank != nil && rank.Board != "" && rank.Board != boardId {
-		s.cache[fmt.Sprintf("rank:%s:%s", contentId, rank.Board)] = cacheItem{val: resp, expiresAt: time.Now().Add(5 * time.Minute)}
+		s.cache.Set(fmt.Sprintf("rank:%s:%s", contentId, rank.Board), resourcecache.Item{Value: resp, ExpiresAt: time.Now().Add(5 * time.Minute)})
 	}
-	s.cacheMu.Unlock()
 
 	return resp, nil
 }
@@ -933,12 +902,9 @@ func (s *Service) GetActorProfile(ctx context.Context, userID string) (*ActorPro
 	}
 
 	cacheKey := "actor_profile:" + userID
-	s.cacheMu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.cacheMu.RUnlock()
-		return entry.val.(*ActorProfileDTO), nil
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		return entry.Value.(*ActorProfileDTO), nil
 	}
-	s.cacheMu.RUnlock()
 
 	// A 12-second preview can take longer than ten seconds on a cold network;
 	// killing ffmpeg at exactly ten seconds turns a slow preload into a
@@ -1002,9 +968,7 @@ func (s *Service) GetActorProfile(ctx context.Context, userID string) (*ActorPro
 		HasMore:     hasMore,
 		Cursor:      cursor,
 	}
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: dto, expiresAt: time.Now().Add(10 * time.Minute)}
-	s.cacheMu.Unlock()
+	s.cache.Set(cacheKey, resourcecache.Item{Value: dto, ExpiresAt: time.Now().Add(10 * time.Minute)})
 
 	return dto, nil
 }
@@ -1060,12 +1024,9 @@ func (s *Service) GetActorWorks(ctx context.Context, userID, cursor string) (*Ac
 
 func (s *Service) GetNewReleases(ctx context.Context, date string) (NewReleaseResponse, error) {
 	cacheKey := "new_releases:" + date
-	s.cacheMu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.cacheMu.RUnlock()
-		return entry.val.(NewReleaseResponse), nil
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		return entry.Value.(NewReleaseResponse), nil
 	}
-	s.cacheMu.RUnlock()
 
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
@@ -1109,9 +1070,7 @@ func (s *Service) GetNewReleases(ctx context.Context, date string) (NewReleaseRe
 		Items:       items,
 	}
 
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(10 * time.Minute)}
-	s.cacheMu.Unlock()
+	s.cache.Set(cacheKey, resourcecache.Item{Value: resp, ExpiresAt: time.Now().Add(10 * time.Minute)})
 
 	return resp, nil
 }
@@ -1199,12 +1158,9 @@ func (s *Service) GetSuggestions(ctx context.Context, prefix string) ([]string, 
 
 func (s *Service) GetHotSearch(ctx context.Context) (HotSearchDTO, error) {
 	cacheKey := "hot_search"
-	s.cacheMu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.cacheMu.RUnlock()
-		return entry.val.(HotSearchDTO), nil
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		return entry.Value.(HotSearchDTO), nil
 	}
-	s.cacheMu.RUnlock()
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -1228,9 +1184,7 @@ func (s *Service) GetHotSearch(ctx context.Context) (HotSearchDTO, error) {
 	}
 	resp := HotSearchDTO{Words: words}
 
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: resp, expiresAt: time.Now().Add(10 * time.Minute)}
-	s.cacheMu.Unlock()
+	s.cache.Set(cacheKey, resourcecache.Item{Value: resp, ExpiresAt: time.Now().Add(10 * time.Minute)})
 
 	return resp, nil
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
+	"myguo/internal/resourcecache"
 )
 
 // Relevance buckets keep a same-theme/filter result ahead of a merely
@@ -157,13 +158,10 @@ func (s *HongguoService) relatedSearch(ctx context.Context, query string, conten
 
 func (s *HongguoService) relatedFilterPanel(ctx context.Context, genre string) []model.FilterRow {
 	cacheKey := "series_related_panel:" + genre
-	s.cacheMu.RLock()
-	if entry, ok := s.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		s.cacheMu.RUnlock()
-		rows, _ := entry.val.([]model.FilterRow)
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		rows, _ := entry.Value.([]model.FilterRow)
 		return rows
 	}
-	s.cacheMu.RUnlock()
 
 	rows, err := retryAnonymous(s, ctx, func(c context.Context) ([]model.FilterRow, error) {
 		return s.client.ShortFilterPanel(c, genre)
@@ -172,9 +170,7 @@ func (s *HongguoService) relatedFilterPanel(ctx context.Context, genre string) [
 		return nil
 	}
 
-	s.cacheMu.Lock()
-	s.cache[cacheKey] = cacheItem{val: rows, expiresAt: time.Now().Add(time.Hour)}
-	s.cacheMu.Unlock()
+	s.cache.Set(cacheKey, resourcecache.Item{Value: rows, ExpiresAt: time.Now().Add(time.Hour)})
 	return rows
 }
 

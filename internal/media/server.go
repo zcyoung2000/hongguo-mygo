@@ -27,6 +27,7 @@ import (
 	"myguo/internal/appdirs"
 	"myguo/internal/lifecycle"
 	"myguo/internal/mediautil"
+	"myguo/internal/resourcelog"
 )
 
 const (
@@ -38,6 +39,7 @@ const (
 	MaxHLSCacheBytes        = int64(1024 * 1024 * 1024)     // 1 GB limit for local HLS renditions
 	TargetHLSCacheBytes     = int64(768 * 1024 * 1024)      // 768 MB target after eviction
 	MinFreeCacheDiskBytes   = uint64(512 * 1024 * 1024)     // Reserve space for the OS and in-progress MP4 writes
+	MaxImageDownloadBytes   = int64(20 * 1024 * 1024)       // Large enough for high-resolution posters while bounding a hostile response.
 )
 
 var videoQualities = []string{"1080p", "720p", "540p", "480p", "360p"}
@@ -1469,7 +1471,7 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 	}
 	parsed, err := url.Parse(targetURL)
 	if err != nil || parsed.User != nil || parsed.Port() != "" || !isAllowedImageHost(parsed.Hostname()) {
-		log.Printf("[img-proxy] rejected untrusted image URL %s", targetURL)
+		log.Printf("[img-proxy] rejected untrusted image URL %s", redactImageURL(targetURL))
 		serveFallback(w)
 		return
 	}
@@ -1518,14 +1520,14 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := mediaHTTPClient.Do(req)
 	if err != nil {
-		log.Printf("[img-proxy] download failed for %s: %v", targetURL, err)
+		log.Printf("[img-proxy] download failed for %s: %v", redactImageURL(targetURL), err)
 		serveFallback(w)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("[img-proxy] upstream returned %d for %s", resp.StatusCode, targetURL)
+		log.Printf("[img-proxy] upstream returned %d for %s", resp.StatusCode, redactImageURL(targetURL))
 		serveFallback(w)
 		return
 	}
@@ -1536,7 +1538,7 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 		serveFallback(w)
 		return
 	}
-	_, err = io.Copy(f, resp.Body)
+	downloaded, err := io.Copy(f, io.LimitReader(resp.Body, MaxImageDownloadBytes+1))
 	_ = f.Close()
 	if err != nil {
 		_ = os.Remove(tmpRaw)
@@ -1544,22 +1546,19 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer os.Remove(tmpRaw)
-
-	// Check if raw image is already standard browser-native format (JPEG, PNG, WebP, GIF)
-	// to avoid expensive and slow /usr/bin/sips subprocess spawning.
-	rawHeader := make([]byte, 16)
-	if hf, hErr := os.Open(tmpRaw); hErr == nil {
-		_, _ = io.ReadFull(hf, rawHeader)
-		_ = hf.Close()
+	if downloaded > MaxImageDownloadBytes {
+		log.Printf("[img-proxy] image exceeds %d bytes for %s", MaxImageDownloadBytes, redactImageURL(targetURL))
+		serveFallback(w)
+		return
 	}
 
-	isJPEG := len(rawHeader) >= 3 && rawHeader[0] == 0xFF && rawHeader[1] == 0xD8 && rawHeader[2] == 0xFF
-	isPNG := len(rawHeader) >= 8 && bytes.Equal(rawHeader[:8], []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
-	isWebP := len(rawHeader) >= 12 && string(rawHeader[:4]) == "RIFF" && string(rawHeader[8:12]) == "WEBP"
-	isGIF := len(rawHeader) >= 6 && (string(rawHeader[:6]) == "GIF87a" || string(rawHeader[:6]) == "GIF89a")
+	if _, validMagic := imageFormat(tmpRaw); !validMagic {
+		log.Printf("[img-proxy] unsupported image data from %s", redactImageURL(targetURL))
+		serveFallback(w)
+		return
+	}
 
-	if isJPEG || isPNG || isWebP || isGIF {
-		// Native web image format - rename directly with zero CPU conversion overhead!
+	if imageMagic, ok := imageFormat(tmpRaw); ok && (imageMagic == imageJPEG || imageMagic == imagePNG || imageMagic == imageWebP || imageMagic == imageGIF) {
 		_ = os.Rename(tmpRaw, cacheJpg)
 	} else {
 		// Only invoke Apple sips CLI for HEIC or other non-native formats
@@ -1568,8 +1567,9 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 		sipsErr := cmd.Run()
 		<-sipsSem
 		if sipsErr != nil {
-			// Fallback: rename raw to cacheJpg if sips failed
-			_ = os.Rename(tmpRaw, cacheJpg)
+			_ = os.Remove(cacheJpg)
+			serveFallback(w)
+			return
 		}
 	}
 
@@ -1582,6 +1582,50 @@ func (ms *MediaServer) handleImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	serveFallback(w)
+}
+
+func redactImageURL(raw string) string { return resourcelog.RedactURL(raw) }
+
+type imageMagic uint32
+
+const (
+	imageJPEG imageMagic = iota + 1
+	imagePNG
+	imageWebP
+	imageGIF
+	imageHEIC
+)
+
+func imageFormat(path string) (imageMagic, bool) {
+	header := make([]byte, 16)
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, false
+	}
+	defer file.Close()
+	read, _ := io.ReadFull(file, header)
+	if read < 12 {
+		return 0, false
+	}
+	isJPEG := header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF
+	isPNG := bytes.Equal(header[:8], []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+	isWebP := string(header[:4]) == "RIFF" && string(header[8:12]) == "WEBP"
+	isGIF := string(header[:6]) == "GIF87a" || string(header[:6]) == "GIF89a"
+	isHEIC := string(header[4:8]) == "ftyp" && string(header[8:12]) != ""
+	switch {
+	case isJPEG:
+		return imageJPEG, true
+	case isPNG:
+		return imagePNG, true
+	case isWebP:
+		return imageWebP, true
+	case isGIF:
+		return imageGIF, true
+	case isHEIC:
+		return imageHEIC, true
+	default:
+		return 0, false
+	}
 }
 
 func isAllowedImageHost(hostname string) bool {

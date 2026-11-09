@@ -2,9 +2,13 @@ package ipc
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sync"
 	"testing"
+	"time"
+
+	"myguo/internal/resourcecache"
 )
 
 func TestHistoryCacheInvalidationIsSynchronized(t *testing.T) {
@@ -61,4 +65,28 @@ func TestConcurrentCredentialAndMediaCallbackAccess(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+}
+
+func TestIPCResourceCacheEvictsAndRejectsOversizedKeys(t *testing.T) {
+	svc := &HongguoService{cache: resourcecache.New(metadataCacheCapacity)}
+	keys := make([]string, 0, metadataCacheCapacity+1)
+	for index := 0; index <= metadataCacheCapacity; index++ {
+		key := "series_page:" + string(rune('a'+index/26%26)) + string(rune('a'+index/676%26)) + string(rune('a'+index/17576%26)) + fmt.Sprintf("%04d", index)
+		keys = append(keys, key)
+		svc.cache.Set(key, resourcecache.Item{Value: index, ExpiresAt: time.Now().Add(time.Minute)})
+	}
+	if svc.cache.Len() != metadataCacheCapacity {
+		t.Fatalf("cache length = %d, want %d", svc.cache.Len(), metadataCacheCapacity)
+	}
+	if _, ok := svc.cache.Get(keys[0]); ok {
+		t.Fatal("oldest entry was not evicted")
+	}
+	if item, ok := svc.cache.Get(keys[len(keys)-1]); !ok || item.Value != metadataCacheCapacity {
+		t.Fatalf("newest entry = %#v, %v", item, ok)
+	}
+
+	oversized := make([]byte, resourcecache.MaxKeyLength+1)
+	if svc.cache.Set(string(oversized), resourcecache.Item{Value: "rejected"}) {
+		t.Fatal("oversized cache key was accepted")
+	}
 }
