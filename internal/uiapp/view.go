@@ -515,7 +515,7 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 		}
 	} else if a.view == "history" {
 		if item.EpisodeCount > 0 {
-			bottomRightBadge = fmt.Sprintf("共%d集", item.EpisodeCount)
+			bottomRightBadge = historyEpisodeBadge(item)
 		}
 	} else if a.view == "favorites" {
 		topLeftBadge = "收藏"
@@ -538,21 +538,21 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 			a.image(c, item.CoverURL, width, width*4/3)
 			if topLeftBadge != "" {
 				ui.Row(c.Key("badge-tl")).Absolute().Top(6).Left(6).
-					Padding(2, 6).Radius(4).Background(ui.RGBA(0, 0, 0, 0.65)).
+					Padding(2, 6).Radius(4).Material(darkGlassMaterial(false)).
 					Children(func() {
 						ui.Text(c, topLeftBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
 					})
 			}
 			if bottomRightBadge != "" {
 				ui.Row(c.Key("badge-br")).Absolute().Bottom(6).Right(6).
-					Padding(2, 6).Radius(4).Background(ui.RGBA(0, 0, 0, 0.65)).
+					Padding(2, 6).Radius(4).Material(darkGlassMaterial(false)).
 					Children(func() {
 						ui.Text(c, bottomRightBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
 					})
 			}
 			if topRightBadge != "" {
 				ui.Row(c.Key("badge-tr")).Absolute().Top(catalogOverlayInset).Right(catalogOverlayInset).
-					Padding(2, 6).Radius(4).Background(ui.RGBA(0, 0, 0, 0.65)).
+					Padding(2, 6).Radius(4).Material(darkGlassMaterial(false)).
 					Children(func() {
 						ui.Text(c, topRightBadge).FontSize(11).Bold().TextColor(ui.Hex("#ffffff"))
 					})
@@ -564,7 +564,7 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 					Height(catalogOverlayHeight).Padding(0, 12).Radius(catalogOverlayHeight/2).
 					Shadow(0, 3, 8, 0, ui.RGBA(0, 0, 0, 0.22)).
 					AlignItems(ui.Center).Justify(ui.Center).Role(ui.RoleButton).Label(label).
-					Material(glass.Glass{Style: glass.Clear, Interactive: true})
+					Material(darkGlassMaterial(true))
 				if overlay.Clicked() {
 					libraryTab := libraryHistory
 					switch a.view {
@@ -588,14 +588,8 @@ func (a *App) catalogCardSized(c *ui.Context, item CatalogItem, width float32) {
 		})
 
 		if a.view == "history" {
-			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Width(width).Children(func() {
-				if item.EpisodeCount > 0 {
-					ui.Text(c, fmt.Sprintf("%d / %d 集", max(1, item.ResumeEpisode), item.EpisodeCount)).FontSize(12).Bold().TextColor(ui.Hex("#ff3358"))
-				} else {
-					ui.Box(c).Height(0)
-				}
-				relTime := formatRelativeTime(item.UpdatedAt)
-				ui.Text(c, relTime).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50))
+			ui.Row(c).Justify(ui.End).AlignItems(ui.Center).Width(width).Children(func() {
+				ui.Text(c, formatRelativeTime(item.UpdatedAt)).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.50))
 			})
 		} else if a.view == "reservations" {
 			ui.Row(c).Justify(ui.SpaceBetween).AlignItems(ui.Center).Width(width).Children(func() {
@@ -1358,6 +1352,25 @@ func (a *App) image(c *ui.Context, source string, width, height float32) {
 
 func formatEpisode(number int) string {
 	return fmt.Sprintf("第%d集", number)
+}
+
+func historyEpisodeBadge(item CatalogItem) string {
+	if item.ResumeEpisode > 1 && item.EpisodeCount > 0 {
+		watched := min(item.ResumeEpisode, item.EpisodeCount)
+		return fmt.Sprintf("%d / %d集", watched, item.EpisodeCount)
+	}
+	if item.EpisodeCount > 0 {
+		return fmt.Sprintf("共%d集", item.EpisodeCount)
+	}
+	return ""
+}
+
+func darkGlassMaterial(interactive bool) glass.Glass {
+	return glass.Glass{
+		Style:       glass.Clear,
+		Tint:        ui.RGBA(0, 0, 0, 82),
+		Interactive: interactive,
+	}
 }
 
 func formatPublishDate(value string) string {
