@@ -2,8 +2,10 @@ package ipc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,9 +18,10 @@ import (
 )
 
 type ActorInfo struct {
-	Name   string `json:"name"`
-	Role   string `json:"role,omitempty"`
-	UserID string `json:"userId,omitempty"`
+	Name    string `json:"name"`
+	Role    string `json:"role,omitempty"`
+	UserID  string `json:"userId,omitempty"`
+	ActorID string `json:"actorId,omitempty"`
 }
 
 type SourceNovelDTO struct {
@@ -404,17 +407,23 @@ func (s *HongguoService) newSeriesDetailPage(detail model.SeriesDetail, seriesID
 			if idx := strings.Index(text, "·"); idx >= 0 {
 				text = text[idx+1:]
 			}
-			for _, name := range strings.FieldsFunc(text, func(r rune) bool {
+			names := strings.FieldsFunc(text, func(r rune) bool {
 				return r == ',' || r == '，' || r == '、' || r == '/' || unicode.IsSpace(r)
-			}) {
+			})
+			actorIDs := actorIDsFromSchema(row.Schema)
+			for index, name := range names {
 				name = sanitizeUTF8(name)
 				key := strings.ToLower(name)
 				if key == "" || seenActors[key] {
 					continue
 				}
 				seenActors[key] = true
+				actorID := ""
+				if index < len(actorIDs) {
+					actorID = actorIDs[index]
+				}
 				actors = append(actors, ActorInfo{
-					Name: name, Role: "演员", UserID: actorUserIDFromSchema(row.Schema),
+					Name: name, Role: "演员", ActorID: actorID,
 				})
 			}
 		}
@@ -477,6 +486,35 @@ func actorUserIDFromSchema(schema string) string {
 		return ""
 	}
 	return value
+}
+
+func actorIDsFromSchema(schema string) []string {
+	if userID := actorUserIDFromSchema(schema); userID != "" {
+		return []string{userID}
+	}
+	parsed, err := url.Parse(schema)
+	if err != nil {
+		return nil
+	}
+	encoded := parsed.Query().Get("client_extra")
+	if encoded == "" {
+		return nil
+	}
+	var extra struct {
+		ActorIDs []string `json:"actor_ids"`
+	}
+	if err := json.Unmarshal([]byte(encoded), &extra); err != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(extra.ActorIDs))
+	for _, id := range extra.ActorIDs {
+		number, err := strconv.ParseInt(id, 10, 64)
+		if err != nil || number <= 0 || strconv.FormatInt(number, 10) != id {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (s *HongguoService) fetchSeriesBatchMap(ctx context.Context, ids []string) map[string]*model.Series {

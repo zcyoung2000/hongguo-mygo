@@ -52,8 +52,9 @@ func TestDetailActorsUseSchemaIDOrRemoveButtonAffordance(t *testing.T) {
 	if err := tt.Click("演员主页：可跳转演员"); err != nil {
 		t.Fatalf("click clickable actor chip: %v", err)
 	}
-	waitFor(time.Second, func() bool { return app.view == "actor" && app.actor.ID == "710000000000001" })
-	if app.view != "actor" || app.actor.ID != "710000000000001" {
+	wantActorID := "7407367786839676185"
+	waitFor(time.Second, func() bool { return app.view == "actor" && app.actor.ID == wantActorID })
+	if app.view != "actor" || app.actor.ID != wantActorID {
 		t.Fatalf("actor chip navigation mismatch: view=%q id=%q", app.view, app.actor.ID)
 	}
 }
@@ -126,7 +127,7 @@ func TestFavoriteDuringDetailLoadDoesNotRefetchContent(t *testing.T) {
 }
 
 func testActorPage() []ipc.ActorInfo {
-	return []ipc.ActorInfo{{Name: "可跳转演员", Role: "演员", UserID: "710000000000001"}, {Name: "无ID演员", Role: "演员"}}
+	return []ipc.ActorInfo{{Name: "可跳转演员", Role: "演员", ActorID: "7407367786839676185"}, {Name: "无ID演员", Role: "演员"}}
 }
 
 func renderTesterAndAdvance(t *testing.T, app *App, width, height int) *ui.Tester {
