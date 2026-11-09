@@ -50,7 +50,7 @@ func TestDetailActorsUseSchemaIDOrRemoveButtonAffordance(t *testing.T) {
 	}
 }
 
-func TestDetailCollectionEmptyStateDistinguishesFromError(t *testing.T) {
+func TestDetailCollectionErrorDistinguishesFromHiddenEmpty(t *testing.T) {
 	app := NewTestApp()
 	app.view = "detail"
 	app.detail = Detail{
@@ -59,8 +59,8 @@ func TestDetailCollectionEmptyStateDistinguishesFromError(t *testing.T) {
 		Adaptations: DetailCollection{Title: "同一剧本改编", Error: "加载失败"},
 	}
 	tt := renderTesterAndAdvance(t, app, 1000, 1000)
-	if !tt.HasText("暂无同系列短剧") {
-		t.Fatalf("collection empty state missing")
+	if tt.HasText("暂无同系列短剧") || tt.HasText("同系列短剧") {
+		t.Fatalf("empty collection rendered instead of hiding: texts=%v", tt.Texts())
 	}
 	if !tt.HasText("同一剧本改编") || tt.HasText("暂无同一剧本改编") {
 		t.Fatalf("empty state shown for failed collection")

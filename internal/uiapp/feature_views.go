@@ -423,6 +423,9 @@ func (a *App) renderCollection(c *ui.Context, label string, value DetailCollecti
 	if value.Title != "" {
 		label = value.Title
 	}
+	if !value.Loading && value.Error == "" && len(value.Items) == 0 {
+		return
+	}
 	section := ui.Column(c.Key("detail-collection:" + label)).Gap(8)
 	section.Children(func() {
 		ui.Text(c, label).Bold().FontSize(15).TextColor(ui.Hex("#ffffff"))
@@ -432,10 +435,6 @@ func (a *App) renderCollection(c *ui.Context, label string, value DetailCollecti
 		}
 		if value.Error != "" {
 			a.errorView(c, value.Error, retry)
-			return
-		}
-		if len(value.Items) == 0 {
-			ui.Text(c, "暂无"+label).FontSize(12).TextColor(c.Theme().TextMuted)
 			return
 		}
 		ui.ScrollHorizontal(c.Key("col-scroll-" + label)).Scrollbars(false).Height(catalogRowHeight(value.Items)).Children(func() {
