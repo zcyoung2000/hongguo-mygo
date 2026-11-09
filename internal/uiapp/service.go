@@ -150,6 +150,7 @@ type Settings struct {
 	LoginOpen      bool
 	LoginCookie    string
 	LoginToken     string
+	Success        string
 	Error          string
 }
 
