@@ -37,7 +37,8 @@ func (a *App) cardGrid(c *ui.Context, key string, state *ui.GridState, scroll *u
 }
 
 const (
-	catalogButtonHeight   float32 = 28
+	catalogOverlayHeight  float32 = 30
+	catalogOverlayInset   float32 = 6
 	catalogTextLineHeight float32 = 20
 	catalogRowGap         float32 = 6
 )
@@ -54,7 +55,7 @@ func (a *App) collectionRowHeight(c *ui.Context, cardWidth float32, items []Cata
 				if item.PublishAt != "" {
 					height += catalogTextLineHeight
 				}
-				height += catalogButtonHeight
+				height += catalogOverlayHeight
 			} else {
 				height += catalogTextLineHeight
 				if item.Heat != "" {
@@ -64,7 +65,7 @@ func (a *App) collectionRowHeight(c *ui.Context, cardWidth float32, items []Cata
 			}
 		default:
 			if item.Upcoming {
-				height += measuredTextHeight(c, cardWidth, formatPublishDate(item.PublishAt), 13) + catalogButtonHeight
+				height += measuredTextHeight(c, cardWidth, formatPublishDate(item.PublishAt), 13)
 			} else {
 				meta := item.Heat
 				if item.EpisodeCount > 0 {

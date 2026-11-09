@@ -40,6 +40,28 @@ func TestReservationRowsHaveSpaceForAllMetadata(t *testing.T) {
 	}
 }
 
+func TestPosterActionDoesNotOpenCard(t *testing.T) {
+	app := NewTestApp()
+	provider := &mutationProvider{}
+	app.libraryMutations = provider
+	app.view = "favorites"
+	item := CatalogItem{ID: "favorite-1", EpisodeID: "episode-1", Title: "浮层操作剧", EpisodeCount: 10}
+	app.library.Favorites = Library{Loaded: true, Items: []CatalogItem{item}}
+	app.library.Grids[1] = &ui.GridState{}
+	tester := ui.NewTester(app.Render, 1000, 900)
+	tester.Frame()
+	if err := tester.Click("取消收藏"); err != nil {
+		t.Fatalf("poster action was not clickable: %v", err)
+	}
+	tester.Frame()
+	if got := app.view; got != "favorites" {
+		t.Fatalf("poster action opened the card: view=%s", got)
+	}
+	if len(provider.calls) != 1 || provider.calls[0] != "favorite:favorite-1" {
+		t.Fatalf("poster action did not call removal exactly once: %+v", provider.calls)
+	}
+}
+
 func TestEveryLibraryCollectionFitsExtremeRowsAndActions(t *testing.T) {
 	longTitle := strings.Repeat("超长中文短剧标题用于验证虚拟网格真实高度", 10)
 	tests := []struct {
@@ -95,8 +117,15 @@ func TestEveryLibraryCollectionFitsExtremeRowsAndActions(t *testing.T) {
 			if title.Y < 0 || title.Y+title.H > 640 || action.Y < 0 || action.Y+action.H > 640 {
 				t.Fatalf("first row leaves viewport: title=%+v action=%+v", title, action)
 			}
-			if actionOK && action.Y+action.H <= title.Y+title.H {
-				t.Fatalf("action is clipped by title: title=%+v action=%+v", title, action)
+			if actionOK {
+				posterLabel := fmt.Sprintf("poster:%s-0000|episode-0000", test.view)
+				poster, posterOK := tester.Find(posterLabel)
+				if !posterOK {
+					t.Fatalf("action poster missing: action=%+v texts=%s", action, strings.Join(tester.Texts(), " | "))
+				}
+				if action.Y < poster.Y || action.Y+action.H > poster.Y+poster.H {
+					t.Fatalf("poster action leaves poster: poster=%+v action=%+v", poster, action)
+				}
 			}
 			if visible := app.visibleLibrary(LibraryTab(test.grid)); len(visible) != len(items) {
 				t.Fatalf("visible source did not retain %d rows", len(items))
