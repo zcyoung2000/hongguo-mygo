@@ -175,6 +175,15 @@ func WithDeviceProfileStore(store sdk.ProfileStore) ServiceOption {
 	return func(s *HongguoService) { s.setDeviceProfileStore(store) }
 }
 
+func WithUpstreamTransport(transport http.RoundTripper) ServiceOption {
+	return func(s *HongguoService) {
+		if transport == nil {
+			return
+		}
+		s.httpClient.Transport = transport
+	}
+}
+
 func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string, opts ...ServiceOption) *HongguoService {
 	return newHongguoService(client, store, media, appDir, "", opts...)
 }

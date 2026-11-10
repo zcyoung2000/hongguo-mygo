@@ -15,6 +15,7 @@ import (
 
 type CredentialTransport interface {
 	SetCredentials(cookies, token, storeRegion string)
+	SetHTTPClient(client *http.Client)
 }
 
 // Transport sends the same official SDK requests as the public client,
@@ -31,6 +32,15 @@ type Transport struct {
 
 func New() *Transport {
 	return &Transport{client: &http.Client{Timeout: 30 * time.Second}}
+}
+
+func (t *Transport) SetHTTPClient(client *http.Client) {
+	if client == nil {
+		return
+	}
+	t.mu.Lock()
+	t.client = client
+	t.mu.Unlock()
 }
 
 func (t *Transport) SetCredentials(cookies, token, storeRegion string) {
