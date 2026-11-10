@@ -174,6 +174,7 @@ func main() {
 		win.Invalidate()
 		win.OnClosed(func() {
 			fmt.Println("Main window closed")
+			service.FlushPendingProgress()
 			app.FlushPreferences()
 			native.Cleanup()
 		})

@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"context"
+	"strings"
 
 	"myguo/internal/library"
 	"myguo/internal/native"
@@ -44,7 +45,14 @@ func (s *HongguoService) invalidateCatalogCaches(prefixes ...string) {
 }
 
 func (s *HongguoService) SaveProgress(ctx context.Context, seriesID, episodeID string, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
+	if strings.TrimSpace(episodeID) == "" {
+		return nil
+	}
 	return s.libraryService().SaveProgress(ctx, seriesID, episodeID, title, coverURL, episodeNum, totalEpisodes, positionSec, durationSec)
+}
+
+func (s *HongguoService) FlushPendingProgress() {
+	s.libraryService().FlushPendingProgress()
 }
 
 func (s *HongguoService) GetHistory(ctx context.Context) ([]HistoryItem, error) {
