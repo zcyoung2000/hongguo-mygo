@@ -67,6 +67,28 @@ func (f *settingsTestProvider) ResetDevice(context.Context) error {
 	return nil
 }
 
+func (f *settingsTestProvider) GetSpareDeviceState(context.Context) (*ipc.SpareDeviceStateDTO, error) {
+	f.calls = append(f.calls, "GetSpareDeviceState")
+	return &ipc.SpareDeviceStateDTO{
+		Settings: ipc.SpareDeviceSettingsDTO{RegistrationDailyLimit: 1, RegistrationMinIntervalSec: 86400},
+	}, nil
+}
+
+func (f *settingsTestProvider) ImportSpareDevice(context.Context, string, string, string) (*ipc.SpareDeviceStateDTO, error) {
+	f.calls = append(f.calls, "ImportSpareDevice")
+	return f.GetSpareDeviceState(context.Background())
+}
+
+func (f *settingsTestProvider) DeleteSpareDevice(context.Context, string) (*ipc.SpareDeviceStateDTO, error) {
+	f.calls = append(f.calls, "DeleteSpareDevice")
+	return f.GetSpareDeviceState(context.Background())
+}
+
+func (f *settingsTestProvider) SetSpareDeviceRegistration(context.Context, bool) (*ipc.SpareDeviceStateDTO, error) {
+	f.calls = append(f.calls, "SetSpareDeviceRegistration")
+	return f.GetSpareDeviceState(context.Background())
+}
+
 func (f *settingsTestProvider) GetRankings(context.Context, string, string, string) (ipc.RankResponse, error) {
 	return ipc.RankResponse{}, nil
 }
@@ -122,6 +144,7 @@ func TestSettingsRendersNativeSectionsAndActions(t *testing.T) {
 	for _, text := range []string{
 		"设置", "Henry", "已登录官方账号", "账号 ID:", "42", "刷新资料", "退出登录", "切换账号",
 		"设备与存储管理", "本地媒体缓存", "5.0 MB", "清理缓存", "匿名设备指纹", "device-id", "重置设备",
+		"播放备用设备池", "仅在播放受限时借用", "手动导入备用设备", "did (必填)", "导入备用设备",
 		"账号凭据登录", "Cookie (必填)", "验证并登录",
 	} {
 		if !tt.HasText(text) {

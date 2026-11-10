@@ -22,6 +22,7 @@ import (
 	"myguo/internal/native"
 	"myguo/internal/resourcecache"
 	"myguo/internal/sanitize"
+	"myguo/internal/sparedevice"
 	userstore "myguo/internal/store"
 	"myguo/internal/upstream"
 )
@@ -163,6 +164,7 @@ type HongguoService struct {
 	episodeCacheIndex    map[string]*list.Element
 	episodeCacheLRU      *list.List
 	episodeLoads         map[string]*episodeLoad
+	spareDevices         *sparedevice.Manager
 }
 
 type ServiceOption func(*HongguoService)
@@ -173,6 +175,10 @@ func WithAuthTransport(transport auth.CredentialTransport) ServiceOption {
 
 func WithDeviceProfileStore(store sdk.ProfileStore) ServiceOption {
 	return func(s *HongguoService) { s.setDeviceProfileStore(store) }
+}
+
+func WithSpareDeviceManager(manager *sparedevice.Manager) ServiceOption {
+	return func(s *HongguoService) { s.spareDevices = manager }
 }
 
 func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string, opts ...ServiceOption) *HongguoService {
@@ -213,6 +219,17 @@ func newHongguoService(client *sdk.Client, store *Store, media *MediaServer, app
 	}
 	for _, opt := range opts {
 		opt(svc)
+	}
+	if svc.spareDevices != nil {
+		if transport, ok := svc.authTransport.(sdk.Transport); ok {
+			svc.spareDevices = sparedevice.NewManager(store,
+				sparedevice.WithClientConstructor(sdk.NewClient, transport),
+				sparedevice.WithLogger(log.Default()),
+			)
+		}
+		if svc.media != nil {
+			svc.media.SetSpareDevicePool(svc.spareDevices)
+		}
 	}
 	// Restore only credentials explicitly saved by this app. Legacy import is
 	// offered separately and must never undo an explicit logout on restart.

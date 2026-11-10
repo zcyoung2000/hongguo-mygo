@@ -28,6 +28,7 @@ import (
 	"myguo/internal/lifecycle"
 	"myguo/internal/mediautil"
 	"myguo/internal/resourcelog"
+	"myguo/internal/sparedevice"
 )
 
 const (
@@ -81,6 +82,7 @@ type QualitySelection struct {
 type MediaServer struct {
 	tasks              lifecycle.Group
 	client             *sdk.Client
+	primaryPlayback    playbackResolver
 	cacheDir           string
 	port               int
 	server             *http.Server
@@ -107,6 +109,8 @@ type MediaServer struct {
 	cachePins          map[string]int
 	onEpisodeCacheFn   atomic.Pointer[func(seriesID, episodeID string, num int, quality string) error]
 	onDeviceResetFn    atomic.Pointer[func(ctx context.Context) error]
+	resetDeviceForTest func(context.Context) error
+	spareDevicePool    atomic.Pointer[sparedevice.Manager]
 	evicting           atomic.Bool
 	lastEvictionAt     atomic.Int64
 	networkMu          sync.Mutex
@@ -142,6 +146,10 @@ type playbackLoad struct {
 type playbackLoadResult struct {
 	pb  *model.Playback
 	err error
+}
+
+type playbackResolver interface {
+	ResolvePlayback(context.Context, string, sdk.PlaybackOptions) (*model.Playback, error)
 }
 
 type PrefetchExecution struct {
@@ -402,6 +410,10 @@ func selectVideoStream(pb *model.Playback, requested string) (model.Stream, erro
 }
 
 func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*model.Playback, error) {
+	return ms.resolvePlaybackForSession(ctx, episodeID, "")
+}
+
+func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID, session string) (*model.Playback, error) {
 	if episodeID == "" {
 		return nil, fmt.Errorf("empty episode id")
 	}
@@ -440,13 +452,24 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 	ms.pbLoads[episodeID] = load
 	ms.pbLoadMu.Unlock()
 
-	pb, err := ms.client.ResolvePlayback(ctx, episodeID, sdk.PlaybackOptions{})
+	pb, err := ms.resolveWithPrimary(ctx, episodeID)
 	if errors.Is(err, sdk.ErrAnonymousLimited) {
+		if pool := ms.spareDevicePool.Load(); pool != nil {
+			spare, spareErr := pool.ResolveForSession(ctx, session, episodeID, err, func(ctx context.Context, episodeID string, options sdk.PlaybackOptions) (*model.Playback, error) {
+				return ms.resolveWithPrimary(ctx, episodeID)
+			})
+			if spareErr == nil {
+				pool.ReleaseSession(session)
+				err = nil
+				return ms.finishPlaybackLoad(load, episodeID, spare, nil)
+			}
+			log.Printf("[media] spare device playback failed: %v", spareErr)
+		}
 		if resetErr := ms.resetDevice(ctx); resetErr != nil {
 			log.Printf("[media] device reset failed: %v", resetErr)
 		}
 		ms.clearPlaybackCache()
-		pb, err = ms.client.ResolvePlayback(ctx, episodeID, sdk.PlaybackOptions{})
+		pb, err = ms.resolveWithPrimary(ctx, episodeID)
 	}
 	if errors.Is(err, sdk.ErrDRMProtected) && pb != nil {
 		err = nil
@@ -458,18 +481,30 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 		pb = nil
 	}
 
+	return ms.finishPlaybackLoad(load, episodeID, pb, err)
+}
+
+func (ms *MediaServer) resolveWithPrimary(ctx context.Context, episodeID string) (*model.Playback, error) {
+	if ms.primaryPlayback != nil {
+		return ms.primaryPlayback.ResolvePlayback(ctx, episodeID, sdk.PlaybackOptions{})
+	}
+	if ms.client == nil {
+		return nil, fmt.Errorf("playback client unavailable")
+	}
+	return ms.client.ResolvePlayback(ctx, episodeID, sdk.PlaybackOptions{})
+}
+
+func (ms *MediaServer) finishPlaybackLoad(load *playbackLoad, episodeID string, pb *model.Playback, err error) (*model.Playback, error) {
 	if err == nil && pb != nil {
 		ms.pbCacheMu.Lock()
 		ms.rememberPlaybackLocked(episodeID, pb)
 		ms.pbCacheMu.Unlock()
 	}
-
 	ms.pbLoadMu.Lock()
 	load.result = playbackLoadResult{pb: pb, err: err}
 	close(load.done)
 	delete(ms.pbLoads, episodeID)
 	ms.pbLoadMu.Unlock()
-
 	return pb, err
 }
 
@@ -505,7 +540,11 @@ func (ms *MediaServer) rememberPlaybackLocked(episodeID string, pb *model.Playba
 }
 
 func (ms *MediaServer) PlaybackQualities(ctx context.Context, episodeID, requested string) (QualitySelection, error) {
-	pb, err := ms.resolvePlayback(ctx, episodeID)
+	return ms.PlaybackQualitiesForSession(ctx, episodeID, requested, "")
+}
+
+func (ms *MediaServer) PlaybackQualitiesForSession(ctx context.Context, episodeID, requested, session string) (QualitySelection, error) {
+	pb, err := ms.resolvePlaybackForSession(ctx, episodeID, session)
 	if err != nil {
 		return QualitySelection{}, err
 	}
@@ -718,7 +757,24 @@ func (ms *MediaServer) SetDeviceResetter(resetter func(ctx context.Context) erro
 	ms.onDeviceResetFn.Store(&resetter)
 }
 
+func (ms *MediaServer) SetSpareDevicePool(pool *sparedevice.Manager) {
+	ms.spareDevicePool.Store(pool)
+}
+
+func (ms *MediaServer) setPrimaryPlaybackResolver(resolver playbackResolver) {
+	ms.primaryPlayback = resolver
+}
+
+func (ms *MediaServer) ReleasePlaybackSession(session string) {
+	if pool := ms.spareDevicePool.Load(); pool != nil {
+		(*pool).ReleaseSession(session)
+	}
+}
+
 func (ms *MediaServer) resetDevice(ctx context.Context) error {
+	if ms.resetDeviceForTest != nil {
+		return ms.resetDeviceForTest(ctx)
+	}
 	if resetter := ms.onDeviceResetFn.Load(); resetter != nil {
 		return (*resetter)(ctx)
 	}
