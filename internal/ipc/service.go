@@ -259,6 +259,10 @@ func (s *HongguoService) deviceIdentity() (deviceID, iid, cdid, openudid string)
 	return s.deviceID, s.iid, s.cdid, s.openudid
 }
 
+func (s *HongguoService) DeviceIdentity() (deviceID, iid, cdid, openudid string) {
+	return s.deviceIdentity()
+}
+
 func (s *HongguoService) runtimeIdentity() (userAgent, storeRegion string) {
 	s.identityMu.RLock()
 	defer s.identityMu.RUnlock()
@@ -586,6 +590,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 			cards = append(cards, newCards...)
 		}
 		if len(cards) >= minRecommendFeedBatch {
+			cards = s.enrichSeriesCards(ctx, cards)
 			return sanitizeIPC(&RecommendFeedResult{
 				Items:   cards,
 				Cursor:  page.Cursor,
