@@ -190,7 +190,7 @@ func (r sdkPlaybackResolver) fetchFallback(ctx context.Context, fallbackURL stri
 
 func (r sdkPlaybackResolver) ResolvePlayback(ctx context.Context, episodeID string) (*playbackResolveResult, error) {
 	if r.client == nil {
-		return nil, errors.New("playback client unavailable")
+		return nil, errNilPlaybackClient
 	}
 	return r.fetchPrimary(ctx, episodeID)
 }

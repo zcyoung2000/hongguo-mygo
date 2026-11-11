@@ -44,6 +44,8 @@ const (
 
 var videoQualities = []string{"1080p", "720p", "540p", "480p", "360p"}
 
+var errNilPlaybackClient = errors.New("playback client unavailable")
+
 type MediaDiagnosticsDTO struct {
 	NetworkProfile     string `json:"networkProfile"`
 	NetworkBytesPerSec int64  `json:"networkBytesPerSec"`
@@ -90,6 +92,7 @@ type MediaServer struct {
 	pbCache            map[string]playbackCacheItem
 	pbLoadMu           sync.Mutex
 	pbLoads            map[string]*playbackLoad
+	multiModel         *MultiVideoModelBatcher
 	prefetchQ          chan PrefetchTask
 	prefetchMu         sync.Mutex
 	prefetchQueued     map[string]PrefetchTask
@@ -441,6 +444,12 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 	ms.pbLoads[episodeID] = load
 	ms.pbLoadMu.Unlock()
 
+	if ms.playbackResolver == nil && ms.client == nil {
+		err := errNilPlaybackClient
+		ms.finishPlaybackLoad(episodeID, load, nil, err)
+		return nil, err
+	}
+
 	resolver := ms.playbackResolver
 	if resolver == nil {
 		resolver = newSDKFallbackPlaybackResolver(ms.client, nil)
@@ -480,13 +489,17 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 		ms.pbCacheMu.Unlock()
 	}
 
+	ms.finishPlaybackLoad(episodeID, load, pb, err)
+
+	return pb, err
+}
+
+func (ms *MediaServer) finishPlaybackLoad(episodeID string, load *playbackLoad, pb *model.Playback, err error) {
 	ms.pbLoadMu.Lock()
 	load.result = playbackLoadResult{pb: pb, err: err}
 	close(load.done)
 	delete(ms.pbLoads, episodeID)
 	ms.pbLoadMu.Unlock()
-
-	return pb, err
 }
 
 func (ms *MediaServer) clearPlaybackCache() {
@@ -658,6 +671,7 @@ func newMediaServer(client *sdk.Client, cacheDir string) (*MediaServer, error) {
 		port:               port,
 		pbCache:            make(map[string]playbackCacheItem),
 		pbLoads:            make(map[string]*playbackLoad),
+		multiModel:         NewMultiVideoModelBatcher(client, nil),
 		prefetchQ:          make(chan PrefetchTask, 64),
 		prefetchQueued:     make(map[string]PrefetchTask),
 		prefetchActive:     make(map[string]*PrefetchExecution),
@@ -740,6 +754,42 @@ func (ms *MediaServer) resetDevice(ctx context.Context) error {
 		return (*resetter)(ctx)
 	}
 	return ms.client.ResetDevice(ctx)
+}
+
+func (ms *MediaServer) SetMultiModelDeviceIdentity(identity func() (deviceID, installID, cdid, openudid string)) {
+	if ms.multiModel != nil {
+		ms.multiModel.setDeviceIdentity(identity)
+	}
+}
+
+func (ms *MediaServer) RememberPlayback(episodeID string, pb *model.Playback) {
+	if episodeID == "" || pb == nil {
+		return
+	}
+	ms.pbCacheMu.Lock()
+	ms.rememberPlaybackLocked(episodeID, pb)
+	ms.pbCacheMu.Unlock()
+}
+
+func (ms *MediaServer) PrefetchNextPlaybackModels(episodes []model.Episode) {
+	if ms.multiModel == nil {
+		return
+	}
+	if len(episodes) == 0 {
+		ms.multiModel.forgetWindow()
+		return
+	}
+	ms.multiModel.ReplaceWindow(episodes)
+	_, done, err := ms.tasks.Acquire()
+	if err != nil {
+		return
+	}
+	go func() {
+		defer done()
+		ctx, cancel := context.WithTimeout(context.Background(), multiVideoModelHTTPTimeout)
+		defer cancel()
+		ms.multiModel.Run(ctx, ms.RememberPlayback)
+	}()
 }
 
 func (ms *MediaServer) SetEpisodeCacheCallback(callback func(seriesID, episodeID string, num int, quality string) error) {
