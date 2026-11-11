@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"sort"
 	"strconv"
@@ -36,21 +37,23 @@ type SourceNovelDTO struct {
 
 type SeriesDetailPageDTO struct {
 	SeriesDetailDTO
-	Category      string          `json:"category"`
-	ContentType   int             `json:"contentType,omitempty"`
-	Tags          []string        `json:"tags"`
-	Subtitles     []string        `json:"subtitles"`
-	Actors        []ActorInfo     `json:"actors"`
-	PlayCount     int64           `json:"playCount"`
-	FollowCount   int64           `json:"followCount"`
-	LikeCount     int64           `json:"likeCount"`
-	Source        *SourceNovelDTO `json:"source,omitempty"`
-	EpisodeTitle  string          `json:"episodeTitle"`
-	EpisodesTitle string          `json:"episodesTitle"`
-	StatusText    string          `json:"statusText"`
-	PublishText   string          `json:"publishText,omitempty"`
-	Upcoming      bool            `json:"upcoming,omitempty"`
-	Reserved      bool            `json:"reserved,omitempty"`
+	Category       string          `json:"category"`
+	ContentType    int             `json:"contentType,omitempty"`
+	Tags           []string        `json:"tags"`
+	Subtitles      []string        `json:"subtitles"`
+	Actors         []ActorInfo     `json:"actors"`
+	PlayCount      int64           `json:"playCount"`
+	FollowCount    int64           `json:"followCount"`
+	LikeCount      int64           `json:"likeCount"`
+	Source         *SourceNovelDTO `json:"source,omitempty"`
+	EpisodeTitle   string          `json:"episodeTitle"`
+	EpisodesTitle  string          `json:"episodesTitle"`
+	StatusText     string          `json:"statusText"`
+	PublishText    string          `json:"publishText,omitempty"`
+	Upcoming       bool            `json:"upcoming,omitempty"`
+	Reserved       bool            `json:"reserved,omitempty"`
+	ResumeEpisode  int             `json:"resumeEpisode,omitempty"`
+	ResumePosition float64         `json:"resumePosition,omitempty"`
 }
 
 type SeriesCollectionDTO struct {
@@ -155,6 +158,9 @@ func (s *HongguoService) GetSeriesPage(ctx context.Context, seriesID string) (*S
 	page.EpisodeTitle = "选集"
 	page.EpisodesTitle = fmt.Sprintf("共 %d 集", page.EpisodeCount)
 	page = sanitizeIPC(page)
+	if _, err := s.libraryService().ReconcileSeriesProgress(pageCtx, seriesID); err != nil {
+		log.Printf("[history] series progress reconcile failed: %v", err)
+	}
 
 	s.cache.Set(cacheKey, resourcecache.Item{Value: page, ExpiresAt: time.Now().Add(5 * time.Minute)})
 
@@ -167,6 +173,10 @@ func (s *HongguoService) withSeriesUserState(page *SeriesDetailPageDTO) *SeriesD
 	result := *page
 	result.IsFavorite = s.store.IsFavorite(result.ID)
 	result.Reserved = s.store.HasReservation(result.ID)
+	if history, ok := s.store.GetHistoryItem(result.ID); ok {
+		result.ResumeEpisode = history.EpisodeNum
+		result.ResumePosition = history.PositionSec
+	}
 	return &result
 }
 
