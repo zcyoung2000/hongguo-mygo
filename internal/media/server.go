@@ -121,6 +121,7 @@ type MediaServer struct {
 	networkLastErrorAt time.Time
 	playbackCacheHits  atomic.Int64
 	playbackCacheMiss  atomic.Int64
+	playbackResolver   PlaybackResolver
 	progressiveStarts  atomic.Int64
 	progressiveHits    atomic.Int64
 	hlsStarts          atomic.Int64
@@ -443,22 +444,33 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 	ms.pbLoads[episodeID] = load
 	ms.pbLoadMu.Unlock()
 
-	var pb *model.Playback
-	var err error
-	if ms.client == nil {
-		err = errNilPlaybackClient
-	} else {
-		pb, err = ms.client.ResolvePlayback(ctx, episodeID, sdk.PlaybackOptions{})
+	if ms.playbackResolver == nil && ms.client == nil {
+		err := errNilPlaybackClient
+		ms.finishPlaybackLoad(episodeID, load, nil, err)
+		return nil, err
 	}
-	if errors.Is(err, sdk.ErrAnonymousLimited) {
+
+	resolver := ms.playbackResolver
+	if resolver == nil {
+		resolver = newSDKFallbackPlaybackResolver(ms.client, nil)
+	}
+	resolved, err := resolver.ResolvePlayback(ctx, episodeID)
+	var pb *model.Playback
+	if resolved != nil {
+		pb = resolved.Playback
+	}
+	if errors.Is(err, sdk.ErrAnonymousLimited) || (err != nil && errors.Is(err, context.DeadlineExceeded)) {
 		if resetErr := ms.resetDevice(ctx); resetErr != nil {
 			log.Printf("[media] device reset failed: %v", resetErr)
 		}
 		ms.clearPlaybackCache()
-		if ms.client == nil {
-			err = errNilPlaybackClient
-		} else {
-			pb, err = ms.client.ResolvePlayback(ctx, episodeID, sdk.PlaybackOptions{})
+		reset, resetErr := sdkPlaybackResolver{client: ms.client}.ResolvePlayback(ctx, episodeID)
+		pb, err = nil, nil
+		if reset != nil {
+			pb = reset.Playback
+		}
+		if pb == nil {
+			err = fmt.Errorf("empty playback model after device reset: %w", resetErr)
 		}
 	}
 	if errors.Is(err, sdk.ErrDRMProtected) && pb != nil {
@@ -477,13 +489,17 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 		ms.pbCacheMu.Unlock()
 	}
 
+	ms.finishPlaybackLoad(episodeID, load, pb, err)
+
+	return pb, err
+}
+
+func (ms *MediaServer) finishPlaybackLoad(episodeID string, load *playbackLoad, pb *model.Playback, err error) {
 	ms.pbLoadMu.Lock()
 	load.result = playbackLoadResult{pb: pb, err: err}
 	close(load.done)
 	delete(ms.pbLoads, episodeID)
 	ms.pbLoadMu.Unlock()
-
-	return pb, err
 }
 
 func (ms *MediaServer) clearPlaybackCache() {
@@ -662,6 +678,7 @@ func newMediaServer(client *sdk.Client, cacheDir string) (*MediaServer, error) {
 		progressiveStreams: make(map[string]*progressiveStream),
 		hlsStreams:         make(map[string]*hlsStream),
 		cachePins:          make(map[string]int),
+		playbackResolver:   newPlaybackRaceResolver(newSDKFallbackPlaybackResolver(client, nil), nil),
 	}
 
 	mux := http.NewServeMux()

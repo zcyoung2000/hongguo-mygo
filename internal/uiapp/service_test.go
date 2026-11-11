@@ -27,6 +27,8 @@ func TestCatalogValuesUsesSelectedFiltersAndDefaultsToGenre(t *testing.T) {
 func TestSelectGenreResetsCatalogAndTriggersAsyncLoad(t *testing.T) {
 	app := NewTestApp()
 	app.SetInvalidator(func() {})
+	host := &MediaHost{}
+	app.SetMediaHost(host)
 	app.catalog.Items = []CatalogItem{{ID: "old"}}
 	app.catalog.Cursor = "cursor"
 	app.catalog.HasMore = true
@@ -43,6 +45,8 @@ func TestSelectGenreResetsCatalogAndTriggersAsyncLoad(t *testing.T) {
 func TestOpenDetailShowsLoadingWithoutPlayer(t *testing.T) {
 	app := NewTestApp()
 	app.SetInvalidator(func() {})
+	host := &MediaHost{}
+	app.SetMediaHost(host)
 	app.OpenDetail("123456")
 	if app.View() != "detail" || app.PlayerVisible() || !app.DetailState().Loading {
 		t.Fatalf("detail state = view %q player %t detail %+v", app.View(), app.PlayerVisible(), app.DetailState())
@@ -80,6 +84,27 @@ func TestDetailProviderIsInvokedDirectly(t *testing.T) {
 	app.loadDetail("123456")
 	if source.pages.Load() != 1 || app.DetailState().Title != "详情" {
 		t.Fatalf("detail provider calls=%d state=%+v", source.pages.Load(), app.DetailState())
+	}
+}
+
+func TestDetailProgressReconcileFeedsResume(t *testing.T) {
+	app := NewTestApp()
+	app.SetInvalidator(func() {})
+	host := &MediaHost{}
+	app.SetMediaHost(host)
+	app.detailSource = &fakeDetail{page: &ipc.SeriesDetailPageDTO{
+		SeriesDetailDTO: ipc.SeriesDetailDTO{ID: "123456", Title: "详情"},
+		ResumeEpisode:   8,
+		ResumePosition:  72.5,
+	}}
+	app.loadDetail("123456")
+	if app.resume.ResumeEpisode != 8 || app.resume.ResumePosition != 72.5 {
+		t.Fatalf("resume after detail = %+v", app.resume)
+	}
+	app.detail = Detail{ID: "123456", EpisodeCount: 10}
+	app.PlayDetail()
+	if host.desired["resumeAt"] != 72.5 || host.desired["episodeNum"] != 8 {
+		t.Fatalf("play scene = %#v, want reconciled resume", host.desired)
 	}
 }
 

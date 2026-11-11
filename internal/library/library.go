@@ -28,6 +28,7 @@ import (
 func (s *Service) SaveProgress(ctx context.Context, seriesID, episodeID string, title, coverURL string, episodeNum, totalEpisodes int, positionSec, durationSec float64) error {
 	session := s.currentSyncSession()
 	seriesID = strings.TrimSpace(seriesID)
+	episodeID = strings.TrimSpace(episodeID)
 	if strings.TrimSpace(title) == "" {
 		title = "未知短剧"
 	}
