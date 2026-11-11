@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"myguo/internal/sparedevice"
 	userstore "myguo/internal/store"
 	"myguo/internal/uiapp"
+	"myguo/internal/upstream"
 )
 
 //go:embed frontend/*
@@ -64,10 +66,29 @@ func main() {
 	log.Printf("[startup] stage=store-ready elapsedMs=%d", time.Since(started).Milliseconds())
 
 	profileStore := store.ProfileStore()
+	hostPicker := upstream.NewHostPicker(store.UpstreamStateStore())
+	if err := hostPicker.Restore(); err != nil {
+		log.Printf("[upstream] host state unavailable: %v", err)
+	}
+	hostPicker.Configure(
+		upstream.DefaultSuccessGain,
+		upstream.DefaultFailurePenalty,
+		upstream.DefaultMaxHealth,
+		upstream.DefaultMinHealth,
+		upstream.DefaultBadThreshold,
+		upstream.CooldownFromEnvironment(),
+		upstream.HalfOpenFromEnvironment(),
+		upstream.StaleAgeFromEnvironment(),
+	)
+	hostTransport := upstream.NewTransport(hostPicker, http.DefaultTransport)
+	hostTransport.SetEnabled(upstream.EnabledFromEnvironment())
+	hostTransport.SetMaxAttempts(upstream.AttemptsFromEnvironment())
 	authenticatedTransport := auth.New()
+	authenticatedTransport.SetHTTPClient(&http.Client{Timeout: 30 * time.Second, Transport: hostTransport})
 	client, err := sdk.NewClient(sdk.Options{
 		Transport:     authenticatedTransport,
 		ProfileStore:  profileStore,
+		APIOrigin:     "https://" + upstream.DefaultPlaybackHosts[0],
 		RetryAttempts: 3,
 	})
 	if err != nil {
@@ -102,9 +123,11 @@ func main() {
 			sparedevice.WithClientConstructor(sdk.NewClient, authenticatedTransport),
 			sparedevice.WithLogger(log.Default()),
 		)),
+		ipc.WithUpstreamTransport(hostTransport),
 	)
 	defer ipc.CloseService(service)
 	mediaServer.SetDeviceResetter(service.ResetDevice)
+	mediaServer.SetMultiModelDeviceIdentity(service.DeviceIdentity)
 	mygo.Bind(service)
 
 	// 5. Setup embedded frontend
@@ -179,6 +202,7 @@ func main() {
 		win.Invalidate()
 		win.OnClosed(func() {
 			fmt.Println("Main window closed")
+			service.FlushPendingProgress()
 			app.FlushPreferences()
 			native.Cleanup()
 		})

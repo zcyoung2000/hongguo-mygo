@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"myguo/internal/media"
 	"myguo/internal/sparedevice"
@@ -35,6 +36,7 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 	var commentCount int64
 	var playbackDurationSec int
 	cachedStart := false
+	var eps *sdk.Page[model.Episode]
 	if episodeID == "" {
 		// A full local cache can start instantly without a quality probe or
 		// another episode-list round trip. Series details/comments still load
@@ -56,7 +58,8 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 	}
 
 	if episodeID == "" && !cachedStart {
-		eps, err := s.listEpisodes(ctx, seriesID)
+		var err error
+		eps, err = s.listEpisodes(ctx, seriesID)
 		if err == nil && len(pageItems(eps)) > 0 {
 			targetNum := episodeNum
 			found := false
@@ -81,6 +84,15 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 			episodePosterURL = s.media.ImageURL(selected.CoverURL)
 		}
 	}
+
+	if eps == nil && s.client != nil {
+		pageCtx, pageCancel := context.WithTimeout(context.WithoutCancel(ctx), seriesDetailTimeout)
+		defer pageCancel()
+		if page, err := s.listEpisodes(pageCtx, seriesID); err == nil {
+			eps = page
+		}
+	}
+	s.media.PrefetchNextPlaybackModels(media.NextEpisodes(pageItems(eps), episodeNum))
 
 	if episodeID == "" {
 		return nil, fmt.Errorf("failed to resolve episode ID for %s", seriesID)

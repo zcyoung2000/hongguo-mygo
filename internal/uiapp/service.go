@@ -626,6 +626,9 @@ func (a *App) loadDetailAt(seriesID string, generation uint64) {
 	}
 	a.detail = convertDetail(seriesID, page)
 	a.detail.RelatedLoading = true
+	if a.resume.ID != seriesID && page.ResumeEpisode > 0 {
+		a.resume = CatalogItem{ID: seriesID, ResumeEpisode: page.ResumeEpisode, ResumePosition: page.ResumePosition}
+	}
 	a.invalidate()
 	a.mu.Unlock()
 	if a.featuresSource != nil || a.service != nil {

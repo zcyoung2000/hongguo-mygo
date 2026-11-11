@@ -45,6 +45,8 @@ const (
 
 var videoQualities = []string{"1080p", "720p", "540p", "480p", "360p"}
 
+var errNilPlaybackClient = errors.New("playback client unavailable")
+
 type MediaDiagnosticsDTO struct {
 	NetworkProfile     string `json:"networkProfile"`
 	NetworkBytesPerSec int64  `json:"networkBytesPerSec"`
@@ -82,7 +84,6 @@ type QualitySelection struct {
 type MediaServer struct {
 	tasks              lifecycle.Group
 	client             *sdk.Client
-	primaryPlayback    playbackResolver
 	cacheDir           string
 	port               int
 	server             *http.Server
@@ -92,6 +93,7 @@ type MediaServer struct {
 	pbCache            map[string]playbackCacheItem
 	pbLoadMu           sync.Mutex
 	pbLoads            map[string]*playbackLoad
+	multiModel         *MultiVideoModelBatcher
 	prefetchQ          chan PrefetchTask
 	prefetchMu         sync.Mutex
 	prefetchQueued     map[string]PrefetchTask
@@ -110,7 +112,6 @@ type MediaServer struct {
 	onEpisodeCacheFn   atomic.Pointer[func(seriesID, episodeID string, num int, quality string) error]
 	onDeviceResetFn    atomic.Pointer[func(ctx context.Context) error]
 	resetDeviceForTest func(context.Context) error
-	spareDevicePool    atomic.Pointer[sparedevice.Manager]
 	evicting           atomic.Bool
 	lastEvictionAt     atomic.Int64
 	networkMu          sync.Mutex
@@ -122,6 +123,8 @@ type MediaServer struct {
 	networkLastErrorAt time.Time
 	playbackCacheHits  atomic.Int64
 	playbackCacheMiss  atomic.Int64
+	playbackResolver   PlaybackResolver
+	spareDevicePool    atomic.Pointer[sparedevice.Manager]
 	progressiveStarts  atomic.Int64
 	progressiveHits    atomic.Int64
 	hlsStarts          atomic.Int64
@@ -146,10 +149,6 @@ type playbackLoad struct {
 type playbackLoadResult struct {
 	pb  *model.Playback
 	err error
-}
-
-type playbackResolver interface {
-	ResolvePlayback(context.Context, string, sdk.PlaybackOptions) (*model.Playback, error)
 }
 
 type PrefetchExecution struct {
@@ -452,16 +451,28 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 	ms.pbLoads[episodeID] = load
 	ms.pbLoadMu.Unlock()
 
-	pb, err := ms.resolveWithPrimary(ctx, episodeID)
-	if errors.Is(err, sdk.ErrAnonymousLimited) {
+	if ms.playbackResolver == nil && ms.client == nil {
+		err := errNilPlaybackClient
+		ms.finishPlaybackLoad(episodeID, load, nil, err)
+		return nil, err
+	}
+
+	resolver := ms.playbackResolver
+	if resolver == nil {
+		resolver = newSDKFallbackPlaybackResolver(ms.client, nil)
+	}
+	resolved, err := resolver.ResolvePlayback(ctx, episodeID)
+	var pb *model.Playback
+	if resolved != nil {
+		pb = resolved.Playback
+	}
+	if errors.Is(err, sdk.ErrAnonymousLimited) || (err != nil && errors.Is(err, context.DeadlineExceeded)) {
 		if pool := ms.spareDevicePool.Load(); pool != nil {
-			spare, spareErr := pool.ResolveForSession(ctx, session, episodeID, err, func(ctx context.Context, episodeID string, options sdk.PlaybackOptions) (*model.Playback, error) {
-				return ms.resolveWithPrimary(ctx, episodeID)
-			})
+			spare, spareErr := pool.ResolveForSession(ctx, session, episodeID, err, ms.primaryResolverForSparePool)
 			if spareErr == nil {
 				pool.ReleaseSession(session)
-				err = nil
-				return ms.finishPlaybackLoad(load, episodeID, spare, nil)
+				ms.finishPlaybackLoad(episodeID, load, spare, nil)
+				return spare, nil
 			}
 			log.Printf("[media] spare device playback failed: %v", spareErr)
 		}
@@ -469,7 +480,14 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 			log.Printf("[media] device reset failed: %v", resetErr)
 		}
 		ms.clearPlaybackCache()
-		pb, err = ms.resolveWithPrimary(ctx, episodeID)
+		reset, resetErr := sdkPlaybackResolver{client: ms.client}.ResolvePlayback(ctx, episodeID)
+		pb, err = nil, nil
+		if reset != nil {
+			pb = reset.Playback
+		}
+		if pb == nil {
+			err = fmt.Errorf("empty playback model after device reset: %w", resetErr)
+		}
 	}
 	if errors.Is(err, sdk.ErrDRMProtected) && pb != nil {
 		err = nil
@@ -481,31 +499,33 @@ func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID,
 		pb = nil
 	}
 
-	return ms.finishPlaybackLoad(load, episodeID, pb, err)
-}
-
-func (ms *MediaServer) resolveWithPrimary(ctx context.Context, episodeID string) (*model.Playback, error) {
-	if ms.primaryPlayback != nil {
-		return ms.primaryPlayback.ResolvePlayback(ctx, episodeID, sdk.PlaybackOptions{})
-	}
-	if ms.client == nil {
-		return nil, fmt.Errorf("playback client unavailable")
-	}
-	return ms.client.ResolvePlayback(ctx, episodeID, sdk.PlaybackOptions{})
-}
-
-func (ms *MediaServer) finishPlaybackLoad(load *playbackLoad, episodeID string, pb *model.Playback, err error) (*model.Playback, error) {
 	if err == nil && pb != nil {
 		ms.pbCacheMu.Lock()
 		ms.rememberPlaybackLocked(episodeID, pb)
 		ms.pbCacheMu.Unlock()
 	}
+	ms.finishPlaybackLoad(episodeID, load, pb, err)
+	return pb, err
+}
+
+func (ms *MediaServer) primaryResolverForSparePool(ctx context.Context, episodeID string, _ sdk.PlaybackOptions) (*model.Playback, error) {
+	resolver := ms.playbackResolver
+	if resolver == nil {
+		resolver = newSDKFallbackPlaybackResolver(ms.client, nil)
+	}
+	resolved, err := resolver.ResolvePlayback(ctx, episodeID)
+	if resolved != nil {
+		return resolved.Playback, err
+	}
+	return nil, err
+}
+
+func (ms *MediaServer) finishPlaybackLoad(episodeID string, load *playbackLoad, pb *model.Playback, err error) {
 	ms.pbLoadMu.Lock()
 	load.result = playbackLoadResult{pb: pb, err: err}
 	close(load.done)
 	delete(ms.pbLoads, episodeID)
 	ms.pbLoadMu.Unlock()
-	return pb, err
 }
 
 func (ms *MediaServer) clearPlaybackCache() {
@@ -681,12 +701,14 @@ func newMediaServer(client *sdk.Client, cacheDir string) (*MediaServer, error) {
 		port:               port,
 		pbCache:            make(map[string]playbackCacheItem),
 		pbLoads:            make(map[string]*playbackLoad),
+		multiModel:         NewMultiVideoModelBatcher(client, nil),
 		prefetchQ:          make(chan PrefetchTask, 64),
 		prefetchQueued:     make(map[string]PrefetchTask),
 		prefetchActive:     make(map[string]*PrefetchExecution),
 		progressiveStreams: make(map[string]*progressiveStream),
 		hlsStreams:         make(map[string]*hlsStream),
 		cachePins:          make(map[string]int),
+		playbackResolver:   newPlaybackRaceResolver(newSDKFallbackPlaybackResolver(client, nil), nil),
 	}
 
 	mux := http.NewServeMux()
@@ -761,10 +783,6 @@ func (ms *MediaServer) SetSpareDevicePool(pool *sparedevice.Manager) {
 	ms.spareDevicePool.Store(pool)
 }
 
-func (ms *MediaServer) setPrimaryPlaybackResolver(resolver playbackResolver) {
-	ms.primaryPlayback = resolver
-}
-
 func (ms *MediaServer) ReleasePlaybackSession(session string) {
 	if pool := ms.spareDevicePool.Load(); pool != nil {
 		(*pool).ReleaseSession(session)
@@ -779,6 +797,42 @@ func (ms *MediaServer) resetDevice(ctx context.Context) error {
 		return (*resetter)(ctx)
 	}
 	return ms.client.ResetDevice(ctx)
+}
+
+func (ms *MediaServer) SetMultiModelDeviceIdentity(identity func() (deviceID, installID, cdid, openudid string)) {
+	if ms.multiModel != nil {
+		ms.multiModel.setDeviceIdentity(identity)
+	}
+}
+
+func (ms *MediaServer) RememberPlayback(episodeID string, pb *model.Playback) {
+	if episodeID == "" || pb == nil {
+		return
+	}
+	ms.pbCacheMu.Lock()
+	ms.rememberPlaybackLocked(episodeID, pb)
+	ms.pbCacheMu.Unlock()
+}
+
+func (ms *MediaServer) PrefetchNextPlaybackModels(episodes []model.Episode) {
+	if ms.multiModel == nil {
+		return
+	}
+	if len(episodes) == 0 {
+		ms.multiModel.forgetWindow()
+		return
+	}
+	ms.multiModel.ReplaceWindow(episodes)
+	_, done, err := ms.tasks.Acquire()
+	if err != nil {
+		return
+	}
+	go func() {
+		defer done()
+		ctx, cancel := context.WithTimeout(context.Background(), multiVideoModelHTTPTimeout)
+		defer cancel()
+		ms.multiModel.Run(ctx, ms.RememberPlayback)
+	}()
 }
 
 func (ms *MediaServer) SetEpisodeCacheCallback(callback func(seriesID, episodeID string, num int, quality string) error) {

@@ -181,6 +181,15 @@ func WithSpareDeviceManager(manager *sparedevice.Manager) ServiceOption {
 	return func(s *HongguoService) { s.spareDevices = manager }
 }
 
+func WithUpstreamTransport(transport http.RoundTripper) ServiceOption {
+	return func(s *HongguoService) {
+		if transport == nil {
+			return
+		}
+		s.httpClient.Transport = transport
+	}
+}
+
 func NewHongguoService(client *sdk.Client, store *Store, media *MediaServer, appDir string, opts ...ServiceOption) *HongguoService {
 	return newHongguoService(client, store, media, appDir, "", opts...)
 }
@@ -274,6 +283,10 @@ func (s *HongguoService) deviceIdentity() (deviceID, iid, cdid, openudid string)
 	s.identityMu.RLock()
 	defer s.identityMu.RUnlock()
 	return s.deviceID, s.iid, s.cdid, s.openudid
+}
+
+func (s *HongguoService) DeviceIdentity() (deviceID, iid, cdid, openudid string) {
+	return s.deviceIdentity()
 }
 
 func (s *HongguoService) runtimeIdentity() (userAgent, storeRegion string) {
@@ -603,6 +616,7 @@ func (s *HongguoService) getRecommendFeed(ctx context.Context, channel, cursor s
 			cards = append(cards, newCards...)
 		}
 		if len(cards) >= minRecommendFeedBatch {
+			cards = s.enrichSeriesCards(ctx, cards)
 			return sanitizeIPC(&RecommendFeedResult{
 				Items:   cards,
 				Cursor:  page.Cursor,

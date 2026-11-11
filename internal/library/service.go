@@ -66,6 +66,7 @@ type Service struct {
 	historyMutationSyncing bool
 	historyMutationWake    bool
 	historyUploadRetries   map[string]historyUploadRetry
+	progressScheduler      *progressScheduler
 
 	favMu           sync.Mutex
 	favRemoteMu     sync.Mutex
@@ -126,17 +127,18 @@ func NewService(deps Dependencies) *Service {
 		deps.Notify = func(context.Context, Notification) {}
 	}
 	service := &Service{
-		store:            deps.Store,
-		client:           deps.Client,
-		imageURL:         deps.ImageURL,
-		credentials:      deps.Credentials,
-		authSession:      deps.AuthSession,
-		deviceIdentity:   deps.DeviceIdentity,
-		runtimeInfo:      deps.Runtime,
-		httpClient:       deps.HTTPClient,
-		episodes:         deps.Episodes,
-		invalidateCaches: deps.InvalidateCaches,
-		notify:           deps.Notify,
+		store:             deps.Store,
+		client:            deps.Client,
+		imageURL:          deps.ImageURL,
+		credentials:       deps.Credentials,
+		authSession:       deps.AuthSession,
+		deviceIdentity:    deps.DeviceIdentity,
+		runtimeInfo:       deps.Runtime,
+		httpClient:        deps.HTTPClient,
+		episodes:          deps.Episodes,
+		invalidateCaches:  deps.InvalidateCaches,
+		notify:            deps.Notify,
+		progressScheduler: newProgressScheduler(progressSchedulerConfig{}),
 	}
 	if service.store != nil {
 		service.store.SetSyncScope(service.currentSyncSession().scope)

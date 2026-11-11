@@ -1541,13 +1541,18 @@ async function flushFeedMetrics() {
 }
 
 window.addEventListener('pagehide', () => {
+  persistFeedProgress();
   flushFeedMetrics();
 });
 window.addEventListener('beforeunload', () => {
+  persistFeedProgress();
   flushFeedMetrics();
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') flushFeedMetrics();
+  if (document.visibilityState === 'hidden') {
+    persistFeedProgress();
+    flushFeedMetrics();
+  }
 });
 window.addEventListener('error', event => {
   recordFeedDiagnostic('frontend-error', { reason: `${event.error?.name || 'Error'}:line-${event.lineno || 0}` });
@@ -3001,6 +3006,7 @@ function switchFeedDrama(dir, request = null) {
 
 async function enterSeriesPlayer(seriesId, episodeNum, playbackOrigin = 'detail') {
   if (!seriesId) return;
+  persistFeedProgress();
   clearCommentSceneLayout();
   feedPlayToken++;
   cancelScheduledFeedWarmup();
@@ -3979,7 +3985,7 @@ function persistFeedProgress() {
     state.feed.totalEpisodes,
     feedVideo.currentTime,
     duration
-  ).catch(err => console.warn('save feed progress failed:', err));
+  ).then(() => window.FlushPendingProgress?.()).catch(err => console.warn('save feed progress failed:', err));
 }
 
 function updateFeedPlayIndicator() {

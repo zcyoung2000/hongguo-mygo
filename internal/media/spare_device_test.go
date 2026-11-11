@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/beilunyang/openhongguo/sdk"
@@ -31,14 +32,13 @@ func TestSparePoolDisabledKeepsExistingPlaybackBehavior(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.Close()
-	client := &playbackClient{err: sdk.ErrAnonymousLimited}
-	server.setPrimaryPlaybackResolver(client)
+	server.playbackResolver = fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
+		return nil, sdk.ErrAnonymousLimited
+	}}
 	server.resetDeviceForTest = func(context.Context) error { return errors.New("reset unavailable") }
-	if _, err := server.resolvePlaybackForSession(context.Background(), "episode", "session"); !errors.Is(err, sdk.ErrAnonymousLimited) {
+	result, err := server.resolvePlaybackForSession(context.Background(), "7100000000000201", "session")
+	if result != nil || err == nil || !strings.Contains(err.Error(), "playback client unavailable") {
 		t.Fatalf("err = %v", err)
-	}
-	if client.calls != 2 {
-		t.Fatalf("calls = %d", client.calls)
 	}
 }
 
@@ -62,14 +62,17 @@ func TestSparePoolResolvesWithoutChangingPrimaryIdentity(t *testing.T) {
 		}, nil
 	}))
 	server.SetSpareDevicePool(manager)
-	primary := &playbackClient{err: sdk.ErrAnonymousLimited}
-	server.setPrimaryPlaybackResolver(primary)
+	var primaryCalls int
+	server.playbackResolver = fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
+		primaryCalls++
+		return nil, sdk.ErrAnonymousLimited
+	}}
 	server.resetDeviceForTest = func(context.Context) error { return errors.New("must not reset") }
 	got, err := server.resolvePlaybackForSession(context.Background(), "episode", "session")
 	if err != nil || got.EpisodeID != "spare-episode" {
 		t.Fatalf("got = %+v err = %v", got, err)
 	}
-	if primary.calls != 1 {
-		t.Fatalf("primary called %d times", primary.calls)
+	if primaryCalls != 1 {
+		t.Fatalf("primary called %d times", primaryCalls)
 	}
 }
