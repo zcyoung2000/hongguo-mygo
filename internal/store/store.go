@@ -207,6 +207,10 @@ func NewStore(dir string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
+	if err := s.InitUpstreamState(); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return s, nil
 }
