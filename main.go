@@ -20,6 +20,7 @@ import (
 	"myguo/internal/media"
 	"myguo/internal/native"
 	"myguo/internal/resourcelog"
+	"myguo/internal/sparedevice"
 	userstore "myguo/internal/store"
 	"myguo/internal/uiapp"
 	"myguo/internal/upstream"
@@ -118,6 +119,10 @@ func main() {
 		appDir,
 		ipc.WithAuthTransport(authenticatedTransport),
 		ipc.WithDeviceProfileStore(profileStore),
+		ipc.WithSpareDeviceManager(sparedevice.NewManager(store,
+			sparedevice.WithClientConstructor(sdk.NewClient, authenticatedTransport),
+			sparedevice.WithLogger(log.Default()),
+		)),
 		ipc.WithUpstreamTransport(hostTransport),
 	)
 	defer ipc.CloseService(service)

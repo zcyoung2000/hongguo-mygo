@@ -150,6 +150,10 @@ type Settings struct {
 	LoginOpen      bool
 	LoginCookie    string
 	LoginToken     string
+	SpareDevices   *ipc.SpareDeviceStateDTO
+	SpareDeviceDid string
+	SpareDeviceIid string
+	SpareDeviceUid string
 	Success        string
 	Error          string
 }

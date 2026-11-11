@@ -23,6 +23,10 @@ type settingsProvider interface {
 	ImportHgplayerAccount(context.Context) (*ipc.UserProfile, error)
 	ClearCache(context.Context) (int64, error)
 	ResetDevice(context.Context) error
+	GetSpareDeviceState(context.Context) (*ipc.SpareDeviceStateDTO, error)
+	ImportSpareDevice(context.Context, string, string, string) (*ipc.SpareDeviceStateDTO, error)
+	DeleteSpareDevice(context.Context, string) (*ipc.SpareDeviceStateDTO, error)
+	SetSpareDeviceRegistration(context.Context, bool) (*ipc.SpareDeviceStateDTO, error)
 }
 
 func (a *App) settingsProvider() settingsProvider {
@@ -41,7 +45,7 @@ func (a *App) LoadSettings() {
 	version := uint64(a.generation)
 	provider := a.settingsProvider()
 	if provider == nil {
-		a.finishSettingsLoadLocked(version, ipc.UserProfile{}, 0, nil, nil, errSettingsUnavailable)
+		a.finishSettingsLoadLocked(version, ipc.UserProfile{}, 0, nil, nil, nil, errSettingsUnavailable)
 		return
 	}
 	a.mu.Unlock()
@@ -51,19 +55,20 @@ func (a *App) LoadSettings() {
 	cacheSize, cacheErr := provider.GetCacheSize(ctx)
 	device, deviceErr := provider.GetDeviceInfo(ctx)
 	legacy, legacyErr := provider.CheckExistingAccount(ctx)
-	err := firstError(profileErr, cacheErr, deviceErr, legacyErr)
-	a.finishSettingsLoad(version, profile, cacheSize, device, legacy, err)
+	spare, spareErr := provider.GetSpareDeviceState(ctx)
+	err := firstError(profileErr, cacheErr, deviceErr, legacyErr, spareErr)
+	a.finishSettingsLoad(version, profile, cacheSize, device, legacy, spare, err)
 }
 
-func (a *App) finishSettingsLoad(version uint64, profile ipc.UserProfile, cacheSize int64, device map[string]string, legacy map[string]any, err error) {
+func (a *App) finishSettingsLoad(version uint64, profile ipc.UserProfile, cacheSize int64, device map[string]string, legacy map[string]any, spare *ipc.SpareDeviceStateDTO, err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	success := a.settings.Success
-	a.finishSettingsLoadLocked(version, profile, cacheSize, device, legacy, err)
+	a.finishSettingsLoadLocked(version, profile, cacheSize, device, legacy, spare, err)
 	a.settings.Success = success
 }
 
-func (a *App) finishSettingsLoadLocked(version uint64, profile ipc.UserProfile, cacheSize int64, device map[string]string, legacy map[string]any, err error) {
+func (a *App) finishSettingsLoadLocked(version uint64, profile ipc.UserProfile, cacheSize int64, device map[string]string, legacy map[string]any, spare *ipc.SpareDeviceStateDTO, err error) {
 	if version != uint64(a.generation) {
 		return
 	}
@@ -75,6 +80,7 @@ func (a *App) finishSettingsLoadLocked(version uint64, profile ipc.UserProfile, 
 	a.settings.HasLegacy = !profile.LoggedIn && legacy != nil && legacy["exists"] == true
 	a.settings.LegacyNickname, _ = legacy["nickname"].(string)
 	a.settings.LegacyUserID, _ = legacy["userId"].(string)
+	a.settings.SpareDevices = spare
 	a.settings.Loading = false
 	a.settings.Error = settingsError(err)
 	a.invalidate()
@@ -269,6 +275,80 @@ func (a *App) ResetSettingsDevice() {
 	})
 }
 
+func (a *App) SetSpareDeviceField(field, value string) {
+	a.mu.Lock()
+	switch field {
+	case "did":
+		a.settings.SpareDeviceDid = value
+	case "iid":
+		a.settings.SpareDeviceIid = value
+	case "uid":
+		a.settings.SpareDeviceUid = value
+	}
+	a.mu.Unlock()
+	a.invalidate()
+}
+
+func (a *App) ImportSettingsSpareDevice() {
+	a.mu.Lock()
+	deviceID := strings.TrimSpace(a.settings.SpareDeviceDid)
+	installID := strings.TrimSpace(a.settings.SpareDeviceIid)
+	userID := strings.TrimSpace(a.settings.SpareDeviceUid)
+	if deviceID == "" || installID == "" {
+		a.settings.Error = "请输入备用设备的 did 与 iid"
+		a.mu.Unlock()
+		a.invalidate()
+		return
+	}
+	key := "settings-import-spare"
+	if !a.beginSettingsMutationLocked(key) {
+		a.mu.Unlock()
+		return
+	}
+	provider := a.settingsProvider()
+	a.mu.Unlock()
+	go a.runSettingsMutation(key, func(ctx context.Context) (string, error) {
+		state, err := provider.ImportSpareDevice(ctx, deviceID, installID, userID)
+		if err != nil {
+			return "", err
+		}
+		a.mu.Lock()
+		a.settings.SpareDeviceDid, a.settings.SpareDeviceIid, a.settings.SpareDeviceUid = "", "", ""
+		a.settings.SpareDevices = state
+		a.mu.Unlock()
+		return "备用设备已导入", nil
+	})
+}
+
+func (a *App) DeleteSettingsSpareDevice(deviceID string) {
+	a.beginSettingsAction("settings-delete-spare", func(ctx context.Context, provider settingsProvider) (string, error) {
+		state, err := provider.DeleteSpareDevice(ctx, deviceID)
+		if err != nil {
+			return "", err
+		}
+		a.mu.Lock()
+		a.settings.SpareDevices = state
+		a.mu.Unlock()
+		return "备用设备已删除", nil
+	})
+}
+
+func (a *App) SetSettingsSpareRegistration(enabled bool) {
+	a.beginSettingsAction("settings-spare-registration", func(ctx context.Context, provider settingsProvider) (string, error) {
+		state, err := provider.SetSpareDeviceRegistration(ctx, enabled)
+		if err != nil {
+			return "", err
+		}
+		a.mu.Lock()
+		a.settings.SpareDevices = state
+		a.mu.Unlock()
+		if enabled {
+			return "备用设备注册已开启（每日最多 1 次）", nil
+		}
+		return "备用设备注册已关闭", nil
+	})
+}
+
 func (a *App) beginSettingsAction(key string, action func(context.Context, settingsProvider) (string, error)) {
 	a.mu.Lock()
 	if !a.beginSettingsMutationLocked(key) {
@@ -325,8 +405,9 @@ func (a *App) runSettingsMutation(key string, action func(context.Context) (stri
 	cacheSize, cacheErr := provider.GetCacheSize(ctx)
 	device, deviceErr := provider.GetDeviceInfo(ctx)
 	legacy, legacyErr := provider.CheckExistingAccount(ctx)
-	err = firstError(profileErr, cacheErr, deviceErr, legacyErr)
-	a.finishSettingsLoad(0, profile, cacheSize, device, legacy, err)
+	spare, spareErr := provider.GetSpareDeviceState(ctx)
+	err = firstError(profileErr, cacheErr, deviceErr, legacyErr, spareErr)
+	a.finishSettingsLoad(0, profile, cacheSize, device, legacy, spare, err)
 }
 
 func (a *App) settingsButton(c *ui.Context, key, label, variant string, action func()) {
@@ -467,6 +548,8 @@ func (a *App) renderSettings(c *ui.Context) {
 			a.settingsItemRow(c, "device-row", "匿名设备指纹", "当匿名模式触发官方频控限制或需要重置个性化推荐流时，重新生成设备指纹", state.DeviceID, "重置设备", "danger", a.ResetSettingsDevice)
 		})
 
+		a.renderSpareDevices(c, state)
+
 		if state.Loading {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Justify(ui.Center).Padding(8).Children(func() {
 				ui.Spinner(c)
@@ -480,6 +563,70 @@ func (a *App) renderSettings(c *ui.Context) {
 			ui.Text(c, state.Success).FontSize(12).TextColor(ui.Hex("#4ade80"))
 		}
 	})
+}
+
+func (a *App) renderSpareDevices(c *ui.Context, state Settings) {
+	ui.Text(c, "播放备用设备池").FontSize(12).Bold().TextColor(c.Theme().TextMuted)
+	a.settingsCard(c, "settings-spare-devices", func() {
+		ui.Column(c.Key("spare-intro")).Gap(4).Children(func() {
+			ui.Text(c, "仅在播放受限时借用；片库、历史、收藏和登录态始终使用主设备。").FontSize(12).TextColor(c.Theme().TextMuted)
+			ui.Text(c, "注册新备用设备默认关闭；开启后每日最多 1 次，间隔至少 24 小时。").FontSize(11).TextColor(c.Theme().TextMuted)
+		})
+		if state.SpareDevices != nil {
+			ui.Row(c.Key("spare-registration")).Gap(12).AlignItems(ui.Center).Children(func() {
+				enabled := state.SpareDevices.Settings.RegistrationEnabled
+				ui.Text(c, "允许注册新备用设备").Grow(1).FontSize(13).TextColor(ui.RGBA(255, 255, 255, 0.86))
+				ui.Switch(c, &enabled).Label("允许注册新备用设备").OnChange(func() {
+					a.SetSettingsSpareRegistration(enabled)
+				})
+			})
+			for _, device := range state.SpareDevices.Devices {
+				a.settingsItemRow(c, "spare-"+device.DeviceID, "备用设备 "+device.DeviceID,
+					spareDeviceDescription(device), spareDeviceStatus(device), "删除", "danger", func() {
+						a.DeleteSettingsSpareDevice(device.DeviceID)
+					})
+			}
+		}
+		a.renderSpareImport(c, state)
+	})
+}
+
+func renderSpareInput(c *ui.Context, a *App, key, label, placeholder, value string, setter func(string)) {
+	ui.Column(c.Key(key + "-field")).Gap(6).Children(func() {
+		ui.Text(c, label).FontSize(12).TextColor(ui.RGBA(255, 255, 255, 0.80))
+		input := value
+		ui.TextInput(c, &input).Height(34).Padding(0, 12).Radius(8).
+			Background(ui.RGBA(24, 25, 36, 255)).Border(1, ui.RGBA(255, 255, 255, 0.09)).
+			Placeholder(placeholder).Label(label).OnChange(func() { setter(input) })
+	})
+}
+
+func (a *App) renderSpareImport(c *ui.Context, state Settings) {
+	ui.Box(c.Key("spare-import-divider")).Height(1).Grow(1).Background(c.Theme().Border)
+	ui.Column(c.Key("spare-import")).Gap(12).Children(func() {
+		ui.Text(c, "手动导入备用设备").FontSize(14).Bold().TextColor(ui.Hex("#ffffff"))
+		ui.Row(c.Key("spare-import-fields")).Gap(10).Children(func() {
+			renderSpareInput(c, a, "spare-did", "did (必填)", "输入 device_id", state.SpareDeviceDid, func(v string) { a.SetSpareDeviceField("did", v) })
+			renderSpareInput(c, a, "spare-iid", "iid (必填)", "输入 install_id", state.SpareDeviceIid, func(v string) { a.SetSpareDeviceField("iid", v) })
+			renderSpareInput(c, a, "spare-uid", "uid (可选)", "输入 user_id", state.SpareDeviceUid, func(v string) { a.SetSpareDeviceField("uid", v) })
+		})
+		a.settingsButton(c, "spare-import-action", "导入备用设备", "primary", a.ImportSettingsSpareDevice)
+	})
+}
+
+func spareDeviceStatus(device ipc.SpareDeviceDTO) string {
+	switch device.Status {
+	case "borrowed":
+		return "借用中"
+	case "disabled":
+		return "已停用"
+	default:
+		return "可用"
+	}
+}
+
+func spareDeviceDescription(device ipc.SpareDeviceDTO) string {
+	return fmt.Sprintf("iid：%s · 失败 %d 次 · 状态：%s", device.InstallID, device.FailureCount, spareDeviceStatus(device))
 }
 
 func settingsAccountID(state Settings) string {

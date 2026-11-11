@@ -328,6 +328,47 @@ func (s *Store) initSchema() error {
 		updated_at INTEGER NOT NULL DEFAULT 0
 	);
 
+	CREATE TABLE IF NOT EXISTS spare_devices (
+		device_id TEXT PRIMARY KEY,
+		install_id TEXT NOT NULL,
+		user_id TEXT NOT NULL DEFAULT '',
+		cdid TEXT NOT NULL DEFAULT '',
+		openudid TEXT NOT NULL DEFAULT '',
+		profile TEXT NOT NULL DEFAULT '',
+		status TEXT NOT NULL DEFAULT 'available',
+		created_at INTEGER NOT NULL DEFAULT 0,
+		updated_at INTEGER NOT NULL DEFAULT 0,
+		last_used_at INTEGER NOT NULL DEFAULT 0,
+		failure_count INTEGER NOT NULL DEFAULT 0,
+		cooldown_until INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_spare_devices_borrow
+		ON spare_devices(status, cooldown_until, failure_count, last_used_at, device_id);
+
+	CREATE TABLE IF NOT EXISTS spare_device_settings (
+		id INTEGER PRIMARY KEY CHECK (id = 1),
+		registration_enabled INTEGER NOT NULL DEFAULT 0,
+		registration_daily_limit INTEGER NOT NULL DEFAULT 1,
+		registration_min_interval_sec INTEGER NOT NULL DEFAULT 86400,
+		registration_last_at INTEGER NOT NULL DEFAULT 0,
+		registration_day TEXT NOT NULL DEFAULT '',
+		registration_day_count INTEGER NOT NULL DEFAULT 0,
+		updated_at INTEGER NOT NULL DEFAULT 0
+	);
+
+	CREATE TABLE IF NOT EXISTS spare_device_borrows (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session TEXT NOT NULL,
+		device_id TEXT NOT NULL DEFAULT '',
+		episode_id TEXT NOT NULL DEFAULT '',
+		cause TEXT NOT NULL DEFAULT '',
+		event TEXT NOT NULL DEFAULT '',
+		detail TEXT NOT NULL DEFAULT '',
+		at INTEGER NOT NULL DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_spare_device_borrows_session
+		ON spare_device_borrows(session, event, at);
+
 	CREATE TABLE IF NOT EXISTS history (
 		series_id TEXT PRIMARY KEY,
 		title TEXT NOT NULL DEFAULT '',

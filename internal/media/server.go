@@ -28,6 +28,7 @@ import (
 	"myguo/internal/lifecycle"
 	"myguo/internal/mediautil"
 	"myguo/internal/resourcelog"
+	"myguo/internal/sparedevice"
 )
 
 const (
@@ -110,6 +111,7 @@ type MediaServer struct {
 	cachePins          map[string]int
 	onEpisodeCacheFn   atomic.Pointer[func(seriesID, episodeID string, num int, quality string) error]
 	onDeviceResetFn    atomic.Pointer[func(ctx context.Context) error]
+	resetDeviceForTest func(context.Context) error
 	evicting           atomic.Bool
 	lastEvictionAt     atomic.Int64
 	networkMu          sync.Mutex
@@ -122,6 +124,7 @@ type MediaServer struct {
 	playbackCacheHits  atomic.Int64
 	playbackCacheMiss  atomic.Int64
 	playbackResolver   PlaybackResolver
+	spareDevicePool    atomic.Pointer[sparedevice.Manager]
 	progressiveStarts  atomic.Int64
 	progressiveHits    atomic.Int64
 	hlsStarts          atomic.Int64
@@ -406,6 +409,10 @@ func selectVideoStream(pb *model.Playback, requested string) (model.Stream, erro
 }
 
 func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*model.Playback, error) {
+	return ms.resolvePlaybackForSession(ctx, episodeID, "")
+}
+
+func (ms *MediaServer) resolvePlaybackForSession(ctx context.Context, episodeID, session string) (*model.Playback, error) {
 	if episodeID == "" {
 		return nil, fmt.Errorf("empty episode id")
 	}
@@ -460,6 +467,15 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 		pb = resolved.Playback
 	}
 	if errors.Is(err, sdk.ErrAnonymousLimited) || (err != nil && errors.Is(err, context.DeadlineExceeded)) {
+		if pool := ms.spareDevicePool.Load(); pool != nil {
+			spare, spareErr := pool.ResolveForSession(ctx, session, episodeID, err, ms.primaryResolverForSparePool)
+			if spareErr == nil {
+				pool.ReleaseSession(session)
+				ms.finishPlaybackLoad(episodeID, load, spare, nil)
+				return spare, nil
+			}
+			log.Printf("[media] spare device playback failed: %v", spareErr)
+		}
 		if resetErr := ms.resetDevice(ctx); resetErr != nil {
 			log.Printf("[media] device reset failed: %v", resetErr)
 		}
@@ -488,10 +504,20 @@ func (ms *MediaServer) resolvePlayback(ctx context.Context, episodeID string) (*
 		ms.rememberPlaybackLocked(episodeID, pb)
 		ms.pbCacheMu.Unlock()
 	}
-
 	ms.finishPlaybackLoad(episodeID, load, pb, err)
-
 	return pb, err
+}
+
+func (ms *MediaServer) primaryResolverForSparePool(ctx context.Context, episodeID string, _ sdk.PlaybackOptions) (*model.Playback, error) {
+	resolver := ms.playbackResolver
+	if resolver == nil {
+		resolver = newSDKFallbackPlaybackResolver(ms.client, nil)
+	}
+	resolved, err := resolver.ResolvePlayback(ctx, episodeID)
+	if resolved != nil {
+		return resolved.Playback, err
+	}
+	return nil, err
 }
 
 func (ms *MediaServer) finishPlaybackLoad(episodeID string, load *playbackLoad, pb *model.Playback, err error) {
@@ -534,7 +560,11 @@ func (ms *MediaServer) rememberPlaybackLocked(episodeID string, pb *model.Playba
 }
 
 func (ms *MediaServer) PlaybackQualities(ctx context.Context, episodeID, requested string) (QualitySelection, error) {
-	pb, err := ms.resolvePlayback(ctx, episodeID)
+	return ms.PlaybackQualitiesForSession(ctx, episodeID, requested, "")
+}
+
+func (ms *MediaServer) PlaybackQualitiesForSession(ctx context.Context, episodeID, requested, session string) (QualitySelection, error) {
+	pb, err := ms.resolvePlaybackForSession(ctx, episodeID, session)
 	if err != nil {
 		return QualitySelection{}, err
 	}
@@ -749,7 +779,20 @@ func (ms *MediaServer) SetDeviceResetter(resetter func(ctx context.Context) erro
 	ms.onDeviceResetFn.Store(&resetter)
 }
 
+func (ms *MediaServer) SetSpareDevicePool(pool *sparedevice.Manager) {
+	ms.spareDevicePool.Store(pool)
+}
+
+func (ms *MediaServer) ReleasePlaybackSession(session string) {
+	if pool := ms.spareDevicePool.Load(); pool != nil {
+		(*pool).ReleaseSession(session)
+	}
+}
+
 func (ms *MediaServer) resetDevice(ctx context.Context) error {
+	if ms.resetDeviceForTest != nil {
+		return ms.resetDeviceForTest(ctx)
+	}
 	if resetter := ms.onDeviceResetFn.Load(); resetter != nil {
 		return (*resetter)(ctx)
 	}

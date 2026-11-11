@@ -12,6 +12,7 @@ import (
 	"github.com/beilunyang/openhongguo/sdk"
 	"github.com/beilunyang/openhongguo/sdk/model"
 	"myguo/internal/media"
+	"myguo/internal/sparedevice"
 )
 
 func (s *HongguoService) UpdateFeedPreloadWindow(ctx context.Context, version int64, currentEpisodeID, currentQuality string, items []media.FeedPreloadItem) ([]media.FeedPreloadStatus, error) {
@@ -109,7 +110,9 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 			DurationSec: playbackDurationSec,
 		}
 	} else {
-		info, err := s.media.PlaybackQualities(ctx, episodeID, quality)
+		playbackSession := sparedevice.RandomSession()
+		defer s.media.ReleasePlaybackSession(playbackSession)
+		info, err := s.media.PlaybackQualitiesForSession(ctx, episodeID, quality, playbackSession)
 		if err != nil {
 			// Playback can still succeed through MediaServer's own fallback.
 			qualityInfo = QualitySelection{
