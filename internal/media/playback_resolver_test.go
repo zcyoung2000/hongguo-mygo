@@ -137,6 +137,24 @@ func TestPlaybackFallbackResolverFollowsFallbackAPI(t *testing.T) {
 	}
 }
 
+func TestPlaybackFallbackResolverHandlesNilResultWithSwitchableError(t *testing.T) {
+	inner := fakePlaybackResolver{func(context.Context, string) (*playbackResolveResult, error) {
+		return nil, sdk.ErrAnonymousLimited
+	}}
+	resolver := playbackFallbackResolver{inner: inner, fetcher: func(context.Context, string) (*playbackResolveResult, error) {
+		t.Fatal("fetcher should not be called without a fallback URL")
+		return nil, nil
+	}}
+
+	result, err := resolver.ResolvePlayback(context.Background(), "71001")
+	if result != nil {
+		t.Fatalf("result = %+v, want nil", result)
+	}
+	if !errors.Is(err, sdk.ErrAnonymousLimited) {
+		t.Fatalf("ResolvePlayback err = %v", err)
+	}
+}
+
 func TestParseFallbackAPI(t *testing.T) {
 	encoded, err := json.Marshal(map[string]string{"fallback_api": " https://fallback.invalid/api "})
 	if err != nil {

@@ -213,6 +213,9 @@ func (r playbackFallbackResolver) ResolvePlayback(ctx context.Context, episodeID
 	if err != nil && !playbackSwitchable(err) {
 		return result, err
 	}
+	if result == nil {
+		return nil, err
+	}
 	if playbackUsable(result.Playback) {
 		return result, nil
 	}
