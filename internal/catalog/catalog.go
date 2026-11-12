@@ -421,7 +421,6 @@ func (s *Service) GetDiscover(ctx context.Context, genre string, selections map[
 			Category:     it.Category,
 			Author:       it.Author,
 			Status:       "finished",
-			Heat:         "精选",
 			Tags:         tags,
 		})
 	}
@@ -1106,7 +1105,6 @@ func (s *Service) Search(ctx context.Context, query string) ([]SeriesCard, error
 			Category:     it.Category,
 			Author:       it.Author,
 			Status:       "finished",
-			Heat:         "搜索结果",
 			Tags:         tags,
 		})
 	}
@@ -1234,7 +1232,6 @@ func (s *Service) GetSeriesDetail(ctx context.Context, seriesID string) (*Series
 		CoverURL:     s.imageURL(d.CoverURL),
 		EpisodeCount: d.EpisodeCount,
 		Status:       "finished",
-		Heat:         "热播",
 		Episodes:     episodeDTOs,
 		CommentCount: commentCount,
 		IsFavorite:   s.isFavorite(seriesID),

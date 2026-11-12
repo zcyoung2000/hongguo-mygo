@@ -1067,14 +1067,23 @@ async function prepareFeedSlot(slot, itemIndex, autoPlay = false, resumeAt = nul
     // Metadata prefetch and the visible slot share one load. Warm slots keep
     // their HLS rendition; a foreground cold start can consume MP4 fragments
     // before the next source keyframe closes a complete HLS segment.
+    let sourceError = '';
     const pb = await prefetchFeedPlaybackInfo(itemIndex, true, requestedQuality, episodeNum, episodeId)
       .catch(error => {
+        sourceError = String(error?.message || error || '');
         console.warn('feed playback load failed:', error);
         return null;
       });
     if (loadToken !== slot.loadToken) return;
     if (!pb || !pb.streamUrl) {
       state.feed.consecutiveSourceFailures++;
+      const unavailable = sourceError.includes('分集访问受限') || sourceError.includes('暂无可播放分集');
+      if (unavailable) {
+        clearFeedSourceRetry(slot);
+        reportFeedFailure(slot, sourceError.includes('分集访问受限')
+          ? '分集访问受限，请稍后点击重试' : '暂无可播放分集', 0);
+        return;
+      }
       reportFeedFailure(slot, '获取播放流失败，正在重试', 0);
       scheduleFeedSourceRetry(slot, itemIndex, nextAttempt);
       return;

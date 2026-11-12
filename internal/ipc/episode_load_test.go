@@ -107,3 +107,22 @@ func TestPlaybackEpisodeWaitCanTimeoutWithoutConsumingSharedResult(t *testing.T)
 		t.Fatalf("later detail waiter lost shared result: %p/%v", page, err)
 	}
 }
+
+func TestPlaybackPreservesEpisodeErrorWithoutSecondRequest(t *testing.T) {
+	t.Setenv("MYGUO_TEST_NO_LEGACY_IMPORT", "1")
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for _, cause := range []error{errors.New("upstream unavailable"), sdk.ErrAnonymousLimited} {
+		load := &episodeLoad{done: make(chan struct{})}
+		load.result.err = cause
+		close(load.done)
+		svc := &HongguoService{store: store, media: &MediaServer{}, episodeLoads: map[string]*episodeLoad{"series": load}}
+		_, err := svc.PlayEpisode(context.Background(), "series", "", 1, "720p", true)
+		if !errors.Is(err, cause) {
+			t.Fatalf("lost cause: %v", err)
+		}
+	}
+}

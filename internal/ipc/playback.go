@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -19,7 +20,7 @@ func (s *HongguoService) UpdateFeedPreloadWindow(ctx context.Context, version in
 	return s.media.SetFeedPreloadWindow(version, currentEpisodeID, currentQuality, items), nil
 }
 
-func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID string, episodeNum int, quality string, preferHLS bool) (*PlaybackDTO, error) {
+func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID string, episodeNum int, quality string, preferHLS bool) (result *PlaybackDTO, playbackErr error) {
 	started := time.Now()
 	phase := "resolve-episode"
 	if episodeNum <= 0 {
@@ -30,6 +31,9 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 	defer cancel()
 	defer func() {
 		log.Printf("[feed-playback] series=%q episode=%q phase=%s elapsedMs=%d cancelled=%t", seriesID, episodeID, phase, time.Since(started).Milliseconds(), ctx.Err() != nil)
+		if playbackErr != nil {
+			log.Printf("[feed-playback] series=%q phase=%s error=%q", seriesID, phase, playbackErr)
+		}
 	}()
 
 	var episodePosterURL string
@@ -60,32 +64,39 @@ func (s *HongguoService) PlayEpisode(ctx context.Context, seriesID, episodeID st
 	if episodeID == "" && !cachedStart {
 		var err error
 		eps, err = s.listEpisodes(ctx, seriesID)
-		if err == nil && len(pageItems(eps)) > 0 {
-			targetNum := episodeNum
-			found := false
-			var selected model.Episode
-			for _, ep := range pageItems(eps) {
-				if ep.Number == targetNum {
-					episodeID = ep.ID
-					selected = ep
-					playbackDurationSec = int(selected.Duration.Seconds())
-					commentCount = ep.CommentCount
-					found = true
-					break
-				}
+		if err != nil {
+			if errors.Is(err, sdk.ErrAnonymousLimited) {
+				return nil, fmt.Errorf("分集访问受限，请稍后重试: %w", err)
 			}
-			if !found {
-				items := pageItems(eps)
-				episodeID = items[0].ID
-				episodeNum = items[0].Number
-				selected = items[0]
-				commentCount = items[0].CommentCount
-			}
-			episodePosterURL = s.media.ImageURL(selected.CoverURL)
+			return nil, fmt.Errorf("获取分集失败: %w", err)
 		}
+		if len(pageItems(eps)) == 0 {
+			return nil, fmt.Errorf("暂无可播放分集")
+		}
+		targetNum := episodeNum
+		found := false
+		var selected model.Episode
+		for _, ep := range pageItems(eps) {
+			if ep.Number == targetNum {
+				episodeID = ep.ID
+				selected = ep
+				playbackDurationSec = int(selected.Duration.Seconds())
+				commentCount = ep.CommentCount
+				found = true
+				break
+			}
+		}
+		if !found {
+			items := pageItems(eps)
+			episodeID = items[0].ID
+			episodeNum = items[0].Number
+			selected = items[0]
+			commentCount = items[0].CommentCount
+		}
+		episodePosterURL = s.media.ImageURL(selected.CoverURL)
 	}
 
-	if eps == nil && s.client != nil {
+	if eps == nil && s.client != nil && !cachedStart {
 		pageCtx, pageCancel := context.WithTimeout(context.WithoutCancel(ctx), seriesDetailTimeout)
 		defer pageCancel()
 		if page, err := s.listEpisodes(pageCtx, seriesID); err == nil {

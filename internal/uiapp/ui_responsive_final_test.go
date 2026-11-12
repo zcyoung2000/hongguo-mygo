@@ -337,7 +337,8 @@ func TestDiscoverDeepScrollVirtualizedWindow(t *testing.T) {
 
 	// 2. 深度滚动到第 600 条附近（根据 1200 宽度的网格几何）：深处条目构建并显示，首项不渲染，节点数依然严格有界
 	// 1200 宽度下 5 列，每行 263.2，第 600 条在第 120 行左右 (120 * 263.2 ≈ 31584)
-	app.discoverPageScroll.Y = 31600
+	width := float32(1200 - defaultSidebarWidth - 32)
+	app.discoverPageScroll.Y = float32(600/dramaColumns(width)) * (catalogTextLineHeight + dramaCardWidth(width)*posterAspectRatio + 2*catalogRowGap + cardGridVerticalGap)
 	tester.Frame()
 	tester.Advance(260 * time.Millisecond)
 	tester.Frame()
@@ -411,7 +412,7 @@ func TestDiscoverDeepScrollVirtualizedWindow(t *testing.T) {
 func TestAllCatalogCollectionsUseSharedVirtualPaths(t *testing.T) {
 	source := readFile(t, "view.go") + readFile(t, "feature_views.go")
 	required := map[string][]string{
-		"discover":    {"a.catalogGrid = &ui.GridState{}", "a.cardGrid(c, \"catalog-grid\", a.catalogGrid"},
+		"discover":    {"a.catalogGrid = &ui.GridState{}", "ui.Column(c.Key(\"catalog-grid\"))"},
 		"search":      {"a.searchGrid = &ui.GridState{}", "a.cardGrid(c, \"search-grid\", a.searchGrid"},
 		"new":         {"a.releaseGrid = &ui.GridState{}", "a.cardGrid(c, \"releases-grid\", a.releaseGrid"},
 		"actor":       {"a.actorWorksGrid = &ui.GridState{}", "a.cardGrid(c, \"actor-grid\", a.actorWorksGrid"},

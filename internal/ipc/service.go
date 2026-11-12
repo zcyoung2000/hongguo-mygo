@@ -823,7 +823,7 @@ func (s *HongguoService) rememberEpisode(seriesID string, page *sdk.Page[model.E
 
 func (s *HongguoService) listEpisodes(ctx context.Context, seriesID string) (*sdk.Page[model.Episode], error) {
 	eps, err := s.listEpisodesCached(ctx, seriesID)
-	if err != nil && (errors.Is(err, sdk.ErrAnonymousLimited) || strings.Contains(strings.ToLower(err.Error()), "anonymous")) {
+	if err != nil && s.client != nil && (errors.Is(err, sdk.ErrAnonymousLimited) || strings.Contains(strings.ToLower(err.Error()), "anonymous")) {
 		_ = s.client.ResetDevice(ctx)
 		eps, err = s.listEpisodesCached(ctx, seriesID)
 	}

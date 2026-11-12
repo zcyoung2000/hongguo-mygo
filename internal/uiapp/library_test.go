@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egoist/mygo/ui"
+
 	"myguo/internal/ipc"
 )
 
@@ -232,5 +234,35 @@ func TestReservationVisibleListAndCountsShareFilteredData(t *testing.T) {
 	}
 	if len(app.library.Reserved.Items) != 2 {
 		t.Fatalf("reservation snapshot mutated: %+v", app.library.Reserved.Items)
+	}
+}
+
+func TestHistoryTabsRefreshCachedItems(t *testing.T) {
+	app := NewTestApp()
+	app.view = "history"
+	app.library.History = Library{Loaded: true, Items: []CatalogItem{
+		{ID: "unfinished", Title: "尚未看完的剧"},
+		{ID: "finished", Title: "已经看完的剧", Completed: true},
+	}}
+	app.refreshVisibleLibraryLocked(libraryHistory)
+	tt := ui.NewTester(app.Render, 1200, 800)
+	tt.Frame()
+	for _, step := range []struct {
+		label string
+		count int
+		id    string
+	}{
+		{"已看完", 1, "finished"}, {"未看完", 1, "unfinished"}, {"全部", 2, "unfinished"},
+	} {
+		if err := tt.Click(step.label); err != nil {
+			t.Fatal(err)
+		}
+		tt.Frame()
+		tt.Advance(500 * time.Millisecond)
+		tt.Frame()
+		rows := app.visibleLibrary(libraryHistory)
+		if len(rows) != step.count || rows[0].ID != step.id {
+			t.Fatalf("%s: got %+v", step.label, rows)
+		}
 	}
 }

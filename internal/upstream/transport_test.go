@@ -3,8 +3,11 @@ package upstream
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -229,4 +232,49 @@ func requestHosts(requests []*http.Request) []string {
 		values[index] = request.URL.Host
 	}
 	return values
+}
+
+type localHTTP2Transport struct {
+	next   http.RoundTripper
+	target *url.URL
+}
+
+func (r localHTTP2Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	copy := req.Clone(req.Context())
+	copy.URL.Scheme = r.target.Scheme
+	copy.URL.Host = r.target.Host
+	return r.next.RoundTrip(copy)
+}
+func TestTransportKeepsRealHTTP2ResponseOpen(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			const payload = `{"code":0,"data":{"video_list":[{"id":"episode"}]}}`
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				// Flush the prefix so net/http cannot buffer the entire body before Close.
+				_, _ = io.WriteString(w, payload[:1])
+				w.(http.Flusher).Flush()
+				_, _ = io.WriteString(w, payload[1:])
+			}))
+			server.EnableHTTP2 = true
+			server.StartTLS()
+			defer server.Close()
+			target, _ := url.Parse(server.URL)
+			transport := NewTransport(NewHostPicker(nil), localHTTP2Transport{server.Client().Transport, target})
+			transport.SetMaxAttempts(1)
+			request, _ := http.NewRequest(http.MethodGet, "https://"+DefaultPlaybackHosts[0]+"/reading/bookapi/search/tab/v", nil)
+			response, err := transport.RoundTrip(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.ProtoMajor != 2 {
+				t.Fatal("expected HTTP/2")
+			}
+			body, err := io.ReadAll(response.Body)
+			if err != nil || string(body) != payload {
+				t.Fatalf("response unreadable: %q %v", body, err)
+			}
+		})
+	}
 }

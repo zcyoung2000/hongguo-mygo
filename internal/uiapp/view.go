@@ -376,7 +376,11 @@ func (a *App) renderSlidingTabs(c *ui.Context, key, group string, tabs []sliding
 func (a *App) renderCatalog(c *ui.Context) {
 	catalog := a.catalog
 	a.updateDiscoverFiltersOnScroll(a.discoverPageScroll.Y)
-	a.maybeLoadMore(a.discoverPageScroll.Y, a.discoverPageScroll.MaxY, catalog.HasMore, catalog.Loading || catalog.LoadingMore, a.LoadMoreCatalog)
+	_, viewportHeight := c.Size()
+	if catalog.HasMore && !catalog.Loading && !catalog.LoadingMore && catalog.Error == "" &&
+		a.discoverPageScroll.MaxY-a.discoverPageScroll.Y <= max(viewportHeight, 800) {
+		go a.LoadMoreCatalog()
+	}
 
 	a.renderCatalogHeader(c)
 	scroll := ui.Scroll(c.Key("discover-page-scroll")).Scrollbars(false).Grow(1).Gap(10).
@@ -404,6 +408,7 @@ func (a *App) renderCatalog(c *ui.Context) {
 		if a.catalogGrid == nil {
 			a.catalogGrid = &ui.GridState{}
 		}
+		configureDramaGrid(a.catalogGrid, catalog.Items)
 		width := a.gridContentWidth(c)
 		columns := dramaColumns(width)
 		cardWidth := dramaCardWidth(width)
@@ -411,7 +416,7 @@ func (a *App) renderCatalog(c *ui.Context) {
 		if len(sampleItems) > 60 {
 			sampleItems = sampleItems[:60]
 		}
-		rowHeight := a.collectionRowHeight(c, cardWidth, sampleItems) + cardWidth*posterAspectRatio
+		rowHeight := a.collectionRowHeight(c, cardWidth, sampleItems) + cardWidth*posterAspectRatio + 2*catalogRowGap + cardGridVerticalGap
 		totalRows := (len(catalog.Items) + columns - 1) / columns
 
 		filterOffset := float32(420)
@@ -460,15 +465,16 @@ func (a *App) renderCatalog(c *ui.Context) {
 		if topSpacerHeight > 0 {
 			ui.Box(c.Key("catalog-grid-top-spacer")).Height(topSpacerHeight)
 		}
-		gridRows := endRow - startRow
-		gridHeight := max(1, float32(gridRows)*rowHeight+catalogFooterHeight)
-		grid := a.cardGrid(c, "catalog-grid", a.catalogGrid, nil, displayItems, catalogFooterHeight, nil)
-		grid.Height(gridHeight)
-		grid.Transition(ui.ElementTransition{
-			Duration: 260 * time.Millisecond,
-			Ease:     ui.CubicBezier(0.22, 1, 0.36, 1),
-			Position: true,
-			Size:     true,
+		// The page owns scrolling; a nested GridView would consume wheel input
+		// before the page can reach its pagination threshold.
+		ui.Column(c.Key("catalog-grid")).Gap(0).Children(func() {
+			for first := 0; first < len(displayItems); first += columns {
+				ui.Row(c.Key(displayItems[first].ID)).Gap(dramaCardGap).Height(rowHeight).Children(func() {
+					for index := first; index < min(first+columns, len(displayItems)); index++ {
+						a.catalogCardSized(c, displayItems[index], cardWidth)
+					}
+				})
+			}
 		})
 		if bottomSpacerHeight > 0 {
 			ui.Box(c.Key("catalog-grid-bottom-spacer")).Height(bottomSpacerHeight)
@@ -920,6 +926,8 @@ func (a *App) renderLibrary(c *ui.Context, tab LibraryTab) {
 					{"completed", "已看完"},
 				}, a.historyFilter, func(key string) {
 					a.historyFilter = key
+					a.refreshVisibleLibraryLocked(libraryHistory)
+					a.invalidate()
 				})
 			})
 			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {

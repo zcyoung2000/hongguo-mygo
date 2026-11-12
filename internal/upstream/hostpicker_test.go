@@ -78,6 +78,7 @@ func TestHostPickerPersistenceRoundTrip(t *testing.T) {
 	picker.MarkGood(FamilyPlayback, DefaultPlaybackHosts[1])
 
 	restored := NewHostPicker(store)
+	restored.SetNow(picker.now)
 	if err := restored.Restore(); err != nil {
 		t.Fatalf("Restore() error = %v", err)
 	}

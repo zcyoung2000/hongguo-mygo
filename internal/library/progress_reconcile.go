@@ -2,7 +2,6 @@ package library
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -152,19 +151,11 @@ func (s *Service) fetchSeriesProgress(ctx context.Context, seriesID string) (*Hi
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("进度对账接口返回 HTTP %d", response.StatusCode)
 	}
-	var payload struct {
-		Code int `json:"code"`
-		Data *struct {
-			Rows []remoteHistoryRow `json:"data_list"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
+	page, err := decodeRemoteHistoryPage(body)
+	if err != nil {
 		return nil, err
 	}
-	if payload.Code != 0 || payload.Data == nil || payload.Data.Rows == nil {
-		return nil, fmt.Errorf("进度对账响应无效 (code=%d)", payload.Code)
-	}
-	for _, row := range payload.Data.Rows {
+	for _, row := range page.Items {
 		if row.SeriesID != seriesID {
 			continue
 		}

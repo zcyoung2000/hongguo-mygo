@@ -392,6 +392,75 @@ test('source failures retry at most three times before visible failure', async (
   assert.equal(get('feed-stage').classList.contains('is-load-failed'), true);
 });
 
+test('unavailable episode lists stop automatic retries and show a useful reason', async () => {
+  const {context, get, calls} = drawerHarness();
+  loadFunction(context, 'prepareFeedSlot');
+  loadFunction(context, 'feedSlotMatches');
+  loadFunction(context, 'normalizeFeedMediaURL');
+  const slot = context.feedSlots[0];
+  slot.loadToken = 0;
+  slot.video.dataset = {};
+  slot.video.play = () => Promise.resolve();
+  slot.video.pause = () => {};
+  slot.video.removeAttribute = () => {};
+  slot.video.load = () => {};
+  slot.video.addEventListener = () => {};
+  let attempts = 0;
+  const timers = new Map();
+  let timerId = 0;
+  Object.assign(context, {
+    prefetchFeedPlaybackInfo: () => {
+      attempts++;
+      return Promise.reject(new Error('分集访问受限，请稍后重试: anonymous limited'));
+    },
+    safeImageCSS: () => 'none',
+    scheduleFeedFrameMetric: () => {},
+    scheduleFeedAutoplayRetry: () => {},
+    scheduleFeedWarmup: () => {},
+    assessFeedMediaCapabilities: () => {},
+    syncActiveFeedSlot: () => {},
+    requestFeedDramaMetadata: () => {},
+    ensureFeedItemsAhead: () => {},
+    clearFeedFailureHint: () => {},
+    showFeedSkeleton: () => {},
+    recordFeedDiagnostic: () => {},
+    reportFeedFailure: (failedSlot, text) => {
+      failedSlot.failed = true;
+      calls.push(['failure', text]);
+    },
+    ensureFeedSource: (failedSlot, itemIndex, attempt) => {
+      calls.push(['retry', attempt]);
+      return failedSlot.preparing = context.prepareFeedSlot(
+        failedSlot, itemIndex, true, null, false, null, 1, '', attempt
+      );
+    },
+    feedAssetKey: (seriesId, episodeNum, quality) => `${seriesId}:${episodeNum}:${quality}`,
+    feedQualityForItem: () => '720p',
+    clearFeedSlot: cleared => {
+      cleared.loadToken = (cleared.loadToken || 0) + 1;
+      cleared.ready = false;
+      cleared.video.src = '';
+    },
+    setTimeout: callback => {
+      const id = ++timerId;
+      timers.set(id, callback);
+      return id;
+    },
+    clearTimeout: id => timers.delete(id)
+  });
+
+  await context.prepareFeedSlot(slot, 0, true, null, false, '720p', 1, '', 0);
+  assert.equal(attempts, 1);
+  assert.equal(timers.size, 0, 'restricted episodes must not keep resetting/retrying');
+  assert.equal(slot.failed, true);
+  assert.equal(slot.preparing, null);
+  assert.deepEqual(calls.filter(call => call[0] === 'failure').map(call => call[1]), [
+    '分集访问受限，请稍后点击重试'
+  ]);
+  context.updateFeedPlayIndicator();
+  assert.equal(get('feed-stage').classList.contains('is-load-failed'), true);
+});
+
 test('a first-frame timeout walks the progressive HLS full fallback chain', () => {
   const {context, calls} = drawerHarness();
   loadFunction(context, 'normalizeFeedMediaURL');

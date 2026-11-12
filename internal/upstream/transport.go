@@ -80,6 +80,10 @@ func (t *Transport) RoundTrip(request *http.Request) (*http.Response, error) {
 			return response, nil
 		}
 		t.picker.MarkBad(family, host)
+		// The caller owns the final response, including an HTTP error body.
+		if index == attempts-1 {
+			return response, roundTripErr
+		}
 		drainAndClose(response)
 		lastResponse, lastErr = response, roundTripErr
 	}
@@ -117,9 +121,6 @@ func hostFailure(response *http.Response, err error) bool {
 		return true
 	}
 	if read == 0 {
-		return true
-	}
-	if response.Body.Close() != nil {
 		return true
 	}
 	response.Body = newPrefixedBody(chunk[:read], response.Body)

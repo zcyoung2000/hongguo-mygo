@@ -167,6 +167,45 @@ type remoteHistoryPage struct {
 	HasMore    bool
 }
 
+// The endpoint returns data_list in an object, or data directly as an array.
+// Validate the envelope before accepting an empty result so failures cannot
+// accidentally be reconciled as an empty remote history.
+func decodeRemoteHistoryPage(body []byte) (*remoteHistoryPage, error) {
+	var envelope struct {
+		Code       int             `json:"code"`
+		Data       json.RawMessage `json:"data"`
+		NextOffset int64           `json:"next_offset"`
+		HasMore    bool            `json:"has_more"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, err
+	}
+	data := bytes.TrimSpace(envelope.Data)
+	if envelope.Code != 0 || len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return nil, fmt.Errorf("历史同步响应无效 (code=%d)", envelope.Code)
+	}
+	page := &remoteHistoryPage{NextOffset: envelope.NextOffset, HasMore: envelope.HasMore}
+	if data[0] == '[' {
+		if err := json.Unmarshal(data, &page.Items); err != nil {
+			return nil, err
+		}
+	} else {
+		var object struct {
+			Items      []remoteHistoryRow `json:"data_list"`
+			NextOffset int64              `json:"next_offset"`
+			HasMore    bool               `json:"has_more"`
+		}
+		if err := json.Unmarshal(data, &object); err != nil {
+			return nil, err
+		}
+		page.Items, page.NextOffset, page.HasMore = object.Items, object.NextOffset, object.HasMore
+	}
+	if page.Items == nil {
+		return nil, fmt.Errorf("历史同步响应缺少记录列表")
+	}
+	return page, nil
+}
+
 func (s *Service) fetchRemoteHistoryPage(ctx context.Context, offset int64) (*remoteHistoryPage, error) {
 	session, err := s.sessionForRequest(ctx)
 	if err != nil {
@@ -212,24 +251,9 @@ func (s *Service) fetchRemoteHistoryPage(ctx context.Context, offset int64) (*re
 		return nil, fmt.Errorf("历史同步接口返回 HTTP %d", resp.StatusCode)
 	}
 
-	var histResp struct {
-		Code int `json:"code"`
-		Data *struct {
-			VideoData  []remoteHistoryRow `json:"data_list"`
-			NextOffset int64              `json:"next_offset"`
-			HasMore    bool               `json:"has_more"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &histResp); err != nil {
+	page, err := decodeRemoteHistoryPage(body)
+	if err != nil {
 		return nil, err
-	}
-	if histResp.Code != 0 || histResp.Data == nil || histResp.Data.VideoData == nil {
-		return nil, fmt.Errorf("历史同步响应无效 (code=%d)", histResp.Code)
-	}
-	page := &remoteHistoryPage{
-		Items:      histResp.Data.VideoData,
-		NextOffset: histResp.Data.NextOffset,
-		HasMore:    histResp.Data.HasMore,
 	}
 	if page.HasMore && page.NextOffset <= offset {
 		page.NextOffset = offset + int64(len(page.Items))
