@@ -127,7 +127,7 @@ func main() {
 	)
 	defer ipc.CloseService(service)
 	mediaServer.SetDeviceResetter(service.ResetDevice)
-	mediaServer.SetMultiModelDeviceIdentity(service.DeviceIdentity)
+	mediaServer.SetMultiModelDeviceIdentity(ipc.MediaDeviceIdentityProvider(service))
 	mygo.Bind(service)
 
 	// 5. Setup embedded frontend

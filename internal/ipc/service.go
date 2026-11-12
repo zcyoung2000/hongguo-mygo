@@ -169,6 +169,10 @@ type HongguoService struct {
 
 type ServiceOption func(*HongguoService)
 
+func MediaDeviceIdentityProvider(service *HongguoService) func() (string, string, string, string) {
+	return service.deviceIdentity
+}
+
 func WithAuthTransport(transport auth.CredentialTransport) ServiceOption {
 	return func(s *HongguoService) { s.setAuthTransport(transport) }
 }
@@ -283,10 +287,6 @@ func (s *HongguoService) deviceIdentity() (deviceID, iid, cdid, openudid string)
 	s.identityMu.RLock()
 	defer s.identityMu.RUnlock()
 	return s.deviceID, s.iid, s.cdid, s.openudid
-}
-
-func (s *HongguoService) DeviceIdentity() (deviceID, iid, cdid, openudid string) {
-	return s.deviceIdentity()
 }
 
 func (s *HongguoService) runtimeIdentity() (userAgent, storeRegion string) {
